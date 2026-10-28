@@ -39,7 +39,7 @@ scripts/build-wasm.sh                   # -> dist/
 scripts/build-wasm.sh --wasm-opt        # plus an extra wasm-opt -Oz pass
 scripts/build-wasm.sh --opt -Os         # another optimisation level (default -Oz)
 scripts/build-wasm.sh --jspi            # JSPI instead of Asyncify
-scripts/build-wasm.sh -- -DWEB_SAVVYCAN_SCRIPTING=OFF   # without the scripting window (no Qt Qml)
+WASM_BUILD_DIR=build/wasm-noscript scripts/build-wasm.sh -- -DWEB_SAVVYCAN_SCRIPTING=OFF  # no scripting window/Qt Qml (own build dir: toggling it in one leaves stale moc output)
 scripts/smoke-wasm.sh                   # serve dist/, open it in headless Chromium, dist/smoke.png
 ```
 
