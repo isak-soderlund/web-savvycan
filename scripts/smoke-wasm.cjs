@@ -1,6 +1,8 @@
 // Smoke test of the wasm build: open dist/SavvyCAN.html in headless Chromium, wait for Qt to
 // start, check that the main window is drawn and nothing went to the console as an error.
 // Run through scripts/smoke-wasm.sh (it serves dist/). Exit 1 on a failure.
+// Also checks a modal QDialog::exec() (Asyncify/JSPI): File > Crop Log with no frames opens a
+// QMessageBox; it must appear, and close again with Enter.
 // Usage: node scripts/smoke-wasm.cjs URL SCREENSHOT [WAIT_MS]
 const { chromium } = require('playwright');
 
@@ -54,6 +56,33 @@ const { chromium } = require('playwright');
   }, png.toString('base64'));
   if (loaded && colours < 20) problems.push(`main window not drawn (${colours} colours on screen)`);
 
+  // Modal dialog through exec(): File menu (top left), "Crop Log to Frame Range" (14th row).
+  if (loaded && colours >= 20) {
+    const before = await page.screenshot();
+    await page.mouse.click(23, 11);
+    await page.waitForTimeout(800);
+    await page.mouse.click(135, 313);
+    await page.waitForTimeout(1500);
+    const dialog = await page.screenshot({ path: shot.replace(/\.png$/, '-dialog.png') });
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(1500);
+    const after = await page.screenshot();
+    const diff = await page.evaluate(async ([a, b, c]) => {
+      const load = async b64 => {
+        const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
+        const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
+        const ctx = cv.getContext('2d'); ctx.drawImage(img, 0, 0);
+        return ctx.getImageData(0, 0, cv.width, cv.height).data;
+      };
+      const [da, db, dc] = await Promise.all([load(a), load(b), load(c)]);
+      const count = (x, y) => { let n = 0; for (let i = 0; i < x.length; i += 4) if (x[i] !== y[i] || x[i+1] !== y[i+1] || x[i+2] !== y[i+2]) n++; return n; };
+      return { shown: count(da, db), left: count(da, dc) };
+    }, [before.toString('base64'), dialog.toString('base64'), after.toString('base64')]);
+    if (diff.shown < 5000) problems.push(`exec(): the Crop Log message box did not appear (${diff.shown} pixels changed)`);
+    else if (diff.left > 2000) problems.push(`exec(): the message box did not close with Enter (${diff.left} pixels still differ)`);
+    else console.log(`exec(): message box shown (${diff.shown} px) and closed (${diff.left} px left)`);
+  }
+
   const mem = await page.evaluate(() => (performance.memory ? performance.memory.usedJSHeapSize : 0));
   console.log(`Qt loaded after ${(tLoaded / 1000).toFixed(1)} s; ${colours} colours on screen; JS heap ${(mem / 1e6).toFixed(0)} MB`);
   console.log(`screenshot: ${shot}`);
@@ -63,5 +92,5 @@ const { chromium } = require('playwright');
     for (const p of problems) console.log('  ' + p);
     process.exit(1);
   }
-  console.log('OK: main window drawn, no console errors');
+  console.log('OK: main window drawn, modal exec() dialog works, no console errors');
 })().catch(e => { console.error(e); process.exit(1); });

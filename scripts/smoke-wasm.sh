@@ -6,7 +6,7 @@
 # ~/src/resolve-hil/tools/web/node_modules. Browsers: ~/.cache/ms-playwright (npx playwright install chromium).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-DIST="$PWD/dist" PORT=8765 WAIT=8000
+DIST="$PWD/dist" PORT="" WAIT=8000
 while [ $# -gt 0 ]; do
     case "$1" in
         --dist) DIST="$(realpath "$2")"; shift ;;
@@ -18,6 +18,8 @@ while [ $# -gt 0 ]; do
     shift
 done
 [ -f "$DIST/SavvyCAN.html" ] || { echo "no $DIST/SavvyCAN.html: run scripts/build-wasm.sh" >&2; exit 1; }
+# A free port unless --port (another server may hold any fixed one).
+[ -n "$PORT" ] || PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1', 0)); print(s.getsockname()[1])")
 export NODE_PATH="$PWD/scripts/node_modules:${NODE_PATH:-}:$HOME/src/resolve-hil/tools/web/node_modules"
 
 python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$DIST" >/dev/null 2>&1 &
