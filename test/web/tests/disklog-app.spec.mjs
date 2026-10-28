@@ -43,7 +43,7 @@ test('app: File > Start Continuous Logging, "Name it by the start time" -> a log
   await page.mouse.click(...POS.start);
   await sleep(1500);                             // the dialog asks for the remembered folder first
   await page.screenshot({ path: path.join(REPO, 'test/web/test-results/disklog/app-dialog.png') });
-  await page.keyboard.press('Enter');            // the default button: "Name it by the start time" (a user gesture too)
+  await (process.env.WSC_CLICK_DIRECT ? page.mouse.click(...JSON.parse(process.env.WSC_CLICK_DIRECT)) : page.keyboard.press('Enter')); // Enter: the default button, "Name it by the start time" (a user gesture too)
   await page.waitForFunction(() => SavvyDiskLog.status().state === 'open', null, { timeout: 10000 });
   const st = await page.evaluate(() => SavvyDiskLog.status());
   await sleep(500);

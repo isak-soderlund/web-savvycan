@@ -27,6 +27,7 @@ WebLogStartDialog::WebLogStartDialog(bool filtered, QWidget *parent) : QDialog(p
     };
 
     auto *cancel = new QPushButton(tr("Cancel"), this);
+    cancel->setAutoDefault(false); //Enter starts the log (the default button), it does not cancel
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
 
     if (backend == QLatin1String("fsa"))
@@ -48,6 +49,7 @@ WebLogStartDialog::WebLogStartDialog(bool filtered, QWidget *parent) : QDialog(p
         m_folder->setTextFormat(Qt::RichText);
         folderRow->addWidget(m_folder, 1);
         auto *change = new QPushButton(tr("Change folder..."), this);
+        change->setAutoDefault(false);
         connect(change, &QPushButton::clicked, log, &WebDiskLog::chooseDirectory);
         folderRow->addWidget(change);
         layout->addLayout(folderRow);
@@ -69,8 +71,10 @@ WebLogStartDialog::WebLogStartDialog(bool filtered, QWidget *parent) : QDialog(p
         log->queryDirectory();
 
         // the last way used is the default button
-        if (settings.value("WebLog/Mode", "direct").toString() == QLatin1String("prompt")) m_prompt->setDefault(true);
-        else m_direct->setDefault(true);
+        QPushButton *def = settings.value("WebLog/Mode", "direct").toString() == QLatin1String("prompt") ? m_prompt : m_direct;
+        (def == m_prompt ? m_direct : m_prompt)->setAutoDefault(false);
+        def->setDefault(true);
+        QTimer::singleShot(0, def, [def]() { def->setFocus(); }); //after the dialog has placed its focus
     }
     else if (backend == QLatin1String("download"))
     {
@@ -83,6 +87,7 @@ WebLogStartDialog::WebLogStartDialog(bool filtered, QWidget *parent) : QDialog(p
                    "long or important logs, use Chrome or Edge, or the desktop SavvyCAN."));
         auto *start = new QPushButton(tr("Start (download)"), this);
         start->setDefault(true);
+        start->setFocus();
         connect(start, &QPushButton::clicked, this, [this]() { choose(WebDiskLog::Mode::Download); });
         layout->addWidget(start);
     }
