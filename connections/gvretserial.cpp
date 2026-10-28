@@ -4,8 +4,6 @@
 #include <QSerialPortInfo>
 #include <QSettings>
 #include <QStringBuilder>
-#include <QElapsedTimer>
-#include <algorithm>
 #include <QtNetwork>
 
 #include "gvretserial.h"
@@ -473,8 +471,7 @@ void GVRetSerial::deviceConnected()
 }
 
 void GVRetSerial::disconnectDevice() {
-    mRxPending.clear(); //unparsed bytes of the old link
-    mRxPos = 0;
+    clearRx(); //unparsed bytes of the old link
     rx_state = IDLE;
     rx_step = 0;
     if (serial != nullptr)
@@ -646,45 +643,6 @@ void GVRetSerial::readSerialData()
     }
 
     processRxBytes(data);
-}
-
-void GVRetSerial::processRxBytes(const QByteArray &data)
-{
-    if (data.isEmpty()) return;
-    if (mRxPos >= mRxPending.size())
-    {
-        mRxPending = data;
-        mRxPos = 0;
-    }
-    else
-    {
-        if (mRxPos > 0) { mRxPending.remove(0, mRxPos); mRxPos = 0; }
-        mRxPending.append(data);
-    }
-    if (!mRxScheduled) processPendingRx();
-}
-
-void GVRetSerial::processPendingRx()
-{
-    mRxScheduled = false;
-    QElapsedTimer budget;
-    budget.start();
-    const qsizetype n = mRxPending.size();
-    while (mRxPos < n)
-    {
-        const qsizetype end = std::min<qsizetype>(n, mRxPos + 1024);
-        const unsigned char *p = reinterpret_cast<const unsigned char *>(mRxPending.constData());
-        while (mRxPos < end) procRXChar(p[mRxPos++]);
-        if (mRxSliceMs > 0 && mRxPos < n && budget.elapsed() >= mRxSliceMs)
-        {
-            //the rest on the next event-loop turn
-            mRxScheduled = true;
-            QTimer::singleShot(0, this, &GVRetSerial::processPendingRx);
-            return;
-        }
-    }
-    mRxPending.clear();
-    mRxPos = 0;
 }
 
 //Debugging data sent from connection window. Inject it into Comm traffic.

@@ -19,9 +19,10 @@ QString AboutDialog::gitCommit()
     return QStringLiteral(WEB_SAVVYCAN_GIT_COMMIT);
 }
 
-QString AboutDialog::sourceUrl()
+// https://github.com/isak-soderlund/web-savvycan[/tree/<commit>]
+static QString sourceUrl()
 {
-    QString commit = gitCommit();
+    QString commit = AboutDialog::gitCommit();
     commit.remove(QStringLiteral("+dirty"));
     if (commit.isEmpty() || commit == QLatin1String("unknown")) return QString::fromLatin1(kRepoUrl);
     return QString::fromLatin1(kRepoUrl) + QStringLiteral("/tree/") + commit;

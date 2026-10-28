@@ -18,7 +18,6 @@
 #include <QObject>
 #include <QPalette>
 #include <QString>
-#include <QColor>
 
 class QCustomPlot;
 
@@ -47,11 +46,6 @@ public:
     // QCustomPlot that is shown; call it again if a window resets its plot's colours.
     static void applyToPlot(QCustomPlot *plot);
 
-    // Colours for code that paints by itself (and has no palette role that fits).
-    static QColor plotBackground();
-    static QColor plotForeground();
-    static QColor plotGrid();
-
 signals:
     void changed(bool dark);
 
@@ -66,7 +60,6 @@ private:
 
     Mode m_mode = Mode::System;
     QString m_lightStyleName;   // the style the app started with (SavvyCAN's normal look)
-    bool m_initialised = false;
     bool m_applying = false;
     inline static bool s_dark = false; // in the header: utility.h reads it without linking theme.cpp
 };

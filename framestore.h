@@ -13,7 +13,7 @@
  *
  * FrameListView is the read-only, QVector-like face the rest of SavvyCAN sees
  * (CommFrameModel::getListReference() / getFilteredListReference()): count(), at(i),
- * isEmpty(), iteration, mid(), tail(), toVector(). Every call takes the store's read lock and
+ * isEmpty(), mid(), tail(), toVector(). Every call takes the store's read lock and
  * returns frames by value, so a reader on another thread (the frame sender) never sees a frame
  * being written, moved or freed. at() of a row that is gone (trimmed or cleared since the reader
  * took its count) returns an InvalidFrame instead of reading freed memory.
@@ -27,7 +27,6 @@
 #include <QVector>
 #include <deque>
 #include <vector>
-#include <iterator>
 
 #include "can_structs.h"
 
@@ -88,7 +87,8 @@ private:
     mutable QReadWriteLock mLock;
 };
 
-// Read-only, QVector<CommFrame>-like view. Thread safe (see above). Returns copies.
+// Read-only view of frames, with the QVector members SavvyCAN's windows call. Thread safe (see above).
+// Returns copies.
 class FrameListView
 {
 public:
@@ -98,57 +98,17 @@ public:
     qsizetype count() const { return size(); }
     qsizetype length() const { return size(); }
     bool isEmpty() const { return size() == 0; }
-    bool empty() const { return isEmpty(); }
 
     // Bounds checked: an index out of range (or a row that has just been trimmed) gives a frame of
     // type InvalidFrame.
     CommFrame at(qsizetype i) const;
-    CommFrame operator[](qsizetype i) const { return at(i); }
-    CommFrame value(qsizetype i) const { return at(i); }
     CommFrame first() const { return at(0); }
     CommFrame last() const;
-    CommFrame constFirst() const { return first(); }
-    CommFrame constLast() const { return last(); }
 
     // Snapshots, each taken under one lock, so they are consistent with each other row for row.
     QVector<CommFrame> mid(qsizetype pos, qsizetype len = -1) const;
     QVector<CommFrame> tail(qsizetype n) const;   // the newest n rows (fewer if there aren't n)
     QVector<CommFrame> toVector() const { return mid(0); }
-
-    class const_iterator
-    {
-    public:
-        using iterator_category = std::random_access_iterator_tag;
-        using value_type = CommFrame;
-        using difference_type = qsizetype;
-        using pointer = void;
-        using reference = CommFrame;
-
-        const_iterator() = default;
-        const_iterator(const FrameListView *v, qsizetype i) : mView(v), mIdx(i) {}
-        CommFrame operator*() const { return mView->at(mIdx); }
-        CommFrame operator[](qsizetype n) const { return mView->at(mIdx + n); }
-        const_iterator &operator++() { ++mIdx; return *this; }
-        const_iterator operator++(int) { const_iterator t = *this; ++mIdx; return t; }
-        const_iterator &operator--() { --mIdx; return *this; }
-        const_iterator operator--(int) { const_iterator t = *this; --mIdx; return t; }
-        const_iterator &operator+=(qsizetype n) { mIdx += n; return *this; }
-        const_iterator &operator-=(qsizetype n) { mIdx -= n; return *this; }
-        const_iterator operator+(qsizetype n) const { return const_iterator(mView, mIdx + n); }
-        const_iterator operator-(qsizetype n) const { return const_iterator(mView, mIdx - n); }
-        qsizetype operator-(const const_iterator &o) const { return mIdx - o.mIdx; }
-        bool operator==(const const_iterator &o) const { return mIdx == o.mIdx && mView == o.mView; }
-        bool operator!=(const const_iterator &o) const { return !(*this == o); }
-        bool operator<(const const_iterator &o) const { return mIdx < o.mIdx; }
-    private:
-        const FrameListView *mView = nullptr;
-        qsizetype mIdx = 0;
-    };
-    // Iteration takes the size once at begin()/end(); rows added later are not visited.
-    const_iterator begin() const { return const_iterator(this, 0); }
-    const_iterator end() const { return const_iterator(this, size()); }
-    const_iterator cbegin() const { return begin(); }
-    const_iterator cend() const { return end(); }
 
 protected:
     explicit FrameListView(const QReadWriteLock *lock) : mLock(lock) {}
@@ -157,7 +117,7 @@ protected:
     // Returns false if row i is not available (out of range or trimmed).
     virtual bool frameLocked(qsizetype i, CommFrame &out) const = 0;
 
-    const QReadWriteLock *mLock; //may be null (a view over a plain vector owned by one thread)
+    const QReadWriteLock *mLock;
 };
 
 // Every stored frame, oldest first.
@@ -169,42 +129,6 @@ protected:
     qsizetype sizeLocked() const override { return mStore->size(); }
     bool frameLocked(qsizetype i, CommFrame &out) const override;
     const FrameStore *mStore;
-};
-
-// A plain vector seen as a FrameListView (no lock: for data owned by one thread, and tests).
-class FrameVectorView : public FrameListView
-{
-public:
-    explicit FrameVectorView(const QVector<CommFrame> *frames) : FrameListView(nullptr), mFrames(frames) {}
-protected:
-    qsizetype sizeLocked() const override { return mFrames->size(); }
-    bool frameLocked(qsizetype i, CommFrame &out) const override
-    {
-        if (i < 0 || i >= mFrames->size()) return false;
-        out = mFrames->at(i);
-        return true;
-    }
-    const QVector<CommFrame> *mFrames;
-};
-
-// Rows given as a list of seqs into a store (the model's filtered view).
-template <typename SeqList>
-class FrameIndexView : public FrameListView
-{
-public:
-    FrameIndexView(const FrameStore *store, const SeqList *seqs) : FrameListView(&store->lock()), mStore(store), mSeqs(seqs) {}
-protected:
-    qsizetype sizeLocked() const override { return qsizetype(mSeqs->size()); }
-    bool frameLocked(qsizetype i, CommFrame &out) const override
-    {
-        if (i < 0 || i >= qsizetype(mSeqs->size())) return false;
-        const quint64 seq = (*mSeqs)[size_t(i)];
-        if (!mStore->contains(seq)) return false;
-        out = mStore->bySeq(seq);
-        return true;
-    }
-    const FrameStore *mStore;
-    const SeqList *mSeqs;
 };
 
 #endif // FRAMESTORE_H

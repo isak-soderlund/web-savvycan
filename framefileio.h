@@ -102,9 +102,8 @@ public:
     static bool saveCARBUSAnalzyer(QString filename, const QVector<CommFrame>* frames);
     static bool savePCANFile(QString filename, const QVector<CommFrame>* frames);
 
-    //Continuous logging in the native CSV format. The first one asks for the file name (desktop).
-    //In the browser (Q_OS_WASM) the file is opened by WebDiskLog (wasm/disklog), asynchronously; the
-    //write/flush/close calls below go to it.
+    //Continuous logging in the native CSV format. The first one asks for the file name (desktop); in the
+    //browser (Q_OS_WASM) these go to WebDiskLog (wasm/disklog): collected in the page, downloaded on close.
     static bool openContinuousNative();
     static bool openContinuousNative(const QString &filename);
     static bool closeContinuousNative();

@@ -21,7 +21,7 @@
 #include "dbc/dbcmaineditor.h"
 #include "mainsettingsdialog.h"
 #include "re/discretestatewindow.h"
-#ifndef SAVVYCAN_NO_SCRIPTING // web-savvycan: the wasm build can leave scripting (QJSEngine) out
+#ifndef Q_OS_WASM // web-savvycan: no scripting (Qt Qml) in the browser build
 #include "scriptingwindow.h"
 #endif
 #include "re/rangestatewindow.h"
@@ -32,11 +32,6 @@
 #include "re/isotp_interpreterwindow.h"
 #include "motorcontrollerconfigwindow.h"
 #include "signalviewerwindow.h"
-#include <QPointer>
-#include <functional>
-#ifdef Q_OS_WASM
-class QInputDialog;
-#endif
 #include "re/temporalgraphwindow.h"
 #include "re/dbccomparatorwindow.h"
 #include "re/udsfirmwareuploaderwindow.h"
@@ -196,17 +191,9 @@ private:
     bool continuousLoggingUseFilter;
     int continuousLogFlushCounter;
 #ifdef Q_OS_WASM
-    //browser: the log file is opened asynchronously by WebDiskLog (wasm/disklog)
-    bool webLogPendingFiltered = false;
-    void webContinuousLogging(bool filtered);
-    void setupWebDiskLog();
-    void resetContinuousLoggingUi();
-    void updateWebLogTooltip();
-    QString webLogLabelText(bool on) const;
-    void webStopLogging(bool askName, std::function<void()> then);
-    QAction *webLogAskNameAction = nullptr;     //MVP: "Choose the Log's Name When Logging Stops..."
-    QPointer<QInputDialog> webLogNameDialog;
-    bool webLogBlinkOn = false;
+    QAction *webLogAskNameAction;   //File > Choose the Log's Name When Logging Stops...
+    bool askWebLogName();
+    static QString webLogLabel(bool blinkOn);
 #endif
 
     //References to other windows we can display
