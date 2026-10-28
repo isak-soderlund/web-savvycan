@@ -2,6 +2,7 @@
 #define FLOWVIEWWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include <QLocale>
 #include <QSlider>
 #include "qcustomplot.h"
@@ -26,7 +27,7 @@ class FlowViewWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit FlowViewWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit FlowViewWindow(const FrameListView *frames, QWidget *parent = 0);
     ~FlowViewWindow();
     void showEvent(QShowEvent*);
 
@@ -61,7 +62,7 @@ private:
     Ui::FlowViewWindow *ui;
     QList<quint32> foundID;
     QList<CommFrame> frameCache;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     unsigned char refBytes[64];
     unsigned char currBytes[64];
     int triggerValues[64];

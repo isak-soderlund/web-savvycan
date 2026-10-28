@@ -1,7 +1,7 @@
 #include "framesenderobject.h"
 #include "mainwindow.h"
 
-FrameSenderObject::FrameSenderObject(const QVector<CommFrame> *frames)
+FrameSenderObject::FrameSenderObject(const FrameListView *frames)
 {
     mThread_p = new QThread();
 
@@ -219,11 +219,12 @@ void FrameSenderObject::timerTriggered()
 
 void FrameSenderObject::buildFrameCache()
 {
-    CommFrame thisFrame;
     frameCache.clear();
-    for (int i = 0; i < modelFrames->count(); i++)
+    //web-savvycan (M5): this runs in the sender's thread while the GUI thread appends; read one locked
+    //snapshot instead of indexing the live list
+    const QVector<CommFrame> snapshot = modelFrames->toVector();
+    for (const CommFrame &thisFrame : snapshot)
     {
-        thisFrame = modelFrames->at(i);
         if (!frameCache.contains(thisFrame.frameId()))
         {
             frameCache.insert(thisFrame.frameId(), thisFrame);
@@ -248,12 +249,13 @@ void FrameSenderObject::updatedFrames(int numFrames)
     }
     else //just got some new frames. See if they are relevant.
     {
-        if (numFrames > modelFrames->count()) return;
-        qDebug() << "New frames in sender window";
+        //web-savvycan (M5): the newest numFrames rows as one locked snapshot (the list may be appended to,
+        //trimmed or cleared by the GUI thread meanwhile)
+        const QVector<CommFrame> newFrames = modelFrames->tail(numFrames);
         //run through the supposedly new frames in order
-        for (int i = modelFrames->count() - numFrames; i < modelFrames->count(); i++)
+        for (const CommFrame &newFrame : newFrames)
         {
-            thisFrame = modelFrames->at(i);
+            thisFrame = newFrame;
             if (!frameCache.contains(thisFrame.frameId()))
             {
                 frameCache.insert(thisFrame.frameId(), thisFrame);

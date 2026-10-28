@@ -5,7 +5,7 @@
 #include <cmath>
 #include <cstring>
 
-SearchWindow::SearchWindow(const QVector<CommFrame> *frames, DBCHandler *handler, QWidget *parent)
+SearchWindow::SearchWindow(const FrameListView *frames, DBCHandler *handler, QWidget *parent)
     : QDialog(parent)
     , ui(new Ui::SearchWindow)
     , modelFrames(frames)

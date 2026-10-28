@@ -2,6 +2,7 @@
 #define CROPLOGDIALOG_H
 
 #include <QDialog>
+#include "framestore.h"
 #include <QWidget>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
@@ -62,7 +63,7 @@ class CropLogDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit CropLogDialog(const QVector<CommFrame> *frames, QWidget *parent = nullptr);
+    explicit CropLogDialog(const FrameListView *frames, QWidget *parent = nullptr);
 
     int startIndex() const { return m_startIdx; }
     int endIndex()   const { return m_endIdx;   }
@@ -81,7 +82,7 @@ private:
     int    frameIndexFromTime(double secs) const; // returns 0-based index of nearest frame
     double timeFromFrameIndex(int idx) const;     // seconds from log start
 
-    const QVector<CommFrame> *m_frames;
+    const FrameListView *m_frames;
     int    m_totalFrames  = 0;
     double m_totalSecs    = 0.0;
     double m_startTimeSec = 0.0; // absolute time of first frame

@@ -2,6 +2,7 @@
 #define MOTORCONTROLLERCONFIGWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include <QTimer>
 #include "can_structs.h"
 
@@ -41,7 +42,7 @@ class MotorControllerConfigWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit MotorControllerConfigWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit MotorControllerConfigWindow(const FrameListView *frames, QWidget *parent = 0);
     ~MotorControllerConfigWindow();
 
 signals:
@@ -57,7 +58,7 @@ private slots:
 
 private:
     Ui::MotorControllerConfigWindow *ui;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     QTimer timer;
     CommFrame outFrame;
     bool doingRequest;

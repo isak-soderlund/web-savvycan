@@ -78,6 +78,7 @@ void CANConManager::add(CANConnection* pConn_p)
 
 void CANConManager::remove(CANConnection* pConn_p)
 {
+    if (mConns.contains(pConn_p)) mDroppedRemoved += pConn_p->getDroppedFrames();
     //disconnect(pConn_p, 0, this, 0);
     mConns.removeOne(pConn_p);
     mConnFrameCount.remove(pConn_p);
@@ -87,12 +88,26 @@ void CANConManager::remove(CANConnection* pConn_p)
 void CANConManager::replace(int idx, CANConnection* pConn_p)
 {
     CANConnection *original = mConns[idx];
+    mDroppedRemoved += original->getDroppedFrames();
     mConns.replace(idx, pConn_p);
     mConnFrameCount.remove(original);
     mConnHadFrames.remove(original);
     mConnFrameCount[pConn_p] = 0;
     mConnHadFrames[pConn_p]  = false;
     delete original; original = NULL;
+}
+
+quint64 CANConManager::getDroppedFrames() const
+{
+    quint64 total = mDroppedRemoved;
+    for (CANConnection *conn_p : mConns) total += conn_p->getDroppedFrames();
+    return total;
+}
+
+void CANConManager::resetDroppedFrames()
+{
+    mDroppedRemoved = 0;
+    for (CANConnection *conn_p : mConns) conn_p->resetDroppedFrames();
 }
 
 //Get total number of buses currently registered with the program

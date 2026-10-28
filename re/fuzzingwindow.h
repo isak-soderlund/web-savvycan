@@ -2,6 +2,7 @@
 #define FUZZINGWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include <QListWidget>
 #include <QTimer>
 #include "can_structs.h"
@@ -25,7 +26,7 @@ class FuzzingWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit FuzzingWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit FuzzingWindow(const FrameListView *frames, QWidget *parent = 0);
     ~FuzzingWindow();
 
 signals:
@@ -48,7 +49,7 @@ private slots:
 
 private:
     Ui::FuzzingWindow *ui;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     QTimer *fuzzTimer;
     QList<int> foundIDs;
     QList<int> selectedIDs;

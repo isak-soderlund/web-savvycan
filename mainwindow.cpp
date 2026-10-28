@@ -200,6 +200,11 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->statusBar->insertWidget(0, &lbStatusConnected, 1);
     ui->statusBar->insertWidget(1, &lbStatusFilename, 1);
     ui->statusBar->insertWidget(2, &lbHelp, 1);
+    //web-savvycan: frames lost because the GUI fell behind the bus (counted by the connections)
+    lbStatusDropped.setToolTip(tr("Frames received from the device but discarded because the trace fell behind. "
+                                  "Reset by Clear Frames."));
+    ui->statusBar->insertWidget(3, &lbStatusDropped, 0);
+    updateDroppedStatus();
     //ui->statusBar->addWidget(&lbStatusDatabase);
     ui->lblRemoteConn->setVisible(false);
     ui->lineRemoteKey->setVisible(false);
@@ -1311,8 +1316,18 @@ void MainWindow::logReceivedFrame(CANConnection* conn, QVector<CommFrame> frames
     }
 }
 
+void MainWindow::updateDroppedStatus()
+{
+    const quint64 dropped = CANConManager::getInstance()->getDroppedFrames();
+    if (dropped == lastShownDropped) return;
+    lastShownDropped = dropped;
+    lbStatusDropped.setText(tr("Dropped: %1").arg(dropped));
+    lbStatusDropped.setStyleSheet(dropped ? QStringLiteral("color: #d03030; font-weight: bold;") : QString());
+}
+
 void MainWindow::tickGUIUpdate()
 {
+    updateDroppedStatus();
     rxFrames = model->sendBulkRefresh();
     //if(rxFrames>0)
     //{
@@ -1409,6 +1424,8 @@ void MainWindow::clearFrames()
     ui->canFramesView->scrollToTop();
     model->clearFrames();
     CANConManager::getInstance()->resetTimeBasis();
+    CANConManager::getInstance()->resetDroppedFrames();
+    updateDroppedStatus();
     ui->lbNumFrames->setText(QString::number(model->rowCount()));
     bDirty = false;
     loadedFileName = "";
@@ -1424,7 +1441,7 @@ void MainWindow::normalizeTiming()
 
 void MainWindow::handleCropLog()
 {
-    const QVector<CommFrame> *src = model->getListReference();
+    const FrameListView *src = model->getListReference();
     if (src->isEmpty())
     {
         QMessageBox::information(this, tr("Crop Log"), tr("No frames loaded."));
@@ -1604,7 +1621,8 @@ void MainWindow::handleSaveFilteredFile()
 {
     QString filename;
 
-    if (FrameFileIO::saveFrameFile(filename, model->getFilteredListReference()))
+    const QVector<CommFrame> snapshot = model->getFilteredListReference()->toVector();
+    if (FrameFileIO::saveFrameFile(filename, &snapshot))
     {
         loadedFileName = filename;
         updateFileStatus();
@@ -1705,7 +1723,8 @@ void MainWindow::handleSaveDecodedMethod(bool csv)
 void MainWindow::saveDecodedTextFileAsColumns(QString filename)
 {
     QFile *outFile = new QFile(filename);
-    const QVector<CommFrame> *frames = model->getFilteredListReference();
+    const QVector<CommFrame> snapshot = model->getFilteredListReference()->toVector();
+    const QVector<CommFrame> *frames = &snapshot;
 
     //const unsigned char *data;
     int dataLen;
@@ -1882,7 +1901,8 @@ Data Bytes: 88 10 00 13 BB 00 06 00
 void MainWindow::saveDecodedTextFile(QString filename)
 {
     QFile *outFile = new QFile(filename);
-    const QVector<CommFrame> *frames = model->getFilteredListReference();
+    const QVector<CommFrame> snapshot = model->getFilteredListReference()->toVector();
+    const QVector<CommFrame> *frames = &snapshot;
 
     const unsigned char *data;
     int dataLen;
@@ -2021,7 +2041,7 @@ void MainWindow::showGraphingWindow()
         }
     }
 */
-    const QVector<CommFrame> *frames;
+    const FrameListView *frames;
     if (!useFiltered)
         frames = model->getListReference();
     else
@@ -2046,7 +2066,7 @@ void MainWindow::showTemporalGraphWindow()
     //only create an instance of the object if we dont have one. Otherwise just display the existing one.
     if (!temporalGraphWindow)
     {
-        const QVector<CommFrame> *frames;
+        const FrameListView *frames;
         if (!useFiltered)
             frames = model->getListReference();
         else

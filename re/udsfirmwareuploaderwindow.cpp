@@ -13,7 +13,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 
-UDSFirmwareUploaderWindow::UDSFirmwareUploaderWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+UDSFirmwareUploaderWindow::UDSFirmwareUploaderWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::UDSFirmwareUploaderWindow)
 {

@@ -8,7 +8,7 @@
 #define MSG_COL     1
 #define VALUE_COL   2
 
-SignalViewerWindow::SignalViewerWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+SignalViewerWindow::SignalViewerWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::SignalViewerWindow)
 {

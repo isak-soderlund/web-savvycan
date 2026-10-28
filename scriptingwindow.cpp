@@ -14,7 +14,7 @@
 #include "helpwindow.h"
 #include "utility.h"
 
-ScriptingWindow::ScriptingWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+ScriptingWindow::ScriptingWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::ScriptingWindow)
 {

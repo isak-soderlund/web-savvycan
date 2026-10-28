@@ -10,6 +10,8 @@
 #include "dbc/dbchandler.h"
 #include "connections/canconnection.h"
 #include "utility.h"
+#include "framestore.h"
+#include <deque>
 
 enum class Column {
     TimeStamp = 0, ///< The timestamp when the frame was transmitted or received
@@ -72,8 +74,15 @@ public:
     void insertFrames(const QVector<CommFrame> &newFrames);
     void sortByColumn(int column);
     int getIndexFromTimeID(unsigned int ID, double timestamp);
-    const QVector<CommFrame> *getListReference() const; //thou shalt not modify these frames externally!
-    const QVector<CommFrame> *getFilteredListReference() const; //Thus saith the Lord, NO.
+    //web-savvycan: read-only, thread-safe views (FrameListView: count(), at(i), mid(), tail(), toVector(), iteration).
+    //getListReference() = every stored frame (a ring: the oldest go once MaximumFrames is reached),
+    //getFilteredListReference() = the rows of the main trace (an index list into the same frames, or the
+    //one-row-per-ID list in overwrite mode).
+    const FrameListView *getListReference() const; //thou shalt not modify these frames externally!
+    const FrameListView *getFilteredListReference() const; //Thus saith the Lord, NO.
+    //Frames the ring has dropped from its front (oldest) to make room since the last clear.
+    quint64 framesWrapped() const;
+    qsizetype storeCapacity() const;
     const QMap<int, bool> *getFiltersReference() const; //this neither
     const QMap<int, bool> *getBusFiltersReference() const; //this neither
     const QMap<int, bool> *getDirFiltersReference() const;
@@ -86,25 +95,49 @@ public slots:
 
 signals:
     void updatedFiltersList();
+    //web-savvycan: rows removed from the top of the trace because the ring wrapped (count of rows).
+    void framesTrimmed(int rows);
 
 private:
-    void qSortCommFrameAsc(QVector<CommFrame>* frames, Column column, int lowerBound, int upperBound);
-    void qSortCommFrameDesc(QVector<CommFrame>* frames, Column column, int lowerBound, int upperBound);
-    uint64_t getCommFrameVal(QVector<CommFrame> *frames, int row, Column col);
+    class FilteredView : public FrameListView
+    {
+    public:
+        FilteredView(const CommFrameModel *m) : FrameListView(&m->store.lock()), mModel(m) {}
+    protected:
+        qsizetype sizeLocked() const override;
+        bool frameLocked(qsizetype i, CommFrame &out) const override;
+    private:
+        const CommFrameModel *mModel;
+    };
+    friend class FilteredView;
+
+    uint64_t getCommFrameVal(const CommFrame &frame, Column col) const;
+    static quint64 overwriteKey(const CommFrame &frame);
+    const CommFrame *frameForRow(int row) const;
+    void ingestLocked(const CommFrame &frame, bool applyOffset); //store's write lock held
+    void registerFilters(const CommFrame &frame);
+    void pruneTrimmed();   //drop index rows whose frames the ring has dropped (no lock held)
+    void publishRows();    //tell the views about rows added since the last call (no lock held)
     quint64 changingKey(const CommFrame &frame) const;
     bool any_filters_are_configured(void);
     bool any_busfilters_are_configured(void);
     bool any_dirfilters_are_configured(void);
     bool any_lengthfilters_are_configured(void);
 
-    QVector<CommFrame> frames;
-    QVector<CommFrame> filteredFrames;
+    FrameStore store;                       //every frame (ring)
+    std::deque<quint64> filteredSeqs;        //rows of the trace in normal mode: seqs into store
+    bool filteredSorted = false;             //filteredSeqs no longer in arrival order (sortByColumn)
+    QVector<CommFrame> overwriteFrames;      //rows of the trace in overwrite mode (one per ID and bus)
+    QHash<quint64, int> overwriteRow;        //overwriteKey -> row in overwriteFrames
+    qsizetype publishedRows = 0;             //rows the views have been told about (rowCount())
+    bool pendingPrune = false;
+    FrameStoreView allView;
+    FilteredView filteredView;
     QMap<int, bool> filters;
     QMap<int, bool> busFilters;
     QMap<int, bool> dirFilters;
     QMap<int, bool> lengthFilters;
     DBCHandler *dbcHandler;
-    QMutex mutex;
     bool interpretFrames; //should we use the dbcHandler?
     bool overwriteDups; //should we display all frames or only the newest for each ID?
     bool filtersPersistDuringClear;

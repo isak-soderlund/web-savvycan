@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Qt>
+#include "framestore.h"
 #include <QObject>
 #include <QTimer>
 #include <QHash>
@@ -20,7 +21,7 @@ public:
     template <typename handler>
     using PendingConnection = std::function<QMetaObject::Connection(handler*)>; // lambda to call connect() in setReception()
 
-    ISOTP_HANDLER(const QVector<CommFrame> &modelFrames,
+    ISOTP_HANDLER(const FrameListView &modelFrames,
                   CanSendCallback sendCb,
                   GetNoOfBusesCallback getBusesCb,
                   PendingConnection<ISOTP_HANDLER> pendingConn
@@ -50,7 +51,7 @@ private:
     QHash<uint32_t, ISOTP_MESSAGE> messageBuffer;
     QList<CommFrame> sendingFrames;
     QList<CANFilter> filters;
-    const QVector<CommFrame> &modelFrames;
+    const FrameListView &modelFrames;
     bool useExtendedAddressing;
     bool isReceiving;
     bool waitingForFlow;

@@ -2,6 +2,7 @@
 #define SIGNALVIEWERWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include "dbc/dbchandler.h"
 
 namespace Ui {
@@ -13,7 +14,7 @@ class SignalViewerWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit SignalViewerWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit SignalViewerWindow(const FrameListView *frames, QWidget *parent = 0);
     ~SignalViewerWindow();
 
 private slots:
@@ -39,7 +40,7 @@ private:
     DBC_MESSAGE *currentlySelectedMsg;
 
     QList<DBC_SIGNAL *> signalList;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
 
     void processFrame(CommFrame &frame);
 };

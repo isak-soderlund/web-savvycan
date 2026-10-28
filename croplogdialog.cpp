@@ -158,7 +158,7 @@ static QString formatDuration(double secs)
 // CropLogDialog
 // =============================================================================
 
-CropLogDialog::CropLogDialog(const QVector<CommFrame> *frames, QWidget *parent)
+CropLogDialog::CropLogDialog(const FrameListView *frames, QWidget *parent)
     : QDialog(parent), m_frames(frames)
 {
     setWindowTitle(tr("Crop Log"));

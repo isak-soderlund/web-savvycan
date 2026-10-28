@@ -29,7 +29,7 @@ QPen FrameInfoWindow::bytePens[64];
 
 const int numIntervalHistBars = 20;
 
-FrameInfoWindow::FrameInfoWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+FrameInfoWindow::FrameInfoWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::FrameInfoWindow)
 {

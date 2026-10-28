@@ -39,8 +39,20 @@ class GVRetSerial : public CANConnection
     Q_OBJECT
 
 public:
-    GVRetSerial(QString portName, bool useTcp);
+    GVRetSerial(QString portName, bool useTcp, bool useThread = true);
     virtual ~GVRetSerial();
+
+    /**
+     * @brief web-savvycan: parse received bytes (what readSerialData() does with the port's data). Parsing
+     * runs in slices of at most rxSliceBudgetMs() per event-loop turn; the rest continues on the next
+     * turn, so a single-threaded (wasm) GUI stays responsive on a busy bus. Public for tests.
+     */
+    void processRxBytes(const QByteArray &data);
+    /** @brief 0 = parse everything at once (desktop default: parsing runs in the connection's thread). */
+    void setRxSliceBudgetMs(int ms) { mRxSliceMs = ms; }
+    int rxSliceBudgetMs() const { return mRxSliceMs; }
+    /** @brief bytes received but not parsed yet (waiting for the next slice) */
+    qsizetype pendingRxBytes() const { return mRxPending.size() - mRxPos; }
 
 protected:
 
@@ -63,6 +75,7 @@ private slots:
     void serialError(QSerialPort::SerialPortError err);
     void deviceConnected();
     void handleTick();
+    void processPendingRx();
 
 private:
     void readSettings();
@@ -103,6 +116,14 @@ protected:
     int32_t timeBasis;
     uint64_t lastSystemTimeBasis;
     uint64_t timeAtGVRETSync;
+    QByteArray mRxPending;   //received bytes not parsed yet
+    qsizetype mRxPos = 0;    //next byte of mRxPending to parse
+    bool mRxScheduled = false;
+#ifdef Q_OS_WASM
+    int mRxSliceMs = 8;      //single thread: leave the rest of the frame time to the GUI
+#else
+    int mRxSliceMs = 0;
+#endif
 };
 
 #endif // GVRETSERIAL_H

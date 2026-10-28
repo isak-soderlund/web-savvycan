@@ -3,7 +3,7 @@
 #include "mainwindow.h"
 #include "helpwindow.h"
 
-DiscreteStateWindow::DiscreteStateWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+DiscreteStateWindow::DiscreteStateWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::DiscreteStateWindow)
 {

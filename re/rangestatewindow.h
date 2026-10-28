@@ -2,6 +2,7 @@
 #define RANGESTATEWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include <QMap>
 #include "can_structs.h"
 
@@ -14,7 +15,7 @@ class RangeStateWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit RangeStateWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit RangeStateWindow(const FrameListView *frames, QWidget *parent = 0);
     ~RangeStateWindow();
     void showEvent(QShowEvent*);
 
@@ -25,7 +26,7 @@ private slots:
 
 private:
     Ui::RangeStateWindow *ui;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     QVector<CommFrame> frameCache;
     QList<int64_t> foundSignals;
     QMap<int, bool> idFilters;
