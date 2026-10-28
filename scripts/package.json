@@ -1,0 +1,8 @@
+{
+  "name": "web-savvycan-scripts",
+  "private": true,
+  "description": "Tools for scripts/smoke-wasm.sh (headless Chromium smoke test of the wasm build)",
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}

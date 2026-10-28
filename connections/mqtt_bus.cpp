@@ -51,12 +51,14 @@ void MQTT_BUS::piStarted()
     if (encPass.length() > 0)
         password = crypto->decryptToByteArray(encPass);
 
+#ifndef QT_NO_SSL // the wasm build has no TLS: MQTT over TLS (port 8883) is left out there
     if (port == 8883)
     {
         QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
         mqttClient = new QMQTT::Client(host, port, sslConfig);
     }
     else
+#endif
     {
         QHostAddress hAddr = QHostInfo::fromName(host).addresses()[0];
         sendDebug("IP Address of Host: " + hAddr.toString());
