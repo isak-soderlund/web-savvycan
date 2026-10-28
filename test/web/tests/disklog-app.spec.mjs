@@ -25,8 +25,8 @@ async function openApp(page) {
   return errors;
 }
 
-// File menu -> the n-th item, by position (POS below)
-const POS = JSON.parse(process.env.WSC_MENU_POS || '{"file":[22,12],"start":[120,0],"filtered":[120,0],"dialogDirect":[640,0]}');
+// By position (the menus are drawn in the canvas): File, and its "Start/Cease Continuous Logging" item.
+const POS = JSON.parse(process.env.WSC_MENU_POS || '{"file":[22,12],"start":[135,118]}');
 
 test('app: File > Start Continuous Logging, "Name it by the start time" -> a log file with the header; Cease closes it', async ({ page }) => {
   const errors = await openApp(page);
@@ -41,9 +41,9 @@ test('app: File > Start Continuous Logging, "Name it by the start time" -> a log
   await page.mouse.click(...POS.file);
   await sleep(500);
   await page.mouse.click(...POS.start);
-  await sleep(1000);
+  await sleep(1500);                             // the dialog asks for the remembered folder first
   await page.screenshot({ path: path.join(REPO, 'test/web/test-results/disklog/app-dialog.png') });
-  await page.mouse.click(...POS.dialogDirect);
+  await page.keyboard.press('Enter');            // the default button: "Name it by the start time" (a user gesture too)
   await page.waitForFunction(() => SavvyDiskLog.status().state === 'open', null, { timeout: 10000 });
   const st = await page.evaluate(() => SavvyDiskLog.status());
   await sleep(500);

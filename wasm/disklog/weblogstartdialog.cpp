@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSettings>
+#include <QTimer>
 #include <QVBoxLayout>
 
 WebLogStartDialog::WebLogStartDialog(bool filtered, QWidget *parent) : QDialog(parent)
@@ -96,12 +97,14 @@ WebLogStartDialog::WebLogStartDialog(bool filtered, QWidget *parent) : QDialog(p
     buttons->addStretch(1);
     buttons->addWidget(cancel);
     layout->addLayout(buttons);
-    setMinimumWidth(460);
+    setMinimumWidth(560);
+    adjustSize(); //word-wrapped labels: adjustSize() takes their height for this width
 }
 
 void WebLogStartDialog::showDirectory(const QString &name, const QString &permission)
 {
     if (!m_folder) return;
+    QTimer::singleShot(0, this, [this]() { adjustSize(); }); //the text's height changes
     if (name.isEmpty())
     {
         m_folder->setText(tr("Log folder: <i>not chosen yet</i>. The first time, the browser asks you to pick "
