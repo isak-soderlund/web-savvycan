@@ -1,0 +1,67 @@
+# web-savvycan: desktop (Linux, Qt 6.12) and WebAssembly (Qt 6.12 wasm_singlethread + Emscripten 5.0.5)
+# builds, with the same scripts as on the rig (scripts/README.md). Upstream's build.yml is left as it
+# came (it only runs on pushes to QT6WIP).
+name: web-savvycan build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Desktop + WebAssembly
+    runs-on: ubuntu-24.04
+    env:
+      WSC_JOBS: 4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache libgl-dev libegl-dev libopengl-dev \
+            libxkbcommon-dev libxkbcommon-x11-0 libfontconfig1-dev
+
+      - name: Toolchain cache (Qt, emsdk)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Qt
+            ~/emsdk
+            ~/.local/share/web-savvycan/aqt-venv
+          key: toolchain-${{ runner.os }}-${{ hashFiles('scripts/setup-toolchain.sh') }}
+
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-${{ runner.os }}-
+
+      - name: Toolchain
+        run: scripts/setup-toolchain.sh
+
+      - name: Desktop build (Release)
+        run: scripts/build-desktop.sh release
+
+      - name: WebAssembly build
+        run: scripts/build-wasm.sh
+
+      - name: Smoke test (headless Chromium)
+        run: |
+          (cd scripts && npm ci && npx playwright install --with-deps chromium)
+          scripts/smoke-wasm.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-savvycan-wasm
+          path: dist/
+          if-no-files-found: ignore

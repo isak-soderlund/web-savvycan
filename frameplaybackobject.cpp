@@ -2,7 +2,11 @@
 
 FramePlaybackObject::FramePlaybackObject()
 {
+#ifdef Q_OS_WASM
+    mThread_p = nullptr; // wasm_singlethread: no QThread, the object runs on the main thread
+#else
     mThread_p = new QThread();
+#endif
 
     currentPosition = 0;
     playbackInterval = 1;
@@ -33,9 +37,11 @@ void FramePlaybackObject::queueFrame(CommFrame frame)
 
 FramePlaybackObject::~FramePlaybackObject()
 {
-    mThread_p->quit();
-    mThread_p->wait();
-    delete mThread_p;
+    if (mThread_p) {
+        mThread_p->quit();
+        mThread_p->wait();
+        delete mThread_p;
+    }
 }
 
 quint64 FramePlaybackObject::updatePosition(bool forward)

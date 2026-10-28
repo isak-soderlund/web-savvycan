@@ -58,3 +58,9 @@ SavvyCAN.xcodeproj
 node_modules/
 test-results/
 playwright-report/
+
+# web-savvycan: wasm output
+dist/
+dist-exp/
+scripts/node_modules/
+aqtinstall.log

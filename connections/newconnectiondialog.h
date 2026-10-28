@@ -13,6 +13,11 @@ namespace Ui {
 class NewConnectionDialog;
 }
 
+#ifdef Q_OS_WASM
+class QLabel;
+class QPushButton;
+#endif
+
 class NewConnectionDialog : public QDialog
 {
     Q_OBJECT
@@ -54,6 +59,15 @@ private:
     void setPortName(CANCon::type pType, QString pPortName, QString pDriver);
     void fillBusSpeedLists();
     bool hasBusSettings();
+    void fillSerialPorts();
+#ifdef Q_OS_WASM
+    // web-savvycan: Web Serial needs the user to pick a device in the browser's chooser first.
+    void setupWebSerial();
+    void webSerialPortChosen(const QString &name, const QString &error);
+    QPushButton *btnChooseDevice = nullptr;
+    QPushButton *btnChooseAny = nullptr;
+    QLabel *lblWebSerial = nullptr;
+#endif
 };
 
 #endif // NEWCONNECTIONDIALOG_H

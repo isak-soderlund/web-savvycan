@@ -1,0 +1,18 @@
+// web-savvycan wasm build: Qt Serial Bus does not build for WebAssembly. An empty plugin list,
+// so the connection dialog offers no QtSerialBus devices.
+#pragma once
+#include <QList>
+#include <QString>
+#include <QStringList>
+#include <QCanBusFrame>
+#include <QCanBusDeviceInfo>
+class QCanBus {
+public:
+    static QCanBus *instance() { static QCanBus bus; return &bus; }
+    QStringList plugins() const { return {}; }
+    QList<QCanBusDeviceInfo> availableDevices(const QString &, QString *errorMessage = nullptr) const
+    {
+        if (errorMessage) *errorMessage = QStringLiteral("Qt Serial Bus is not available in the browser");
+        return {};
+    }
+};

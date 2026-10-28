@@ -54,6 +54,11 @@ CANConnection::CANConnection(QString pPort,
     mBusData[0].mBus.setActive(pActive);
  
     /* if needed, create a thread and move ourself into it */
+#ifdef Q_OS_WASM
+    /* wasm_singlethread: a QThread never starts there, and the BlockingQueuedConnection calls
+       into it would recurse forever. The connection lives on the main (only) thread. */
+    pUseThread = false;
+#endif
     if(pUseThread) {
         mThread_p = new QThread();
         /* move ourself to the thread */

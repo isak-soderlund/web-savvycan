@@ -134,7 +134,11 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(ui->actionSingle_Multi_State_2, &QAction::triggered, this, &MainWindow::showSingleMultiWindow);
     connect(ui->actionFile_Comparison, &QAction::triggered, this, &MainWindow::showComparisonWindow);
     connect(ui->actionDBC_Comparison, &QAction::triggered, this, &MainWindow::showDBCComparisonWindow);
+#ifdef SAVVYCAN_NO_SCRIPTING
+    ui->actionScripting_INterface->setVisible(false);
+#else
     connect(ui->actionScripting_INterface, &QAction::triggered, this, &MainWindow::showScriptingWindow);
+#endif
     connect(ui->actionPreferences, &QAction::triggered, this, &MainWindow::showSettingsDialog);
     connect(ui->actionUDS_Firmware_Update, &QAction::triggered, this, &MainWindow::showUDSFirmwareUploaderWindow);
     connect(ui->actionDBC_File_Manager, &QAction::triggered, this, &MainWindow::showDBCFileWindow);
@@ -342,7 +346,9 @@ void MainWindow::killEmAll()
     killWindow(dbcMainEditor);
     killWindow(settingsDialog);
     killWindow(discreteStateWindow);
+#ifndef SAVVYCAN_NO_SCRIPTING
     killWindow(scriptingWindow);
+#endif
     killWindow(rangeWindow);
     killWindow(dbcFileWindow);
     killWindow(fuzzingWindow);
@@ -2357,11 +2363,13 @@ void MainWindow::showUDSScanWindow()
 
 void MainWindow::showScriptingWindow()
 {
+#ifndef SAVVYCAN_NO_SCRIPTING
     if (!scriptingWindow)
     {
         scriptingWindow = new ScriptingWindow(model->getListReference());
     }
     scriptingWindow->show();
+#endif
 }
 
 void MainWindow::showRangeWindow()
