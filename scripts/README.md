@@ -38,8 +38,9 @@ Upstream's `BUILD_TESTS` target (`test/`) does not compile on QT6WIP (it still u
 scripts/build-wasm.sh                   # -> dist/
 scripts/build-wasm.sh --wasm-opt        # plus an extra wasm-opt -Oz pass
 scripts/build-wasm.sh --opt -Os         # another optimisation level (default -Oz)
+scripts/build-wasm.sh --gzip-loader     # wasm only as SavvyCAN.wasm.gz, decompressed in the page (20 MB file limits)
 scripts/build-wasm.sh --jspi            # JSPI instead of Asyncify
-scripts/build-wasm.sh -- -DWEB_SAVVYCAN_SCRIPTING=OFF   # without the scripting window (no Qt Qml)
+WASM_BUILD_DIR=build/wasm-noscript scripts/build-wasm.sh -- -DWEB_SAVVYCAN_SCRIPTING=OFF  # no scripting window/Qt Qml (own build dir: toggling it in one leaves stale moc output)
 scripts/smoke-wasm.sh                   # serve dist/, open it in headless Chromium, dist/smoke.png
 ```
 
@@ -50,12 +51,10 @@ prints the sizes. To try it by hand: `python3 -m http.server -d dist 8000`, then
 
 What the wasm build changes (all in `wasm/` and behind `EMSCRIPTEN` / `Q_OS_WASM`):
 
-- **Qt Serial Port / Serial Bus** do not exist for wasm. `QSerialPort`/`QSerialPortInfo` come from
-  `wasm/webserial/` (a `QIODevice` with Qt's API backed by Web Serial: `webserialport.*`, the bridge
-  `webserial.js` linked with `--pre-js`, tests in `wasm/webserial/tests`); `wasm/include/` has the
-  `QCanBus*` stand-ins (empty plugin list, `QCanBusFrame`'s enum). The QtSerialBus connection
-  (`serialbusconnection.cpp`) is not compiled. In the browser the connection window offers GVRET and
-  LAWICEL only, with "Choose device..." for the browser's port chooser.
+- **Qt Serial Port / Serial Bus** do not exist for wasm. Qt Serial Port is replaced by the Web Serial
+  stand-in in `wasm/webserial/` (`QSerialPort`/`QSerialPortInfo` with Qt's API, and the JS bridge);
+  `wasm/include/` has `QCanBus*` stand-ins (empty plugin list, `QCanBusFrame`'s enum). The
+  QtSerialBus connection (`serialbusconnection.cpp`) is not compiled.
 - **No threads:** connections, the frame sender and playback run on the main thread
   (`canconnection.cpp`, `framesenderobject.cpp`, `frameplaybackobject.cpp`).
 - **No TLS:** MQTT over TLS is left out (`QT_NO_SSL`).
@@ -64,7 +63,31 @@ What the wasm build changes (all in `wasm/` and behind `EMSCRIPTEN` / `Q_OS_WASM
 - Optimised for size (`-Oz`, `WEB_SAVVYCAN_WASM_LINK_OPT`).
 - `WEB_SAVVYCAN_SCRIPTING=OFF` (any build) leaves the scripting window and Qt Qml out (`SAVVYCAN_NO_SCRIPTING`).
 
-### On the rig
+### Sizes and JSPI (measured 2026-10-28, Qt 6.12.0, Emscripten 5.0.5)
+
+`scripts/wasm-size-experiments.sh` rebuilds these; every variant except JSPI passes the smoke test.
+
+| Variant | .wasm | gzip -9 | brotli 11 |
+| --- | --- | --- | --- |
+| default: `-Oz`, Asyncify | 35.06 MB | 11.13 MB | 7.86 MB |
+| + `--wasm-opt` (extra `wasm-opt -Oz`) | 33.94 MB | 11.00 MB | 7.83 MB |
+| `-Os` instead of `-Oz` | 36.25 MB | 11.33 MB | 7.94 MB |
+| no scripting window (`WEB_SAVVYCAN_SCRIPTING=OFF`, no Qt Qml) | 29.34 MB | 9.47 MB | 6.73 MB |
+| no scripting + `--wasm-opt` | 28.45 MB | 9.36 MB | 6.72 MB |
+| JSPI instead of Asyncify (does not start, below) | 23.49 MB | 8.35 MB | 6.13 MB |
+
+SavvyCAN.js is 0.25 MB (0.05 MB brotli); qtloader.js and the html are a few kB.
+
+- **20 MB per file (Shopify Oxygen):** no raw .wasm fits. `--gzip-loader` ships only
+  `SavvyCAN.wasm.gz` (11.1 MB) and the page decompresses it (`DecompressionStream('gzip')`; Chromium
+  has no `'brotli'` there): every file is under 20 MB, smoke test passes.
+- **JSPI:** links (Asyncify costs ~11.5 MB of the wasm), but fails at start with "trying to suspend
+  without WebAssembly.promising": the prebuilt Qt is configured without `wasm-jspi`
+  (`QT_FEATURE_wasm_jspi -1`), so its JS-to-wasm callbacks are not promising-wrapped. JSPI needs Qt
+  6.12 built from source with `-feature-wasm-jspi`. Asyncify works (the smoke test's modal
+  `QMessageBox` through `exec()`).
+
+
 
 Heavy jobs share the PC with the rig's test jobs and a Windows VM: run builds through the wrapper,
 which takes the build lock (one job at a time), runs the job in its own 3G memory slice

@@ -26,6 +26,8 @@ for v in "${VARIANTS[@]}"; do
     esac
     echo "=== $v: ${ARGS[*]}"
     D="$OUT/$v"
+    # Toggling WEB_SAVVYCAN_SCRIPTING in an existing build dir leaves stale moc output: own dir.
+    case "$v" in noscript*) export WASM_BUILD_DIR="$ROOT/build/wasm-noscript" ;; *) unset WASM_BUILD_DIR ;; esac
     if ! scripts/build-wasm.sh --dist "$D" "${ARGS[@]}" > "$OUT/$v.build.log" 2>&1; then
         RESULTS+=("$v|build failed (see dist-exp/$v.build.log)"); tail -5 "$OUT/$v.build.log"; continue
     fi
@@ -36,7 +38,7 @@ for v in "${VARIANTS[@]}"; do
     RESULTS+=("$v|$sizes|$smoke")
 done
 # Back to the default configuration for later scripts/build-wasm.sh runs.
-"$QT_WASM/bin/qt-cmake" -S "$ROOT" -B "${WASM_BUILD_DIR:-$ROOT/build/wasm}" -DWEB_SAVVYCAN_SCRIPTING=ON -DWEB_SAVVYCAN_JSPI=OFF -DWEB_SAVVYCAN_WASM_LINK_OPT=-Oz >/dev/null 2>&1 || true
+"$QT_WASM/bin/qt-cmake" -S "$ROOT" -B "$ROOT/build/wasm" -DWEB_SAVVYCAN_SCRIPTING=ON -DWEB_SAVVYCAN_JSPI=OFF -DWEB_SAVVYCAN_WASM_LINK_OPT=-Oz >/dev/null 2>&1 || true
 echo
 echo "| variant | wasm MB | gzip MB | brotli MB | js MB | smoke |"
 echo "| --- | --- | --- | --- | --- | --- |"
