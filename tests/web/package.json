@@ -1,0 +1,12 @@
+{
+  "name": "web-savvycan-tests",
+  "private": true,
+  "description": "web-savvycan's browser tests: a fake resolve-can-1 behind a Web Serial mock, Playwright specs",
+  "scripts": {
+    "unit": "node --test unit/*.test.js",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}
