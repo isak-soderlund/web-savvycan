@@ -128,3 +128,9 @@ cleverness, one way to do each thing (e.g. one serial mock, one build path). Fin
   scripting returns with its stage.
 - Ship with `--gzip-loader` (the page fetches `SavvyCAN.wasm.gz` and unpacks it; every file under Oxygen's 20 MB).
   Building Qt from source for JSPI (smaller still) is deferred.
+
+## Found by the sanitizer builds (2026-10-28, for the simplification/fix pass)
+
+- ASan/UBSan: `canframemodel.cpp:171`: load of value 190 for a `bool` (an uninitialised `bool` member, upstream).
+- TSan: 6 data-race warnings at start-up, first in `QEvent::type()`; Qt itself isn't TSan-built, so some may be false.
+- clang: `canframemodel.cpp:689` compares two different enum types (upstream).
