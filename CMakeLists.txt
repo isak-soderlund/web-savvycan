@@ -14,9 +14,26 @@ set(CMAKE_AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/ui)
 option(USE_DBUS "Enable DBus support" OFF)
 option(BUILD_TESTS "Build test target" OFF)
 option(USE_SANITIZER "Enable sanitizers for Debug builds" OFF)
+option(USE_TSAN "Enable ThreadSanitizer for Debug builds (instead of USE_SANITIZER's ASan/UBSan)" OFF)
 
-find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS Core Gui PrintSupport SerialBus SerialPort Widgets Help Network OpenGL Qml)
-find_package(OpenGL REQUIRED)
+# web-savvycan: the WebAssembly build (Qt for WebAssembly, wasm_singlethread). Qt 6.12 has no
+# Serial Port / Serial Bus for wasm, so the wasm build uses the stand-ins in wasm/ and leaves out
+# the QtSerialBus connection, OpenGL, Help and MQTT over TLS. The desktop build is unchanged.
+if(EMSCRIPTEN)
+    set(WEB_SAVVYCAN_WASM ON)
+else()
+    set(WEB_SAVVYCAN_WASM OFF)
+endif()
+option(WEB_SAVVYCAN_JSPI "wasm: JSPI instead of Asyncify for QDialog::exec() (needs a Qt built with JSPI)" OFF)
+option(WEB_SAVVYCAN_SCRIPTING "The scripting window (QJSEngine, Qt Qml); OFF leaves Qt Qml out" ON)
+set(WEB_SAVVYCAN_WASM_LINK_OPT "-Oz" CACHE STRING "wasm: optimisation level for our code and the link (-O2, -Os, -Oz)")
+
+if(WEB_SAVVYCAN_WASM)
+    find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS Core Gui PrintSupport Widgets Network)
+else()
+    find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS Core Gui PrintSupport SerialBus SerialPort Widgets Help Network OpenGL Qml)
+    find_package(OpenGL REQUIRED)
+endif()
 
 if(Qt6_VERSION VERSION_LESS ${QT_MIN_VERSION})
     message(FATAL_ERROR "Qt version ${Qt6_VERSION} found, but ${QT_MIN_VERSION} or higher is required")
@@ -26,7 +43,10 @@ endif()
 function(set_debug_sanitizer_options target_name)
     if(CMAKE_BUILD_TYPE STREQUAL Debug)
         target_compile_options(${target_name} PRIVATE -Wall -Wextra -g -O0)
-        if(USE_SANITIZER)
+        if(USE_TSAN)
+            target_compile_options(${target_name} PRIVATE -fsanitize=thread -fno-omit-frame-pointer)
+            target_link_options(${target_name} PRIVATE -fsanitize=thread)
+        elseif(USE_SANITIZER)
             target_compile_options(${target_name} PRIVATE -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
             target_link_options(${target_name} PRIVATE -fsanitize=address -fsanitize=undefined)
         endif()
@@ -69,7 +89,6 @@ qt_add_executable(SavvyCAN WIN32 MACOSX_BUNDLE
     connections/lawicel_serial.cpp connections/lawicel_serial.h
     connections/mqtt_bus.cpp connections/mqtt_bus.h
     connections/newconnectiondialog.cpp connections/newconnectiondialog.h
-    connections/serialbusconnection.cpp connections/serialbusconnection.h
     connections/socketcand.cpp connections/socketcand.h
     dbc/dbc_classes.cpp dbc/dbc_classes.h
     dbc/dbchandler.cpp dbc/dbchandler.h
@@ -130,8 +149,6 @@ qt_add_executable(SavvyCAN WIN32 MACOSX_BUNDLE
     re/sniffer/snifferwindow.cpp re/sniffer/snifferwindow.h
     re/temporalgraphwindow.cpp re/temporalgraphwindow.h
     re/udsscanwindow.cpp re/udsscanwindow.h
-    scriptcontainer.cpp scriptcontainer.h
-    scriptingwindow.cpp scriptingwindow.h
     signalviewerwindow.cpp signalviewerwindow.h
     simplecrypt.cpp simplecrypt.h
     triggerdialog.cpp triggerdialog.h triggerdialog.ui
@@ -139,7 +156,7 @@ qt_add_executable(SavvyCAN WIN32 MACOSX_BUNDLE
     utils/HexSpinBox.h
     utils/lfqueue.h
     images.qrc icons.qrc
-    ui/bisectwindow.ui ui/canbridgewindow.ui ui/candatagrid.ui ui/connectionwindow.ui ui/dbccomparatorwindow.ui ui/dbcloadsavewindow.ui ui/dbcmaineditor.ui ui/dbcmessageeditor.ui ui/dbcnodeduplicateeditor.ui ui/dbcnodeeditor.ui ui/dbcnoderebaseeditor.ui ui/dbcsignaleditor.ui ui/discretestatewindow.ui ui/filecomparatorwindow.ui ui/udsfirmwareuploaderwindow.ui ui/flowviewwindow.ui ui/frameinfowindow.ui ui/frameplaybackwindow.ui ui/framesenderwindow.ui ui/fuzzingwindow.ui ui/graphingwindow.ui ui/helpwindow.ui ui/isotp_interpreterwindow.ui ui/mainsettingsdialog.ui ui/mainwindow.ui ui/motorcontrollerconfigwindow.ui ui/newconnectiondialog.ui ui/newgraphdialog.ui ui/rangestatewindow.ui ui/scriptingwindow.ui ui/searchwindow.ui ui/signalviewerwindow.ui ui/snifferwindow.ui ui/temporalgraphwindow.ui ui/udsscanwindow.ui
+    ui/bisectwindow.ui ui/canbridgewindow.ui ui/candatagrid.ui ui/connectionwindow.ui ui/dbccomparatorwindow.ui ui/dbcloadsavewindow.ui ui/dbcmaineditor.ui ui/dbcmessageeditor.ui ui/dbcnodeduplicateeditor.ui ui/dbcnodeeditor.ui ui/dbcnoderebaseeditor.ui ui/dbcsignaleditor.ui ui/discretestatewindow.ui ui/filecomparatorwindow.ui ui/udsfirmwareuploaderwindow.ui ui/flowviewwindow.ui ui/frameinfowindow.ui ui/frameplaybackwindow.ui ui/framesenderwindow.ui ui/fuzzingwindow.ui ui/graphingwindow.ui ui/helpwindow.ui ui/isotp_interpreterwindow.ui ui/mainsettingsdialog.ui ui/mainwindow.ui ui/motorcontrollerconfigwindow.ui ui/newconnectiondialog.ui ui/newgraphdialog.ui ui/rangestatewindow.ui ui/searchwindow.ui ui/signalviewerwindow.ui ui/snifferwindow.ui ui/temporalgraphwindow.ui ui/udsscanwindow.ui
 )
 
 if(APPLE)
@@ -161,9 +178,22 @@ target_include_directories(SavvyCAN PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/connections
 )
 
-target_compile_definitions(SavvyCAN PRIVATE
-    QCUSTOMPLOT_USE_OPENGL
-)
+if(WEB_SAVVYCAN_SCRIPTING)
+    find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS Qml)
+    target_sources(SavvyCAN PRIVATE
+        scriptcontainer.cpp scriptcontainer.h
+        scriptingwindow.cpp scriptingwindow.h
+        ui/scriptingwindow.ui
+    )
+    target_link_libraries(SavvyCAN PRIVATE Qt6::Qml) # for QJSEngine
+else()
+    target_compile_definitions(SavvyCAN PRIVATE SAVVYCAN_NO_SCRIPTING)
+endif()
+
+if(NOT WEB_SAVVYCAN_WASM)
+    target_sources(SavvyCAN PRIVATE connections/serialbusconnection.cpp connections/serialbusconnection.h)
+    target_compile_definitions(SavvyCAN PRIVATE QCUSTOMPLOT_USE_OPENGL)
+endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL Release)
     target_compile_definitions(SavvyCAN PRIVATE QT_NO_DEBUG_OUTPUT)
@@ -175,15 +205,22 @@ target_link_libraries(SavvyCAN PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::PrintSupport
-    Qt6::SerialBus
-    Qt6::SerialPort
     Qt6::Widgets
-    Qt6::Help
     Qt6::Network
-    Qt6::OpenGL
-    Qt6::Qml # for QJSEngine
-    OpenGL::GL
 )
+if(NOT WEB_SAVVYCAN_WASM)
+    target_link_libraries(SavvyCAN PRIVATE
+        Qt6::SerialBus
+        Qt6::SerialPort
+        Qt6::Help
+        Qt6::OpenGL
+        OpenGL::GL
+    )
+endif()
+
+if(WEB_SAVVYCAN_WASM)
+    include(wasm/wasm.cmake)
+endif()
 
 if(USE_DBUS AND UNIX AND NOT APPLE)
     target_link_libraries(SavvyCAN PRIVATE Qt6::DBus)

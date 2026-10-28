@@ -1,0 +1,3 @@
+// web-savvycan wasm build: Qt Serial Port does not exist for WebAssembly; see ../qserialport_wasm.h
+#pragma once
+#include "../qserialport_wasm.h"
