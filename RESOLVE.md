@@ -141,5 +141,9 @@ cleverness, one way to do each thing (e.g. one serial mock, one build path). Fin
 ## Found by the sanitizer builds (2026-10-28, for the simplification/fix pass)
 
 - ASan/UBSan: `canframemodel.cpp:171`: load of value 190 for a `bool` (an uninitialised `bool` member, upstream).
-- TSan: 6 data-race warnings at start-up, first in `QEvent::type()`; Qt itself isn't TSan-built, so some may be false.
-- clang: `canframemodel.cpp:689` compares two different enum types (upstream).
+  Fixed (the frame store's constructor); the simplified tree starts clean.
+- TSan: data-race warnings at start-up, first in `QEvent::type()`. On the simplified tree 5, all events handed to
+  another thread through Qt's posted-event queue (Qt's QMutex isn't visible to TSan in an uninstrumented Qt): Qt's
+  D-Bus thread and the frame sender's thread; none in our code (docs/SIMPLIFY.md C2).
+- clang: `canframemodel.cpp:689` compares two different enum types (upstream): a real bug (remote frames showed
+  data in the decimal column), fixed.
