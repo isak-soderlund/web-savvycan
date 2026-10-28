@@ -34,6 +34,7 @@ done
 
 step "aqtinstall venv: $VENV"
 mkdir -p "$STATE"
+cd "$STATE"   # aqtinstall writes aqtinstall.log into the current directory
 if [ ! -x "$VENV/bin/aqt" ]; then
     python3 -m venv "$VENV"
     "$VENV/bin/pip" install -q --upgrade pip
