@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "tracerowheader.h"
 #include "ui_mainwindow.h"
 #include "can_structs.h"
 #include <QDateTime>
@@ -45,16 +46,17 @@ MainWindow::MainWindow(QWidget *parent) :
 
     model = new CommFrameModel(this); // set parent to mainwindow to prevent canframemodel to change thread (might be done by setModel but just in case)
 
-    QSortFilterProxyModel* proxyModel = new QSortFilterProxyModel;
-    proxyModel->setSourceModel(model);
-
-    ui->canFramesView->setModel(proxyModel);
+    //web-savvycan: the view shows the model directly. The QSortFilterProxyModel that sat in between
+    //sorted and filtered nothing (sorting is CommFrameModel::sortByColumn, filtering its index list)
+    //but kept its own row mapping, rebuilt on every insert: O(rows) per GUI tick and two ints per row.
+    ui->canFramesView->setModel(model);
 
     settingsDialog = new MainSettingsDialog(); //instantiate the settings dialog so it can initialize settings if this is the first run or the config file was deleted.
     settingsDialog->updateSettings(); //write out all the settings. If this is the first run it'll write defaults out.
 
     readSettings();
 
+    ui->canFramesView->setVerticalHeader(new TraceRowHeader(Qt::Vertical, ui->canFramesView)); //see tracerowheader.h
     QHeaderView *verticalHeader = ui->canFramesView->verticalHeader();
     verticalHeader->setSectionResizeMode(QHeaderView::Fixed);
     QSettings settings;

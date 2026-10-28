@@ -18,6 +18,7 @@
 #include <memory>
 
 #include "canframemodel.h"
+#include "tracerowheader.h"
 #include "canconmanager.h"
 #include "gvretserial.h"
 #include "lawicel_serial.h"
@@ -46,6 +47,64 @@ struct BusGen
         if (slcan) return tf::slcanLine(id, d, fd, fd, false);
         return tf::gvretFrame(id, d, fd, fd, 0, quint32(n * 100));
     }
+};
+
+// QTableView with its expensive entry points timed (the longest call of each)
+class TimedTableView : public QTableView
+{
+public:
+    // the map lives outside the view: the headers (children) still get events while the view dies
+    explicit TimedTableView(QMap<QString, qint64> *costs) : maxMs(*costs) {}
+    QMap<QString, qint64> &maxMs;
+    template <typename F> void timed(const char *what, F f)
+    {
+        QElapsedTimer t; t.start();
+        f();
+        qint64 &m = maxMs[what];
+        m = std::max(m, t.elapsed());
+    }
+    void doItemsLayout() override { timed("doItemsLayout", [&] { QTableView::doItemsLayout(); }); }
+    void updateGeometries() override { timed("updateGeometries", [&] { QTableView::updateGeometries(); }); }
+    void paintEvent(QPaintEvent *e) override { timed("paintEvent", [&] { QTableView::paintEvent(e); }); }
+    void timerEvent(QTimerEvent *e) override { timed("timerEvent", [&] { QTableView::timerEvent(e); }); }
+    void rowsInserted(const QModelIndex &p, int a, int b) override { timed("rowsInserted", [&] { QTableView::rowsInserted(p, a, b); }); }
+    void rowsAboutToBeRemoved(const QModelIndex &p, int a, int b) override { timed("rowsAboutToBeRemoved", [&] { QTableView::rowsAboutToBeRemoved(p, a, b); }); }
+    bool viewportEvent(QEvent *e) override { bool r; timed("viewportEvent", [&] { r = QTableView::viewportEvent(e); }); return r; }
+    bool event(QEvent *e) override { bool r; timed(qPrintable(QString("event%1").arg(int(e->type()))), [&] { r = QTableView::event(e); }); return r; }
+};
+
+class TimedHeader : public TraceRowHeader
+{
+public:
+    TimedHeader(Qt::Orientation o, QMap<QString, qint64> *m, const char *n) : TraceRowHeader(o), mMax(m), mName(n) {}
+    void paintEvent(QPaintEvent *e) override
+    {
+        const bool outside = orientation() == Qt::Vertical &&
+            (visualIndexAt(e->rect().top()) < 0 || visualIndexAt(e->rect().bottom()) < 0);
+        QElapsedTimer t; t.start();
+        TraceRowHeader::paintEvent(e);
+        qint64 &m = (*mMax)[QString(mName) + (outside ? ".paintOutside" : ".paint")];
+        m = std::max(m, t.elapsed());
+        if (outside) (*mMax)[QString(mName) + ".outsidePaints"]++;
+    }
+    bool viewportEvent(QEvent *e) override
+    {
+        QElapsedTimer t; t.start();
+        bool r = QHeaderView::viewportEvent(e);
+        qint64 &m = (*mMax)[QString(mName) + ".vp" + QString::number(int(e->type()))];
+        m = std::max(m, t.elapsed());
+        return r;
+    }
+    QSize sizeHint() const override
+    {
+        QElapsedTimer t; t.start();
+        QSize r = QHeaderView::sizeHint();
+        qint64 &m = (*mMax)[QString(mName) + ".sizeHint"];
+        m = std::max(m, t.elapsed());
+        return r;
+    }
+    QMap<QString, qint64> *mMax;
+    const char *mName;
 };
 
 class TestIngestLoad : public QObject
@@ -119,30 +178,52 @@ private slots:
         CANConManager *mgr = CANConManager::getInstance();
         mgr->add(conn);
         CommFrameModel model;
-        QObject::connect(mgr, &CANConManager::framesReceived, &model, &CommFrameModel::addFrames);
+        // as MainWindow's direct connection, timed
+        qint64 maxAddMs = 0;
+        auto ingest = QObject::connect(mgr, &CANConManager::framesReceived, &model, [&](CANConnection *c, QVector<CommFrame> &v) {
+            QElapsedTimer t; t.start();
+            model.addFrames(c, v);
+            maxAddMs = std::max(maxAddMs, t.elapsed());
+        });
 
-        QTableView view;
+        QMap<QString, qint64> viewCosts;
+        TimedTableView view(&viewCosts);
+        view.setVerticalHeader(new TimedHeader(Qt::Vertical, &view.maxMs, "vhdr"));
+        view.setHorizontalHeader(new TimedHeader(Qt::Horizontal, &view.maxMs, "hhdr"));
         view.setModel(&model);
+        // as MainWindow sets up canFramesView
+        view.verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
         view.verticalHeader()->setDefaultSectionSize(20);
+        view.horizontalHeader()->setStretchLastSection(true);
+        view.setAlternatingRowColors(true);
+        view.setWordWrap(false);
+        view.setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
         view.resize(1000, 600);
-        view.show();
+        if (!qEnvironmentVariableIsSet("WSC_LOAD_NOVIEW")) view.show();
 
         // GUI tick as MainWindow::tickGUIUpdate (250 ms): publish rows, scroll, signal the windows
         int ticks = 0;
+        qint64 maxTickMs = 0, maxGapAfterStartMs = 0;
         QTimer guiTick;
         QObject::connect(&guiTick, &QTimer::timeout, [&] {
+            QElapsedTimer t; t.start();
             if (model.sendBulkRefresh() > 0) view.scrollToBottom();
             ticks++;
+            maxTickMs = std::max(maxTickMs, t.elapsed());
         });
         guiTick.start(250);
 
+        QElapsedTimer runClock;
+        runClock.start();
         // GUI thread responsiveness: the longest gap between 10 ms timer events
         qint64 maxGapMs = 0;
         QElapsedTimer gapClock;
         gapClock.start();
         QTimer gapTimer;
         QObject::connect(&gapTimer, &QTimer::timeout, [&] {
-            maxGapMs = std::max(maxGapMs, gapClock.restart());
+            const qint64 g = gapClock.restart();
+            maxGapMs = std::max(maxGapMs, g);
+            if (runClock.elapsed() > 1000) maxGapAfterStartMs = std::max(maxGapAfterStartMs, g);
         });
         gapTimer.start(10);
 
@@ -164,7 +245,6 @@ private slots:
         // the device: rate frames/s, in bursts every 2 ms (USB delivers in packets)
         std::atomic<quint64> generated{0};
         std::atomic<bool> stopGen{false};
-        QElapsedTimer runClock;
         runClock.start();
         auto produce = [&]() -> QByteArray {
             const quint64 due = quint64(double(runClock.nsecsElapsed()) * 1e-9 * rate);
@@ -217,7 +297,7 @@ private slots:
         const quint64 total = generated.load();
         QElapsedTimer settle;
         settle.start();
-        qsizetype left = 1;
+        std::atomic<qsizetype> left{1};
         while (settle.elapsed() < 30000)
         {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
@@ -237,15 +317,22 @@ private slots:
         const double secs = runClock.elapsed() / 1000.0;
         qInfo().noquote() << QString("%1: %2 frames in %3 s (%4/s), in model %5 (ring %6, wrapped %7), dropped %8, "
                                      "rows %9, ticks %10, max GUI gap %11 ms, RSS start %12 MB, after ring full %13 MB, "
-                                     "max %14 MB, end %15 MB, reader reads %16")
+                                     "max %14 MB, end %15 MB, reader reads %16; longest addFrames %17 ms, GUI tick %18 ms, gap after 1st s %19 ms")
                                  .arg(QTest::currentDataTag()).arg(total).arg(secs, 0, 'f', 1).arg(total / secs, 0, 'f', 0)
                                  .arg(inModel).arg(model.totalFrameCount()).arg(model.framesWrapped()).arg(dropped)
                                  .arg(model.rowCount()).arg(ticks).arg(maxGapMs)
                                  .arg(rssStart / 1024).arg(rssAfterFill / 1024).arg(rssMax / 1024).arg(tf::rssKb() / 1024)
-                                 .arg(readerReads.load());
+                                 .arg(readerReads.load()).arg(maxAddMs).arg(maxTickMs).arg(maxGapAfterStartMs);
 
+        {
+            QStringList costs;
+            for (auto it = view.maxMs.cbegin(); it != view.maxMs.cend(); ++it)
+                if (it.key().endsWith("outsidePaints")) costs << QString("%1 %2").arg(it.key()).arg(it.value());
+                else if (it.value() >= 5) costs << QString("%1 %2 ms").arg(it.key()).arg(it.value());
+            qInfo().noquote() << "view, longest calls:" << costs.join(", ");
+        }
         // every frame accounted for
-        QCOMPARE(left, qsizetype(0));
+        QCOMPARE(left.load(), qsizetype(0));
         QCOMPARE(inModel + dropped, total);
         QVERIFY(total >= quint64(rate) * quint64(seconds) * 9 / 10);
         // the ring stays bounded, and the rows match it
@@ -267,11 +354,11 @@ private slots:
             // memory: once the ring is full it must not keep growing (a little slack for the allocator)
             QVERIFY2(rssAfterFill == 0 || rssMax - rssAfterFill < 64 * 1024,
                      qPrintable(QString("RSS grew %1 MB after the ring was full").arg((rssMax - rssAfterFill) / 1024)));
-            QVERIFY2(maxGapMs < 1000, qPrintable(QString("GUI thread stalled %1 ms").arg(maxGapMs)));
+            QVERIFY2(maxGapAfterStartMs < 250, qPrintable(QString("GUI thread stalled %1 ms").arg(maxGapAfterStartMs)));
             QCOMPARE(dropped, quint64(0));
         }
 
-        QObject::disconnect(mgr, &CANConManager::framesReceived, &model, &CommFrameModel::addFrames);
+        QObject::disconnect(ingest);
         mgr->remove(conn);
         delete conn;
     }

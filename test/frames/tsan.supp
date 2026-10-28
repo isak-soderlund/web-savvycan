@@ -1,0 +1,13 @@
+# ThreadSanitizer suppressions for the frame tests (TSAN_OPTIONS=suppressions=test/frames/tsan.supp).
+# Qt itself is not built with TSan, so synchronisation inside the Qt libraries (QThreadPool, which
+# QtGui's raster painting uses for "Thread (pooled)" workers; QSemaphore behind
+# Qt::BlockingQueuedConnection; the event queue's mutex) is invisible to TSan, and memory handed
+# between threads through them is reported as a race. Only reports raised inside the Qt libraries are
+# suppressed here; races in our code (framestore, canframemodel, connections) still fail the run.
+called_from_lib:libQt6Core.so.6
+called_from_lib:libQt6Gui.so.6
+called_from_lib:libQt6Widgets.so.6
+# Deleting a connection object from the GUI thread while it lives in its own QThread (SavvyCAN's
+# design, M7): stop() hands over through a BlockingQueuedConnection (QSemaphore, invisible to TSan)
+# before the destructor rewrites the vptr.
+race:CANConnection::~CANConnection
