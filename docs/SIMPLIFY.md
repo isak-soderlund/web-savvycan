@@ -185,9 +185,9 @@ F1. **`scripts/wasm-size-experiments.sh`**: the experiment is done and its decis
 F2. One build path: `scripts/build-wasm.sh` and `scripts/build-desktop.sh` (CMake); options nobody uses get cut
 where found.
 *Done:* `build-wasm.sh` lost `--opt`, `--wasm-opt` (size experiments only), `--gzip-loader` (a no-op, it is the
-default) and `-j` (`WSC_JOBS`); kept `--clean`, `--no-gzip-loader`, `--scripting`, `--jspi` (one line), `--dist`, `--`.
+default) and `-j` (`WSC_JOBS`); kept `--clean`, `--no-gzip-loader`, `--dist`, `--` (`--scripting`/`--jspi` went at the merge, with G3).
 `build-desktop.sh` lost `--tests` (upstream's `BUILD_TESTS` doesn't compile) and `-j`. `setup-toolchain.sh`: nothing
-unused. The CMake cache option `WEB_SAVVYCAN_WASM_LINK_OPT` (app side) is now only ever its default.
+unused. The CMake cache option `WEB_SAVVYCAN_WASM_LINK_OPT` went at the merge (`-Oz` in `wasm.cmake`).
 
 ## G. Found while simplifying (app)
 
@@ -205,7 +205,7 @@ G3. **Build options nobody uses:** `WEB_SAVVYCAN_JSPI` (Qt isn't built for JSPI;
 `WEB_SAVVYCAN_SCRIPTING` (always off in the browser, on on the desktop), `WEB_SAVVYCAN_WASM` (= `EMSCRIPTEN`),
 `SAVVYCAN_NO_SCRIPTING` (= `Q_OS_WASM`), and the wasm build spread over three CMake files (`wasm.cmake`,
 `webserial.cmake`, `disklog.cmake`). **Change:** one `wasm/wasm.cmake`; scripting = desktop only. *Done.*
-(`scripts/build-wasm.sh --jspi/--scripting` now do nothing: to remove there.)
+(`scripts/build-wasm.sh --jspi/--scripting` removed at the merge.)
 
 G4. **Two names for one function:** `Features::enabledFeature()` and `Features::on()`. **Change:** `on()` only.
 *Done.*

@@ -23,8 +23,8 @@ target_compile_definitions(SavvyCAN PRIVATE QT_NO_SSL)
 set_source_files_properties(mqtt/qmqtt_ssl_socket_p.h PROPERTIES SKIP_AUTOMOC ON)
 
 # Size: our own code optimised for size; Qt's static libraries come prebuilt.
-target_compile_options(SavvyCAN PRIVATE ${WEB_SAVVYCAN_WASM_LINK_OPT})
-target_link_options(SavvyCAN PRIVATE ${WEB_SAVVYCAN_WASM_LINK_OPT})
+target_compile_options(SavvyCAN PRIVATE -Oz)
+target_link_options(SavvyCAN PRIVATE -Oz)
 # QDialog::exec() and the other nested event loops need the stack switched out (Asyncify works with
 # Qt's prebuilt binaries; JSPI would need a Qt built for it).
 target_link_options(SavvyCAN PRIVATE "-sASYNCIFY" "-lembind")

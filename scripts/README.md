@@ -38,8 +38,6 @@ does not compile on QT6WIP).
 ```bash
 scripts/build-wasm.sh                   # -> dist/ (wasm as SavvyCAN.wasm.gz, unpacked by the page; no scripting window)
 scripts/build-wasm.sh --no-gzip-loader  # the raw SavvyCAN.wasm instead
-WASM_BUILD_DIR=build/wasm-scripting scripts/build-wasm.sh --scripting   # with the scripting window/Qt Qml (own build dir: toggling it in one leaves stale moc output)
-scripts/build-wasm.sh --jspi            # JSPI instead of Asyncify (needs a Qt built with JSPI, below)
 scripts/smoke-wasm.sh                   # the smoke test (tests/web's smoke spec) on dist/
 ```
 
@@ -58,14 +56,14 @@ What the wasm build changes (all in `wasm/` and behind `EMSCRIPTEN` / `Q_OS_WASM
   (`canconnection.cpp`, `framesenderobject.cpp`, `frameplaybackobject.cpp`).
 - **No TLS:** MQTT over TLS is left out (`QT_NO_SSL`).
 - **No OpenGL** for QCustomPlot, no Qt Help / OpenGL modules linked.
-- **`QDialog::exec()`:** Asyncify (`-sASYNCIFY`), or JSPI with `--jspi`.
-- Optimised for size (`-Oz`, `WEB_SAVVYCAN_WASM_LINK_OPT`).
-- `WEB_SAVVYCAN_SCRIPTING=OFF` (any build) leaves the scripting window and Qt Qml out (`SAVVYCAN_NO_SCRIPTING`).
+- **`QDialog::exec()`:** Asyncify (`-sASYNCIFY`; JSPI needs a Qt built for it, below).
+- Optimised for size (`-Oz`).
+- No scripting window (Qt Qml) in the browser until its stage; the desktop build has it.
 
 ### Sizes and JSPI (measured 2026-10-28, Qt 6.12.0, Emscripten 5.0.5)
 
 The variants were built with a since deleted experiment script (git history: `scripts/wasm-size-experiments.sh`,
-and the `--opt`/`--wasm-opt` options of `build-wasm.sh`); every variant except JSPI passed the smoke test.
+the `--opt`/`--wasm-opt`/`--scripting`/`--jspi` options of `build-wasm.sh`); every variant except JSPI passed the smoke test.
 
 | Variant | .wasm | gzip -9 | brotli 11 |
 | --- | --- | --- | --- |
@@ -86,8 +84,6 @@ SavvyCAN.js is 0.25 MB (0.05 MB brotli); qtloader.js and the html are a few kB.
   (`QT_FEATURE_wasm_jspi -1`), so its JS-to-wasm callbacks are not promising-wrapped. JSPI needs Qt
   6.12 built from source with `-feature-wasm-jspi`. Asyncify works (the smoke test's modal
   `QMessageBox` through `exec()`).
-
-
 
 ### Heavy jobs
 

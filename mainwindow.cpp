@@ -441,8 +441,7 @@ void MainWindow::applyFeatures()
 void MainWindow::showAboutDialog()
 {
     if (!Features::on(Features::Feature::About)) return;
-    // Modal (exec()): also the stage-1 build's check that a modal dialog works in the browser
-    // (scripts/smoke-wasm.cjs, Asyncify/JSPI).
+    // Modal (exec()): tests/web's smoke spec checks that a modal dialog works in the browser (Asyncify).
     AboutDialog about(this);
     about.exec();
 }

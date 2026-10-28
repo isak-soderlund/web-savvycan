@@ -20,7 +20,6 @@ option(USE_TSAN "Enable ThreadSanitizer for Debug builds (instead of USE_SANITIZ
 # no Serial Port / Serial Bus for wasm, so the wasm build uses the stand-ins in wasm/ and leaves out the
 # QtSerialBus connection, OpenGL, Help, scripting (Qt Qml, until its stage) and MQTT over TLS.
 if(EMSCRIPTEN)
-    set(WEB_SAVVYCAN_WASM_LINK_OPT "-Oz" CACHE STRING "wasm: optimisation level for our code and the link (-O2, -Os, -Oz)")
     find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS Core Gui PrintSupport Widgets Network)
 else()
     find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS Core Gui PrintSupport SerialBus SerialPort Widgets Help Network OpenGL Qml)
