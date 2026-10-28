@@ -56,3 +56,28 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
   - a Cloudflare Worker + R2 on that same path, if resolve-ev.com's DNS is proxied through Cloudflare (to check);
   - or a subdomain such as `tools.resolve-ev.com` as a static container next to the forum on Sliplane.
 - **GPL:** met by this public repo; every hosted build names its commit and links here.
+
+## Rules for working here
+
+- **Never open a pull request, issue or comment on collin80/SavvyCAN** (owner). This repo is a GitHub fork, and `gh pr
+  create` in a fork defaults to the upstream repo: the default here is set to `isak-soderlund/web-savvycan`
+  (`gh repo set-default`); always pass `--repo isak-soderlund/web-savvycan` anyway.
+- Work on branches, merge into `main` here. Commit messages end with the repo's Co-Authored-By line.
+- **Don't test on the real rc1** (the rig runs scheduled tests); use the fake GVRET device and the browser mock.
+- **Heavy builds** (Qt/WebAssembly, desktop Qt) under `~/src/resolve-can/tools/memcap.sh 5G --` and the build lock
+  `flock /tmp/web-savvycan-build.lock`, one at a time: the rig's memory is shared with its test jobs.
+
+## Risks
+
+| Risk | What could go wrong | How it's handled |
+| --- | --- | --- |
+| **Shop gets slower** | The WebAssembly app ends up in the website's shared JS bundle, or is prefetched from other pages | Loaded only by its own route at runtime (script tag), never imported into shared code; links to it don't prefetch; `resolve-hil/tools/web/site_baseline.py compare` on the PR preview must show no other page slower or heavier |
+| **Shop security** | Allowing WebAssembly (`'wasm-unsafe-eval'`) site-wide weakens the shop's CSP | Added for the tool's route only |
+| **File size on Oxygen** | Oxygen's static files are ≤ 20 MB each; the full SavvyCAN wasm was 38.7 MB | Stage-1 build trimmed and measured; if over, `tools.resolve-ev.com` (static container next to the forum) or a Cloudflare Worker + R2 on the same path |
+| **Browser support** | Web Serial is Chromium-only (and Firefox 151+); no iPhone | Stated on the page; desktop build for others |
+| **Data loss while logging** | Tab crash or close | Log written to disk as it runs, committed every few seconds |
+| **Frame loss in the browser** | Single-threaded wasm stalls on a busy bus | Ring buffer, batched parsing, visible dropped-frames counter; a full-load replay test |
+| **Memory cap** | wasm32's 4 GB limits the in-memory window | A bounded window (scrolls), everything on disk |
+| **Fork drift** | Upstream QT6WIP moves fast | Upstream changes taken in deliberately (merge from `upstream`), never automatically |
+| **GPL** | Hosting a build without its source | This public repo; each hosted build names its commit |
+| **Rig** | Heavy builds starve the rig's night tests | memcap + one build at a time (the lock above) |
