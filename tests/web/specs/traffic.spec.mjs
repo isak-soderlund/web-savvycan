@@ -62,21 +62,25 @@ test.describe('overload', () => {
 });
 
 test.describe('unplugged mid-stream', () => {
-  test.use({ fakeOptions: { serial: { disconnectAfterMs: 1500 } } });
   test('rc1 unplugged: the app notices, no crash; plugged back in: reconnects', async ({ app, page, consoleErrors }) => {
     await connected(app, page);
     await fake.setTraffic(page, 'leaf');
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => window.__rc1.unplug());
     await expect.poll(async () => (await fake.appStats(page)).connected, { timeout: 5000 }).toBe(false);
     expect((await fake.events(page)).some((e) => e.type === 'unplug')).toBe(true);
+    await page.waitForTimeout(500);
     const before = (await fake.appStats(page)).framesReceived;
     expect(before).toBeGreaterThan(0);
+    await fake.setTraffic(page, 'idle');
     await page.evaluate(() => window.__rc1.replug());
-    await page.evaluate(() => (window.__rc1.options.disconnectAfterMs = 0));
     await app.connect({ protocol: 'gvret' });
+    const encoded0 = (await fake.stats(page)).encoded;
     await fake.setTraffic(page, 'leaf', { seconds: 1 });
     await page.waitForTimeout(1300);
     const [s, a] = await settle(page);
-    expect(a.framesReceived - before).toBe(s.encoded);
+    expect(a.connected).toBe(true);
+    expect(a.framesReceived - before).toBe(s.encoded - encoded0);
     // The read error on unplug is expected; it must be handled, not thrown.
     consoleErrors.splice(0, consoleErrors.length, ...consoleErrors.filter((e) => !/device has been lost/.test(e)));
   });

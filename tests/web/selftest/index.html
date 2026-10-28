@@ -1,13 +1,13 @@
 <!doctype html>
 <!--
   The harness self-test page: a small reference client that does what web-savvycan's stage 1 will do (choose rc1 over
-  Web Serial, GVRET or slcan as SavvyCAN drives them, a bounded trace with a dropped-frames counter, logging to a file
-  in SavvyCAN's native CSV committed every few seconds, a light/dark theme), so the fake rc1, the Web Serial mock, the
+  Web Serial, GVRET or slcan as SavvyCAN drives them, a bounded trace with a dropped-frames counter, logging in SavvyCAN's
+  native CSV as one download on stop (the MVP), a light/dark theme), so the fake rc1, the Web Serial mock, the
   file pickers and the probe are tested in Chromium before the app exists. It exposes the same test hook the specs
   expect from the app: window.webSavvyCAN (tests/web/README.md, "The app's test hook").
 
   Query: ?buf=<Web Serial bufferSize, 4096> &ring=<trace size, 100000> &queue=<ingest queue, 20000> &stall=<ms of
-  extra work per UI batch, 0> &commit=<log commit period ms, 2000>
+  extra work per UI batch, 0> &commit=<period of folding log rows into a Blob, ms, 2000>
 -->
 <html lang="en">
 <head>
@@ -102,7 +102,8 @@ function uiBatch() {
 }
 requestAnimationFrame(uiBatch);
 
-// ---- logging: SavvyCAN native CSV (framefileio.cpp nativeCSVRow), committed every COMMIT ms
+// ---- logging: SavvyCAN native CSV (framefileio.cpp nativeCSVRow), as the app's MVP (RESOLVE.md MVP #7): rows
+// collected in the page as Blobs while logging, one download on stop, named by the start time
 const hex2 = (b) => b.toString(16).toUpperCase().padStart(2, '0');
 function csvRow(f) {
   const cols = [];
@@ -112,35 +113,32 @@ function csvRow(f) {
   if (f.fd) r += 'FD' + (f.brs ? '+BRS' : '') + ',';
   return r + '\n';
 }
-async function commit() {
+function flushRows() {
   const L = S.log;
   if (!L || !L.rows.length) return;
-  const rows = L.rows;
+  L.parts.push(new Blob([L.rows.join('')]));
+  L.written += L.rows.length;
   L.rows = [];
-  const w = await L.handle.createWritable({ keepExistingData: true });
-  await w.seek(L.size);
-  const text = rows.join('');
-  await w.write(text);
-  await w.close();
-  L.size += new Blob([text]).size;
-  L.written += rows.length;
-  L.commits++;
 }
-$('logStart').onclick = async () => {
-  const name = 'rc1-' + new Date().toISOString().replace(/[:.]/g, '-') + '.csv';
-  const handle = await showSaveFilePicker({ suggestedName: name, types: [{ description: 'GVRET CSV', accept: { 'text/csv': ['.csv'] } }] });
-  const w = await handle.createWritable();
+const two = (n) => String(n).padStart(2, '0');
+$('logStart').onclick = () => {
+  const d = new Date();
+  const name = `SavvyCAN_${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}_${two(d.getHours())}-${two(d.getMinutes())}-${two(d.getSeconds())}.csv`;
   const header = 'Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n';
-  await w.write(header);
-  await w.close();
-  S.log = { handle, name: handle.name, rows: [], size: header.length, written: 0, commits: 0, timer: setInterval(commit, COMMIT) };
-  $('log').textContent = handle.name;
+  S.log = { name, parts: [header], rows: [], written: 0, timer: setInterval(flushRows, COMMIT) };
+  $('log').textContent = name;
 };
-$('logStop').onclick = async () => {
+$('logStop').onclick = () => {
   if (!S.log) return;
   clearInterval(S.log.timer);
-  await commit();
-  S.lastLog = { name: S.log.name, written: S.log.written, commits: S.log.commits };
+  flushRows();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(S.log.parts, { type: 'text/csv' }));
+  a.download = S.log.name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  S.lastLog = { name: S.log.name, written: S.log.written };
   S.log = null;
   $('log').textContent = 'off';
 };
@@ -244,7 +242,7 @@ window.webSavvyCAN = {
   version: 'selftest',
   stats: () => ({ connected: S.connected, framesReceived: S.received, framesInTrace: S.ringCount, framesEvicted: S.evicted, framesDropped: S.dropped,
     queued: S.queue.length, logging: !!S.log, logFile: S.log ? S.log.name : S.lastLog ? S.lastLog.name : null,
-    logFramesWritten: S.log ? S.log.written : S.lastLog ? S.lastLog.written : 0, errors: S.errors.slice() }),
+    logFramesWritten: S.log ? S.log.written + S.log.rows.length : S.lastLog ? S.lastLog.written : 0, errors: S.errors.slice() }),
   theme: () => (document.body.classList.contains('dark') ? 'dark' : 'light'),
   traceTail: (n) => {
     const out = [];

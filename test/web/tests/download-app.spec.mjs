@@ -1,18 +1,16 @@
 // The wasm app itself (dist/SavvyCAN.html, scripts/build-wasm.sh) with the MVP's logging (LOG_TO_DISK_LIVE
-// false): a fake rc1 behind a navigator.serial mock (repo branch "tests": tests/web/fake/rc1.js; WSC_RC1_FAKE
-// or ~/src/web-savvycan-tests/tests/web/fake/rc1.js) sends Leaf traffic over GVRET. SavvyCAN's own File menu
+// false): a fake rc1 behind a navigator.serial mock (tests/web/fake/rc1.js in this tree, or WSC_RC1_FAKE) sends Leaf traffic over GVRET. SavvyCAN's own File menu
 // starts logging at once (no dialog), the LOGGING label shows size and frames, Cease starts one download:
 // every frame the fake sent is in it, and it loads in the desktop SavvyCAN. Then the same with
 // "Choose the Log's Name When Logging Stops...": the name asked at Cease is the download's.
 // Driven through Qt's accessibility tree (as wasm/webserial/tests/e2e.mjs). Skipped without dist/ or the fake.
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { REPO, OUT, note, savvycanCheck } from './common.mjs';
 
 const DIST = path.join(REPO, 'dist/SavvyCAN.html');
-const FAKE = process.env.WSC_RC1_FAKE || path.join(os.homedir(), 'src/web-savvycan-tests/tests/web/fake/rc1.js');
+const FAKE = process.env.WSC_RC1_FAKE || path.join(REPO, 'tests/web/fake/rc1.js');
 test.skip(!fs.existsSync(DIST), 'no wasm build in dist/ (scripts/build-wasm.sh)');
 test.skip(!fs.existsSync(FAKE), `no fake rc1 (${FAKE})`);
 test.use({ viewport: { width: 1400, height: 900 } });

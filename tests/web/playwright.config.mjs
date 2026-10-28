@@ -27,6 +27,6 @@ export default defineConfig({
   webServer: {
     command: `node server.mjs --port ${port}`,
     url: `http://127.0.0.1:${port}/__harness/selftest/index.html`,
-    reuseExistingServer: true,
+    reuseExistingServer: false, // another worktree's server on the port would serve its own harness and dist: set WSC_PORT
   },
 });

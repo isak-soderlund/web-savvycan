@@ -51,11 +51,12 @@ test.describe('connect', () => {
       expect(tail.slice(-sent.length).map(norm)).toEqual(sent.map(norm));
     });
   }
+});
 
-  test('a returning visitor: getPorts() has rc1, no chooser', async ({ app, page, target }) => {
-    test.skip(target === 'app', 'the app path for an already granted port is the webserial agent\'s choice: to add');
+test.describe('connect: a returning visitor', () => {
+  test.use({ fakeOptions: { serial: { granted: true } } });
+  test('getPorts() has rc1: connects without the chooser', async ({ app, page }) => {
     await app.open();
-    await page.evaluate(() => (window.__rc1.ports[0]._granted = true));
     await app.connect({ protocol: 'gvret' });
     await expect.poll(() => fake.log(page)).toContain('open 500000/2000000');
     expect((await fake.events(page)).some((e) => e.type === 'requestPort')).toBe(false);
@@ -75,8 +76,8 @@ test.describe('connect: rc1 refuses (gs_usb has the CAN channel)', () => {
   test.use({ fakeOptions: { serial: { device: { refuseOpen: true } } } });
   test('GVRET: the bus stays disabled and nothing arrives', async ({ app, page }) => {
     await app.open();
-    await app.connect({ protocol: 'gvret' });
-    await page.waitForTimeout(500);
+    await app.connect({ protocol: 'gvret', expectOpen: false });
+    await page.waitForTimeout(1500);
     const s = await fake.stats(page);
     expect(s.channel.open).toBe(false);
     expect((await fake.appStats(page)).framesReceived).toBe(0);
