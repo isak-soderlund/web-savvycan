@@ -64,16 +64,17 @@ What the wasm build changes (all in `wasm/` and behind `EMSCRIPTEN` / `Q_OS_WASM
 
 ### On the rig
 
-Heavy jobs share memory with the rig's test jobs and a Windows VM: run builds through the wrapper,
-which takes the build lock, waits while the VM (`qemu-system ... rc1-win11`) runs, caps the job at
-2G and sets `WSC_JOBS` (the scripts' default `-j`). It may wait a long time: start it in the background.
+Heavy jobs share the PC with the rig's test jobs and a Windows VM: run builds through the wrapper,
+which takes the build lock (one job at a time), runs the job in its own 3G memory slice
+(`wscjobs.slice`) and sets `WSC_JOBS` (the scripts' default `-j`, 2). It may wait for the lock:
+start it in the background.
 
 ```bash
 ~/.local/share/web-savvycan/heavy.sh scripts/build-desktop.sh
 ~/.local/share/web-savvycan/heavy.sh scripts/build-wasm.sh
 ```
 
-Exit 137 means the job hit the cap; never raise it.
+Exit 137 means the job hit 3G: lower `-j`, never raise the cap.
 
 ### CI
 
