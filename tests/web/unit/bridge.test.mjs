@@ -31,13 +31,12 @@ function fresh(serialOptions = {}) {
   const Module = {
     webSerialOpened: (h, ok, err, msg) => push({ type: 'opened', h, ok, err, msg }),
     webSerialData: (h, bytes) => push({ type: 'data', h, bytes: Uint8Array.from(bytes) }),
-    webSerialWritten: (h, n) => push({ type: 'written', h, n }),
     webSerialError: (h, err, msg) => push({ type: 'error', h, err, msg }),
     webSerialReadError: (h, msg) => push({ type: 'readError', h, msg }),
     webSerialPortsChanged: () => push({ type: 'ports' }),
     webSerialPortChosen: (name, error) => push({ type: 'chosen', name, error }),
   };
-  const bridge = vm.runInThisContext(`(function (Module) { ${BRIDGE}\n; return webSerialBridge; })`)(Module);
+  const bridge = vm.runInThisContext(`(function (Module) { ${BRIDGE}\n; return globalThis.resolveWebSerial; })`)(Module);
   const until = async (pred, ms = 3000) => {
     const end = Date.now() + ms;
     for (;;) {
@@ -84,7 +83,6 @@ test('GVRET session: 16 MiB buffer, DTR/RTS low, handshake, bus set up, frames b
   assert.deepEqual(port._signals, { dataTerminalReady: false, requestToSend: false, break: false });
 
   bridge.write(1, Uint8Array.from(GVRET_HELLO));
-  await event((e) => e.type === 'written' && e.n === GVRET_HELLO.length);
   await until(() => find(received(1), [0xf1, 0x09, 0xde, 0xad]) >= 0);
   const rx = received(1);
   assert.ok(find(rx, [0xf1, 0x0c, 1]) >= 0, 'one bus');
@@ -144,8 +142,6 @@ test('close then reopen at once: the reopen waits for the close (SavvyCAN retrie
   assert.equal(o2.ok, true, o2.msg);
   assert.equal(rc1.stats().sessions, 2);
   assert.equal(rc1.ports[0]._opt.flowControl, 'hardware');
-  bridge.write(2, Uint8Array.from([0xf1, 0x09]));
-  await event((e) => e.type === 'written' && e.h === 2);
   await closeAll();
 });
 
