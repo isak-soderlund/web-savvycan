@@ -113,18 +113,28 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--link", default="/tmp/wsc-gvret", help="symlink to the pty's device")
     ap.add_argument("--seconds", type=float, default=120)
+    ap.add_argument("--tcp", type=int, default=0,
+                    help="serve on 127.0.0.1:PORT instead of a pty (SavvyCAN's Network connection; see port23_redirect.c)")
     ap.add_argument("--rate", type=float, default=10, help="rounds of the frame mix per second")
     args = ap.parse_args()
 
-    master, slave = os.openpty()
-    tty.setraw(slave)
-    name = os.ttyname(slave)
-    try:
-        os.unlink(args.link)
-    except FileNotFoundError:
-        pass
-    os.symlink(name, args.link)
-    print(f"fake GVRET on {name} ({args.link})", flush=True)
+    if args.tcp:
+        import socket
+        srv = socket.create_server(("127.0.0.1", args.tcp))
+        print(f"fake GVRET on 127.0.0.1:{args.tcp}", flush=True)
+        srv.settimeout(args.seconds)
+        conn, _ = srv.accept()
+        master = conn.detach()
+    else:
+        master, slave = os.openpty()
+        tty.setraw(slave)
+        name = os.ttyname(slave)
+        try:
+            os.unlink(args.link)
+        except FileNotFoundError:
+            pass
+        os.symlink(name, args.link)
+        print(f"fake GVRET on {name} ({args.link})", flush=True)
 
     os.set_blocking(master, False)
     dev = Fake()
@@ -147,7 +157,8 @@ def main():
             next_round += 1.0 / args.rate
             if connected and dev.enabled:
                 write(master, b"".join(dev.frame(*f) for f in FRAMES))
-    os.unlink(args.link)
+    if not args.tcp:
+        os.unlink(args.link)
 
 
 if __name__ == "__main__":
