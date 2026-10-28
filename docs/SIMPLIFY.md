@@ -15,12 +15,13 @@ upstream files.
 
 | | before (2d52b34) | after |
 | --- | ---: | ---: |
-| app (C++, JS, CMake) | 3 859 | |
-| tests | 7 282 | |
-| scripts, CI | 963 | |
-| docs | 393 | |
-| **new files, total** | **12 497** | |
-| upstream files changed | +2 113 / -721 | |
+| app (C++, JS, CMake) | 3 859 | 2 048 |
+| tests | 7 282 | 5 203 |
+| scripts, CI | 963 | 525 |
+| docs (incl. this file, ~240) | 393 | 635 |
+| **new files, total** | **12 497** | **8 411** |
+| upstream files changed | +2 113 / -721 | +1 883 / -725 |
+| **code (app + tests + scripts + our upstream edits)** | **14 217** | **9 659** (-32 %) |
 
 ## A. Logging (`wasm/disklog/`, `mainwindow.cpp`)
 
