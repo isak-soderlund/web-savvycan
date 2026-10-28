@@ -56,5 +56,6 @@ SavvyCAN.xcodeproj
 
 # web-savvycan: wasm output
 dist/
+dist-exp/
 scripts/node_modules/
 aqtinstall.log

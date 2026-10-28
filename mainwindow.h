@@ -21,7 +21,9 @@
 #include "dbc/dbcmaineditor.h"
 #include "mainsettingsdialog.h"
 #include "re/discretestatewindow.h"
+#ifndef SAVVYCAN_NO_SCRIPTING // web-savvycan: the wasm build can leave scripting (QJSEngine) out
 #include "scriptingwindow.h"
+#endif
 #include "re/rangestatewindow.h"
 #include "dbc/dbcloadsavewindow.h"
 #include "re/fuzzingwindow.h"

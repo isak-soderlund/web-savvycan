@@ -38,7 +38,8 @@ Upstream's `BUILD_TESTS` target (`test/`) does not compile on QT6WIP (it still u
 scripts/build-wasm.sh                   # -> dist/
 scripts/build-wasm.sh --wasm-opt        # plus an extra wasm-opt -Oz pass
 scripts/build-wasm.sh --opt -Os         # another optimisation level (default -Oz)
-scripts/build-wasm.sh --jspi            # JSPI instead of Asyncify (build/wasm-jspi)
+scripts/build-wasm.sh --jspi            # JSPI instead of Asyncify
+scripts/build-wasm.sh -- -DWEB_SAVVYCAN_SCRIPTING=OFF   # without the scripting window (no Qt Qml)
 scripts/smoke-wasm.sh                   # serve dist/, open it in headless Chromium, dist/smoke.png
 ```
 
@@ -59,19 +60,20 @@ What the wasm build changes (all in `wasm/` and behind `EMSCRIPTEN` / `Q_OS_WASM
 - **No OpenGL** for QCustomPlot, no Qt Help / OpenGL modules linked.
 - **`QDialog::exec()`:** Asyncify (`-sASYNCIFY`), or JSPI with `--jspi`.
 - Optimised for size (`-Oz`, `WEB_SAVVYCAN_WASM_LINK_OPT`).
+- `WEB_SAVVYCAN_SCRIPTING=OFF` (any build) leaves the scripting window and Qt Qml out (`SAVVYCAN_NO_SCRIPTING`).
 
 ### On the rig
 
 Heavy jobs share memory with the rig's test jobs and a Windows VM: run builds through the wrapper,
-which takes the build lock, caps memory and sets `WSC_JOBS` (the scripts' default `-j`):
+which takes the build lock, waits while the VM (`qemu-system ... rc1-win11`) runs, caps the job at
+2G and sets `WSC_JOBS` (the scripts' default `-j`). It may wait a long time: start it in the background.
 
 ```bash
 ~/.local/share/web-savvycan/heavy.sh scripts/build-desktop.sh
 ~/.local/share/web-savvycan/heavy.sh scripts/build-wasm.sh
 ```
 
-Exit 137 means the job hit the cap: wait until the VM (`pgrep -f 'qemu-system.*rc1-win11'`) has
-stopped and retry.
+Exit 137 means the job hit the cap; never raise it.
 
 ### CI
 

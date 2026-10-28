@@ -3,7 +3,7 @@
 #
 # Usage: scripts/build-wasm.sh [--clean] [--jspi] [--opt -Oz|-Os|-O2] [--wasm-opt] [--dist DIR]
 #                              [-j N] [-- extra cmake args]
-#   --jspi      JSPI instead of Asyncify (WEB_SAVVYCAN_JSPI; needs a Qt built for JSPI)
+#   --jspi      JSPI instead of Asyncify (WEB_SAVVYCAN_JSPI; Chrome 137+)
 #   --opt       optimisation level for our code and the link (default -Oz)
 #   --wasm-opt  an extra `wasm-opt -Oz` pass over the linked .wasm before it goes to dist/
 #   --dist      output directory (default dist/)
@@ -42,8 +42,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-B="$ROOT/build/wasm"
-[ "$JSPI" = ON ] && B="$ROOT/build/wasm-jspi"
+B="${WASM_BUILD_DIR:-$ROOT/build/wasm}"   # --jspi, --opt and -D options only re-link/re-configure here
 [ "$CLEAN" = 1 ] && rm -rf "$B"
 
 LAUNCHER=()
