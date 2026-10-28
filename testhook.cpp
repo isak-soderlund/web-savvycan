@@ -11,8 +11,6 @@
 
 #ifdef Q_OS_WASM
 #include <emscripten.h>
-#include <emscripten/bind.h>
-#include <string>
 #endif
 
 namespace {
@@ -69,29 +67,30 @@ QJsonArray traceTail(int n)
 }
 
 #ifdef Q_OS_WASM
-static std::string jsonStats() { return QJsonDocument(stats()).toJson(QJsonDocument::Compact).toStdString(); }
-static std::string jsonTheme() { return theme().toStdString(); }
-static std::string jsonTraceTail(int n) { return QJsonDocument(traceTail(n)).toJson(QJsonDocument::Compact).toStdString(); }
-static std::string jsonVersion() { return AboutDialog::gitCommit().toStdString(); }
+// Plain C exports (not embind: in an Asyncify build embind calls come back as Promises; these stay
+// synchronous, so the tests can read webSavvyCAN.stats().framesReceived directly).
+static const char *keep(const QByteArray &utf8)
+{
+    static QByteArray buffer;
+    buffer = utf8;
+    return buffer.constData();
+}
+extern "C" {
+EMSCRIPTEN_KEEPALIVE const char *wsc_stats() { return keep(QJsonDocument(stats()).toJson(QJsonDocument::Compact)); }
+EMSCRIPTEN_KEEPALIVE const char *wsc_theme() { return keep(theme().toUtf8()); }
+EMSCRIPTEN_KEEPALIVE const char *wsc_trace_tail(int n) { return keep(QJsonDocument(traceTail(n)).toJson(QJsonDocument::Compact)); }
+EMSCRIPTEN_KEEPALIVE const char *wsc_version() { return keep(AboutDialog::gitCommit().toUtf8()); }
+}
 
-// window.webSavvyCAN, calling the bindings below (EM_JS: its body may contain commas, EM_ASM's may not)
+// window.webSavvyCAN (EM_JS: its body may contain commas, EM_ASM's may not)
 EM_JS(void, wsc_install_hook, (), {
-    const mod = Module;
     window.webSavvyCAN = {
-        version: mod.wscVersion(),
-        stats: () => JSON.parse(mod.wscStats()),
-        theme: () => mod.wscTheme(),
-        traceTail: (n) => JSON.parse(mod.wscTraceTail(n | 0)),
+        version: UTF8ToString(_wsc_version()),
+        stats: () => JSON.parse(UTF8ToString(_wsc_stats())),
+        theme: () => UTF8ToString(_wsc_theme()),
+        traceTail: (n) => JSON.parse(UTF8ToString(_wsc_trace_tail(n | 0))),
     };
 });
-
-EMSCRIPTEN_BINDINGS(web_savvycan_testhook)
-{
-    emscripten::function("wscStats", &jsonStats);
-    emscripten::function("wscTheme", &jsonTheme);
-    emscripten::function("wscTraceTail", &jsonTraceTail);
-    emscripten::function("wscVersion", &jsonVersion);
-}
 #endif
 
 void install(CommFrameModel *model)

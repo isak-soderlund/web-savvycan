@@ -4,8 +4,8 @@
 //   node scripts/screenshots/wasm.cjs URL OUT_DIR [WAIT_MS]
 //
 // 1. A fresh profile with the browser in light, then dark (prefers-color-scheme): the app follows it.
-// 2. In the light profile: View > Dark Theme clicked, page reloaded: still dark, and the setting is in
-//    localStorage. Preferences and About pictures in both themes.
+// 2. In the light profile: View > Dark Theme picked, page reloaded: still dark (window.webSavvyCAN.theme()),
+//    and the setting is in localStorage. About, Preferences and View menu pictures in both themes.
 // Playwright from NODE_PATH (scripts/smoke-wasm.sh sets it up the same way).
 const { chromium } = require('playwright');
 
@@ -14,7 +14,7 @@ const WAIT = Number(waitArg || 9000);
 if (!url || !outDir) { console.error('usage: wasm.cjs URL OUT_DIR [WAIT_MS]'); process.exit(2); }
 
 // Menu positions in the 1400x860 page (Qt draws the menu bar into its canvas; no DOM to query).
-const MENU = { file: [18, 11], view: [55, 11], help: [140, 11] };
+const MENU = { file: [22, 11], view: [69, 11], connection: [148, 11], help: [226, 11] };
 
 async function open(browser, scheme) {
   const ctx = await browser.newContext({ colorScheme: scheme, viewport: { width: 1400, height: 860 } });
@@ -27,15 +27,20 @@ async function open(browser, scheme) {
   return { ctx, page, errors };
 }
 
-async function menuItem(page, menu, itemText) {
-  // Opens a menu and clicks one of its items, found by OCR-free means: Qt for wasm exposes an
-  // accessibility tree (role menuitem) when a11y is on; fall back to keyboard navigation.
+// Opens a menu and picks an item with the keyboard (Down n times, or Up n times when n < 0).
+async function menuItem(page, menu, n) {
   await page.mouse.click(...MENU[menu]);
-  await page.waitForTimeout(500);
-  const item = page.getByRole('menuitem', { name: itemText });
-  if (await item.count()) { await item.first().click(); }
-  else { await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter'); }
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(600);
+  for (let i = 0; i < Math.abs(n); i++) await page.keyboard.press(n > 0 ? 'ArrowDown' : 'ArrowUp');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(1500);
+}
+
+async function hook(page) {
+  return page.evaluate(() => window.webSavvyCAN
+    ? { version: window.webSavvyCAN.version, theme: window.webSavvyCAN.theme(),
+        stats: window.webSavvyCAN.stats(), tail: window.webSavvyCAN.traceTail(3) }
+    : null);
 }
 
 (async () => {
@@ -45,8 +50,23 @@ async function menuItem(page, menu, itemText) {
     const { ctx, page, errors } = await open(browser, scheme);
     await page.screenshot({ path: `${outDir}/wasm-${scheme}-follow-browser.png` });
     console.log(`${scheme}: follows the browser -> wasm-${scheme}-follow-browser.png; console errors: ${errors.length}`);
+    const h = await hook(page);
+    console.log(`${scheme}: window.webSavvyCAN =`, JSON.stringify(h));
+    if (!h || h.theme !== scheme) { console.log(`FAIL: hook theme ${h && h.theme}, browser ${scheme}`); failed = true; }
+    // Help > About, File > Preferences (Exit is hidden in the browser: Preferences is the last item)
+    await menuItem(page, 'help', 1);
+    await page.screenshot({ path: `${outDir}/wasm-${scheme}-about.png` });
+    await page.keyboard.press('Escape'); await page.waitForTimeout(500);
+    await menuItem(page, 'file', -1);
+    await page.screenshot({ path: `${outDir}/wasm-${scheme}-preferences.png` });
+    await page.keyboard.press('Escape'); await page.waitForTimeout(500);
+    await page.mouse.click(...MENU.view); await page.waitForTimeout(600);
+    await page.screenshot({ path: `${outDir}/wasm-${scheme}-view-menu.png` });
+    await page.keyboard.press('Escape'); await page.waitForTimeout(500);
     if (scheme === 'light') {
-      await menuItem(page, 'view', 'Dark Theme');
+      // View > Dark Theme (second item), then reload: still dark, stored in localStorage
+      await page.reload(); await page.waitForTimeout(WAIT);
+      await menuItem(page, 'view', 2);
       await page.screenshot({ path: `${outDir}/wasm-switched-dark.png` });
       const stored = await page.evaluate(() => Object.keys(localStorage)
         .filter(k => /Theme/.test(k)).map(k => `${k}=${localStorage.getItem(k)}`));
@@ -54,7 +74,11 @@ async function menuItem(page, menu, itemText) {
       await page.reload();
       await page.waitForTimeout(WAIT);
       await page.screenshot({ path: `${outDir}/wasm-dark-after-reload.png` });
-      if (!stored.some(s => /dark/.test(s))) { console.log('FAIL: theme not stored in localStorage'); failed = true; }
+      const after = await hook(page);
+      console.log('after reload, browser light: theme', after && after.theme);
+      if (!stored.some(x => /=dark$/.test(x)) || !after || after.theme !== 'dark') {
+        console.log('FAIL: dark not kept across the reload'); failed = true;
+      }
     }
     await ctx.close();
   }
