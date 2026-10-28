@@ -3,7 +3,11 @@
 
 FrameSenderObject::FrameSenderObject(const QVector<CommFrame> *frames)
 {
+#ifdef Q_OS_WASM
+    mThread_p = nullptr; // wasm_singlethread: no QThread, the object runs on the main thread
+#else
     mThread_p = new QThread();
+#endif
 
     statusCounter = 0;
     modelFrames = frames;
@@ -12,9 +16,11 @@ FrameSenderObject::FrameSenderObject(const QVector<CommFrame> *frames)
 
 FrameSenderObject::~FrameSenderObject()
 {
-    mThread_p->quit();
-    mThread_p->wait();
-    delete mThread_p;
+    if (mThread_p) {
+        mThread_p->quit();
+        mThread_p->wait();
+        delete mThread_p;
+    }
 }
 
 void FrameSenderObject::piStart()

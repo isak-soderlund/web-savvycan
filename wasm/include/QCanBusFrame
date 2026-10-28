@@ -1,0 +1,8 @@
+// web-savvycan wasm build: Qt Serial Bus does not build for WebAssembly ("NOT EMSCRIPTEN").
+// SavvyCAN only needs QCanBusFrame's FrameType enum (can_structs.h) outside the QtSerialBus connection.
+#pragma once
+#include <QtGlobal>
+class QCanBusFrame {
+public:
+    enum FrameType { UnknownFrame = 0x0, DataFrame = 0x1, ErrorFrame = 0x2, RemoteRequestFrame = 0x3, InvalidFrame = 0x4 };
+};

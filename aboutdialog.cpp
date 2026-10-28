@@ -30,7 +30,6 @@ QString AboutDialog::sourceUrl()
 AboutDialog::AboutDialog(QWidget *parent) : QDialog(parent)
 {
     setWindowTitle(tr("About web-savvycan"));
-    setAttribute(Qt::WA_DeleteOnClose);
     resize(620, 600);
 
     const QString commit = gitCommit();
@@ -78,8 +77,10 @@ AboutDialog::AboutDialog(QWidget *parent) : QDialog(parent)
     text->setHtml(html);
 
     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::close);
-    connect(buttons->button(QDialogButtonBox::Close), &QPushButton::clicked, this, &QDialog::close);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    connect(buttons->button(QDialogButtonBox::Close), &QPushButton::clicked, this, &QDialog::accept);
+    buttons->button(QDialogButtonBox::Close)->setDefault(true);   // Enter closes it
+    buttons->button(QDialogButtonBox::Close)->setFocus();
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->addWidget(text);

@@ -53,3 +53,9 @@ SavvyCAN.xcodeproj
 
 # Qt Creator analyzer
 .qtc_clangd/
+
+# web-savvycan: wasm output
+dist/
+dist-exp/
+scripts/node_modules/
+aqtinstall.log

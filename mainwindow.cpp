@@ -134,7 +134,11 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(ui->actionSingle_Multi_State_2, &QAction::triggered, this, &MainWindow::showSingleMultiWindow);
     connect(ui->actionFile_Comparison, &QAction::triggered, this, &MainWindow::showComparisonWindow);
     connect(ui->actionDBC_Comparison, &QAction::triggered, this, &MainWindow::showDBCComparisonWindow);
+#ifdef SAVVYCAN_NO_SCRIPTING
+    ui->actionScripting_INterface->setVisible(false);
+#else
     connect(ui->actionScripting_INterface, &QAction::triggered, this, &MainWindow::showScriptingWindow);
+#endif
     connect(ui->actionPreferences, &QAction::triggered, this, &MainWindow::showSettingsDialog);
     connect(ui->actionUDS_Firmware_Update, &QAction::triggered, this, &MainWindow::showUDSFirmwareUploaderWindow);
     connect(ui->actionDBC_File_Manager, &QAction::triggered, this, &MainWindow::showDBCFileWindow);
@@ -419,8 +423,10 @@ void MainWindow::applyFeatures()
 void MainWindow::showAboutDialog()
 {
     if (!Features::on(Features::Feature::About)) return;
-    AboutDialog *about = new AboutDialog(this);
-    about->show();
+    // Modal (exec()): also the stage-1 build's check that a modal dialog works in the browser
+    // (scripts/smoke-wasm.cjs, Asyncify/JSPI).
+    AboutDialog about(this);
+    about.exec();
 }
 
 void MainWindow::themeChanged(bool dark)
@@ -462,7 +468,9 @@ void MainWindow::killEmAll()
     killWindow(dbcMainEditor);
     killWindow(settingsDialog);
     killWindow(discreteStateWindow);
+#ifndef SAVVYCAN_NO_SCRIPTING
     killWindow(scriptingWindow);
+#endif
     killWindow(rangeWindow);
     killWindow(dbcFileWindow);
     killWindow(fuzzingWindow);
@@ -2427,11 +2435,13 @@ void MainWindow::showUDSScanWindow()
 void MainWindow::showScriptingWindow()
 {
     if (!Features::on(Features::Feature::Scripting)) return; // web-savvycan: enabledfeatures.h
+#ifndef SAVVYCAN_NO_SCRIPTING
     if (!scriptingWindow)
     {
         scriptingWindow = new ScriptingWindow(model->getListReference());
     }
     scriptingWindow->show();
+#endif
 }
 
 void MainWindow::showRangeWindow()

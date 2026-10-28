@@ -1,0 +1,3 @@
+// web-savvycan wasm build: only included, never used, outside the QtSerialBus connection.
+#pragma once
+#include <QCanBus>

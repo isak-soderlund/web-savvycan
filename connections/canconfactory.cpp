@@ -1,6 +1,8 @@
 #include <QString>
 #include "canconfactory.h"
+#ifndef Q_OS_WASM // Qt Serial Bus does not build for WebAssembly
 #include "serialbusconnection.h"
+#endif
 #include "gvretserial.h"
 #include "mqtt_bus.h"
 #include "socketcand.h"
@@ -13,8 +15,10 @@ using namespace CANCon;
 CANConnection* CanConFactory::create(type pType, QString pPortName, QString pDriverName, int pSerialSpeed, int pBusSpeed, bool pCanFd, int pDataRate, bool pListenOnly, bool pActive)
 {
     switch(pType) {
+#ifndef Q_OS_WASM
     case SERIALBUS:
       return new SerialBusConnection(pPortName, pDriverName, pBusSpeed, pDataRate, pCanFd, pListenOnly, pActive);
+#endif
     case GVRET_SERIAL:
         if(pPortName.contains(".") && !pPortName.contains("tty") && !pPortName.contains("serial"))
         return new GVRetSerial(pPortName, true);
