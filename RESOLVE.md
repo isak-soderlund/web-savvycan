@@ -65,8 +65,9 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 - Work on branches, merge into `main` here. Commit messages end with the repo's Co-Authored-By line.
 - **Don't test on the real rc1** (the rig runs scheduled tests); use the fake GVRET device and the browser mock.
 - **Heavy jobs** (Qt/WebAssembly and desktop builds, sanitizer runs, Lighthouse) only through
-  `~/.local/share/web-savvycan/heavy.sh <cmd>`: one at a time, 1.5G while the rig's Windows VM runs (2G otherwise),
-  `-j$WSC_JOBS`. On 2026-10-28 a build and that VM together went over the shared 6G slice and the VM was killed.
+  `~/.local/share/web-savvycan/heavy.sh <cmd>`: one at a time, in web-savvycan's own memory slice (`wscjobs.slice`,
+  3G), separate from resolve-can's `rcanjobs.slice` where the rig's Windows VM runs (on 2026-10-28 a build in that
+  shared slice got the VM killed). `-j$WSC_JOBS`; exit 137 = lower `-j`, never raise the cap.
 
 ## Risks
 
