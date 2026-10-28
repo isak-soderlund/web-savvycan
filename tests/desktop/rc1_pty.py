@@ -6,6 +6,8 @@ rc1-stdio.js): one implementation for both.
 
   tests/desktop/rc1_pty.py --link /tmp/rc1-fake [--traffic leaf|classic-full|fd64-full|fd-mix|errors] [--stats F]
   tests/desktop/rc1_pty.py --tcp 2323 ...        # also/instead: SavvyCAN's "Network connection (GVRET)" on TCP
+  ... --enable-bus     # once the host switches to GVRET, the bus enabled (500k, FD 2M) as if the host had sent
+                       # SETUP_CANBUS: SavvyCAN's restored connections don't (scripts/screenshots/desktop.sh)
 
 A pty has no modem lines: the session ends (rc1 back to slcan, CAN channel closed) when the host closes the port,
 seen as the master's EIO (no slave open), the same as rc1 seeing DTR fall. DTR/RTS ioctls on a pty fail (EINVAL):
@@ -59,6 +61,7 @@ def main() -> int:
     ap.add_argument("--buffer", type=int, default=65536, help="bytes rc1 + the host hold before frames are lost")
     ap.add_argument("--refuse-open", action="store_true", help="the CAN channel is owned by gs_usb")
     ap.add_argument("--stats", help="append the stats JSON lines here")
+    ap.add_argument("--enable-bus", action="store_true", help="enable the bus after the host's E7 E7 (see above)")
     args = ap.parse_args()
 
     dev, ctl = start_device(args)
@@ -85,6 +88,15 @@ def main() -> int:
     signal.signal(signal.SIGINT, end)
     signal.signal(signal.SIGTERM, end)
     host_open = False  # the pty's slave is open (a host holds the port)
+    enable = args.enable_bus
+
+    def to_dev(b: bytes) -> None:
+        nonlocal enable
+        dev.stdin.write(b)
+        if enable and b"\xe7\xe7" in b:
+            enable = False  # SETUP_CANBUS bus0 500k (set + enable), bus1 untouched; SETUP_FD 2M
+            dev.stdin.write(bytes([0xF1, 5, 0x20, 0xA1, 0x07, 0xC0, 0, 0, 0, 0x80, 0xF1, 21, 0, 0x02, 0x80, 0x84, 0x1E, 0]))
+        dev.stdin.flush()
     client = None
     try:
         while not stop and dev.poll() is None:
@@ -98,8 +110,7 @@ def main() -> int:
                     b = os.read(master, 4096)
                     host_open = True
                     control(ctl, cmd="open")
-                    dev.stdin.write(b)
-                    dev.stdin.flush()
+                    to_dev(b)
                 except OSError as e:
                     if e.errno == errno.EAGAIN:
                         host_open = True
@@ -107,8 +118,7 @@ def main() -> int:
             if master in ready:
                 try:
                     b = os.read(master, 65536)
-                    dev.stdin.write(b)
-                    dev.stdin.flush()
+                    to_dev(b)
                 except OSError as e:
                     if e.errno == errno.EIO:
                         host_open = False
@@ -120,8 +130,7 @@ def main() -> int:
             if client and client in ready:
                 b = client.recv(65536)
                 if b:
-                    dev.stdin.write(b)
-                    dev.stdin.flush()
+                    to_dev(b)
                 else:
                     client.close()
                     client = None

@@ -1,11 +1,10 @@
 // The Web Serial bridge (webserial.js) in Node against the test harness's fake rc1 and navigator.serial mock
 // (tests/web/fake/rc1.js: the firmware's GVRET/slcan, Chrome's Web Serial behaviour), standing in for the C++ side:
 // what SavvyCAN's GVRET/LAWICEL do through the QSerialPort stand-in, as calls and callbacks.
-//   node --test wasm/webserial/tests/bridge.test.mjs
-// The fake: $WSC_RC1_FAKE, else tests/web/fake/rc1.js in this tree.
+//   node --test tests/web/unit/bridge.test.mjs   (tests/web/run.sh runs it)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,10 +12,8 @@ import vm from 'node:vm';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const BRIDGE = readFileSync(join(here, '../webserial.js'), 'utf8');
-const FAKE = [process.env.WSC_RC1_FAKE, join(here, '../../../tests/web/fake/rc1.js')].find((p) => p && existsSync(p));
-const RC1Fake = FAKE ? require(FAKE) : null;
-const skip = RC1Fake ? false : 'no fake rc1 (tests/web/fake/rc1.js): set WSC_RC1_FAKE';
+const BRIDGE = readFileSync(join(here, '../../../wasm/webserial/webserial.js'), 'utf8');
+const RC1Fake = require('../fake/rc1.js');
 
 const RC1 = 'WebSerial 1209:0001';
 const GVRET_HELLO = [0xe7, 0xe7, 0xf1, 0x0c, 0xf1, 0x06, 0xf1, 0x07, 0xf1, 22, 0xf1, 0x01, 0xf1, 0x09];
@@ -65,7 +62,7 @@ function find(rx, bytes, at = 0) {
   return -1;
 }
 
-test('granted ports are listed under stable names, without a prompt', { skip }, async () => {
+test('granted ports are listed under stable names, without a prompt', async () => {
   const { bridge, event } = fresh({ granted: true, ports: 2 });
   await bridge.ready();
   await event((e) => e.type === 'ports');
@@ -74,7 +71,7 @@ test('granted ports are listed under stable names, without a prompt', { skip }, 
   ]);
 });
 
-test('GVRET session: 16 MiB buffer, DTR/RTS low, handshake, bus set up, frames both ways, close', { skip }, async () => {
+test('GVRET session: 16 MiB buffer, DTR/RTS low, handshake, bus set up, frames both ways, close', async () => {
   const { rc1, bridge, until, event, received } = fresh({ granted: true });
   await bridge.ready();
   bridge.open(1, RC1, ESP_OPTIONS);
@@ -118,7 +115,7 @@ test('GVRET session: 16 MiB buffer, DTR/RTS low, handshake, bus set up, frames b
   assert.equal(rc1.stats().lost, 0);
 });
 
-test('full-load traffic: every frame reaches the bridge, none lost in rc1', { skip }, async () => {
+test('full-load traffic: every frame reaches the bridge, none lost in rc1', async () => {
   const { rc1, bridge, until, event, received, closeAll } = fresh({ granted: true });
   await bridge.ready();
   bridge.open(1, RC1, ESP_OPTIONS);
@@ -136,7 +133,7 @@ test('full-load traffic: every frame reaches the bridge, none lost in rc1', { sk
   await closeAll();
 });
 
-test('close then reopen at once: the reopen waits for the close (SavvyCAN retries this way)', { skip }, async () => {
+test('close then reopen at once: the reopen waits for the close (SavvyCAN retries this way)', async () => {
   const { rc1, bridge, event, closeAll } = fresh({ granted: true });
   await bridge.ready();
   bridge.open(1, RC1, ESP_OPTIONS);
@@ -152,7 +149,7 @@ test('close then reopen at once: the reopen waits for the close (SavvyCAN retrie
   await closeAll();
 });
 
-test('close while the open is still running: the port ends up closed, no answer', { skip }, async () => {
+test('close while the open is still running: the port ends up closed, no answer', async () => {
   const { rc1, bridge, events } = fresh({ granted: true });
   await bridge.ready();
   bridge.open(1, RC1, ESP_OPTIONS);
@@ -162,7 +159,7 @@ test('close while the open is still running: the port ends up closed, no answer'
   assert.equal(events.filter((e) => e.type === 'opened').length, 0);
 });
 
-test('a port that is not there: DeviceNotFoundError (1)', { skip }, async () => {
+test('a port that is not there: DeviceNotFoundError (1)', async () => {
   const { bridge, event } = fresh({ granted: false });
   bridge.open(7, RC1, ESP_OPTIONS);
   const o = await event((e) => e.type === 'opened');
@@ -171,7 +168,7 @@ test('a port that is not there: DeviceNotFoundError (1)', { skip }, async () => 
   assert.match(o.msg, /not available/);
 });
 
-test('unplugged while open: ResourceError (9) once; replugged: opens again', { skip }, async () => {
+test('unplugged while open: ResourceError (9) once; replugged: opens again', async () => {
   const { rc1, bridge, until, event, events, closeAll } = fresh({ granted: true });
   await bridge.ready();
   bridge.open(1, RC1, ESP_OPTIONS);
@@ -192,7 +189,7 @@ test('unplugged while open: ResourceError (9) once; replugged: opens again', { s
   await closeAll();
 });
 
-test('requestPort: filtered to rc1 by default, every port on request', { skip }, async () => {
+test('requestPort: filtered to rc1 by default, every port on request', async () => {
   const { rc1, bridge, event } = fresh({ granted: false });
   await bridge.ready();
   assert.equal(bridge.ports().length, 0);
@@ -206,14 +203,14 @@ test('requestPort: filtered to rc1 by default, every port on request', { skip },
   assert.equal(rc1.events.filter((e) => e.type === 'requestPort')[1].filters, null);
 });
 
-test('requestPort cancelled: chosen with no name and no error', { skip }, async () => {
+test('requestPort cancelled: chosen with no name and no error', async () => {
   const { bridge, event } = fresh({ granted: false, chooser: 'cancel' });
   await bridge.requestPort(false);
   const chosen = await event((e) => e.type === 'chosen');
   assert.deepEqual([chosen.name, chosen.error], ['', '']);
 });
 
-test('LAWICEL session: slcan answers CR, frames as lines', { skip }, async () => {
+test('LAWICEL session: slcan answers CR, frames as lines', async () => {
   const { rc1, bridge, until, event, received, closeAll } = fresh({ granted: true });
   await bridge.ready();
   bridge.open(3, RC1, { ...ESP_OPTIONS, flowControl: 'hardware' });
@@ -227,7 +224,7 @@ test('LAWICEL session: slcan answers CR, frames as lines', { skip }, async () =>
   await closeAll();
 });
 
-test('a 1 s stall of the page at full load: the 16 MiB buffer holds it, rc1 loses nothing', { skip }, async () => {
+test('a 1 s stall of the page at full load: the 16 MiB buffer holds it, rc1 loses nothing', async () => {
   const { rc1, bridge, until, event, received, closeAll } = fresh({ granted: true });
   await bridge.ready();
   bridge.open(1, RC1, ESP_OPTIONS);
