@@ -22,6 +22,7 @@
   FakeRc1.prototype.reset = function () {
     this.gvret = false; this.enabled = false; this.listenOnly = false; this.fd = false;
     this.bitrate = 500000; this.dataBitrate = 2000000; this.buf = []; this.log = this.log || [];
+    this.ops = this.ops || {}; // GVRET opcodes from the host, counted (9 = comm validation, every 250 ms when connected)
   };
   FakeRc1.prototype.us = function () { return ((Date.now() - this.t0) * 1000) >>> 0; };
   FakeRc1.prototype.fromHost = function (bytes) {
@@ -59,6 +60,7 @@
     if (b.length < 2) return;
     var op = b[1];
     if (op === 0xF1) { b.splice(0, 1); return; }
+    this.ops[op] = (this.ops[op] || 0) + 1;
     var n = { 5: 8, 21: 6, 14: 12, 4: 1, 8: 1, 10: 1 }[op];
     if (op === 0 || op === 11 || op === 20) {
       if (b.length < 8) return;
