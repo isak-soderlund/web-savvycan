@@ -15,6 +15,9 @@
 #include <QScrollBar>
 #include <QThread>
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <memory>
 
 #include "canframemodel.h"
@@ -149,31 +152,97 @@ private slots:
         gen.fd = fd;
         gen.len = len;
         gen.slcan = (protocol == "slcan");
+        const bool showView = !qEnvironmentVariableIsSet("WSC_LOAD_NOVIEW");
 
-        // the connection: threaded = desktop (own QThread); else as in wasm (GUI thread, sliced parsing)
-        CANConnection *conn;
-        std::function<void(const QByteArray &)> feed;   // runs in the connection's thread
-        std::function<qsizetype()> pending;
-        if (gen.slcan)
+        QElapsedTimer runClock;
+        runClock.start();
+
+        // the device: rate frames/s, delivered every 2 ms (USB delivers in packets)
+        std::atomic<quint64> generated{0};
+        std::atomic<bool> stopGen{false};
+        auto produce = [&]() -> QByteArray {
+            const quint64 due = quint64(double(runClock.nsecsElapsed()) * 1e-9 * rate);
+            QByteArray bytes;
+            quint64 n = generated.load();
+            for (; n < due; n++) bytes += gen.frameBytes(n);
+            generated.store(n);
+            return bytes;
+        };
+
+        // the connection, its parser and the device timer, all in one thread (the connection's), as a
+        // serial port's readyRead: threaded = desktop (a thread of its own, plain std::thread so every
+        // hand-off is visible to TSan); else the GUI thread with sliced parsing, as in the wasm build
+        std::atomic<qsizetype> left{1};           // bytes received, not parsed yet
+        std::atomic<bool> quitConn{false};
+        std::mutex connMutex;
+        std::condition_variable connCv;
+        CANConnection *conn = nullptr;
+        bool connRemoved = false;
+        auto makeConn = [&](bool ownThread, std::function<void(const QByteArray &)> &feed,
+                            std::function<qsizetype()> &pending) -> CANConnection * {
+            if (gen.slcan)
+            {
+                auto *l = new LAWICELSerial("load", 0, 500000, fd, 2000000, false);
+                l->setRxSliceBudgetMs(ownThread ? 0 : 8);
+                feed = [l](const QByteArray &b) { l->processRxBytes(b); };
+                pending = [l] { return l->pendingRxBytes(); };
+                return l;
+            }
+            auto *g = new GVRetSerial("load", false, false);
+            g->setRxSliceBudgetMs(ownThread ? 0 : 8);
+            feed = [g](const QByteArray &b) { g->processRxBytes(b); };
+            pending = [g] { return g->pendingRxBytes(); };
+            return g;
+        };
+        auto deviceTick = [&](const std::function<void(const QByteArray &)> &feed, const std::function<qsizetype()> &pending) {
+            if (!stopGen.load())
+            {
+                QByteArray b = produce();
+                if (!b.isEmpty()) feed(b);
+            }
+            left = pending();
+        };
+
+        std::thread connThread;
+        std::function<void(const QByteArray &)> mainFeed;
+        std::function<qsizetype()> mainPending;
+        QTimer mainDevice;
+        if (threaded)
         {
-            auto *l = new LAWICELSerial("load", 0, 500000, fd, 2000000, threaded);
-            if (!threaded) l->setRxSliceBudgetMs(8);
-            feed = [l](const QByteArray &b) { l->processRxBytes(b); };
-            pending = [l] { return l->pendingRxBytes(); };
-            conn = l;
+            connThread = std::thread([&] {
+                QEventLoop loop; // first: gives this (adopted) thread its event dispatcher, needed by timers
+                std::function<void(const QByteArray &)> feed;
+                std::function<qsizetype()> pending;
+                CANConnection *c = makeConn(true, feed, pending);
+                QTimer device;
+                QObject::connect(&device, &QTimer::timeout, [&] { deviceTick(feed, pending); });
+                device.start(2);
+                QTimer quitPoll;
+                QObject::connect(&quitPoll, &QTimer::timeout, [&] { if (quitConn.load()) loop.quit(); });
+                quitPoll.start(5);
+                {
+                    std::lock_guard<std::mutex> lk(connMutex);
+                    conn = c;
+                }
+                connCv.notify_all();
+                loop.exec();
+                device.stop();
+                quitPoll.stop();
+                {
+                    std::unique_lock<std::mutex> lk(connMutex);
+                    connCv.wait(lk, [&] { return connRemoved; }); // the GUI side lets go of it first
+                }
+                delete c;
+            });
+            std::unique_lock<std::mutex> lk(connMutex);
+            connCv.wait(lk, [&] { return conn != nullptr; });
         }
         else
         {
-            auto *g = new GVRetSerial("load", false, threaded);
-            if (!threaded) g->setRxSliceBudgetMs(8);
-            feed = [g](const QByteArray &b) { g->processRxBytes(b); };
-            pending = [g] { return g->pendingRxBytes(); };
-            conn = g;
+            conn = makeConn(false, mainFeed, mainPending);
+            QObject::connect(&mainDevice, &QTimer::timeout, [&] { deviceTick(mainFeed, mainPending); });
+            mainDevice.start(2);
         }
-        auto inConnThread = [&](std::function<void()> fn) {
-            if (threaded) QMetaObject::invokeMethod(conn, fn, Qt::BlockingQueuedConnection);
-            else fn();
-        };
 
         CANConManager *mgr = CANConManager::getInstance();
         mgr->add(conn);
@@ -199,11 +268,11 @@ private slots:
         view.setWordWrap(false);
         view.setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
         view.resize(1000, 600);
-        if (!qEnvironmentVariableIsSet("WSC_LOAD_NOVIEW")) view.show();
+        if (showView) view.show();
 
         // GUI tick as MainWindow::tickGUIUpdate (250 ms): publish rows, scroll, signal the windows
         int ticks = 0;
-        qint64 maxTickMs = 0, maxGapAfterStartMs = 0;
+        qint64 maxTickMs = 0, maxGapMs = 0, maxGapAfterStartMs = 0;
         QTimer guiTick;
         QObject::connect(&guiTick, &QTimer::timeout, [&] {
             QElapsedTimer t; t.start();
@@ -213,10 +282,7 @@ private slots:
         });
         guiTick.start(250);
 
-        QElapsedTimer runClock;
-        runClock.start();
         // GUI thread responsiveness: the longest gap between 10 ms timer events
-        qint64 maxGapMs = 0;
         QElapsedTimer gapClock;
         gapClock.start();
         QTimer gapTimer;
@@ -230,85 +296,46 @@ private slots:
         // a reader thread, as the frame sender (stage 5) reading the trace
         std::atomic<bool> stopReader{false};
         std::atomic<qint64> readerBad{0}, readerReads{0};
-        QThread *reader = QThread::create([&] {
+        std::thread reader([&] {
             const FrameListView *rows = model.getFilteredListReference();
             while (!stopReader.load())
             {
                 for (const CommFrame &f : rows->tail(32))
                     if (f.payload().size() != len || quint8(f.payload().at(0)) != quint8(f.frameId())) readerBad++;
                 readerReads++;
-                QThread::msleep(1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         });
-        reader->start();
-
-        // the device: rate frames/s, in bursts every 2 ms (USB delivers in packets)
-        std::atomic<quint64> generated{0};
-        std::atomic<bool> stopGen{false};
-        runClock.start();
-        auto produce = [&]() -> QByteArray {
-            const quint64 due = quint64(double(runClock.nsecsElapsed()) * 1e-9 * rate);
-            QByteArray bytes;
-            quint64 n = generated.load();
-            for (; n < due; n++) bytes += gen.frameBytes(n);
-            generated.store(n);
-            return bytes;
-        };
-        QThread *device = nullptr;
-        QTimer deviceTimer;
-        if (threaded)
-        {
-            device = QThread::create([&] {
-                while (!stopGen.load())
-                {
-                    QByteArray b = produce();
-                    if (!b.isEmpty())
-                        QMetaObject::invokeMethod(conn, [feed, b] { feed(b); }, Qt::QueuedConnection);
-                    QThread::msleep(2);
-                }
-            });
-            device->start();
-        }
-        else
-        {
-            // wasm: Web Serial's read loop hands bytes to the GUI thread
-            QObject::connect(&deviceTimer, &QTimer::timeout, [&] {
-                QByteArray b = produce();
-                if (!b.isEmpty()) feed(b);
-            });
-            deviceTimer.start(2);
-        }
 
         // run, sampling memory
         qint64 rssAfterFill = 0, rssMax = 0;
         const qint64 rssStart = tf::rssKb();
+        bool ringBounded = true;
         while (runClock.elapsed() < seconds * 1000)
         {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
             if (!rssAfterFill && model.framesWrapped() > 0) rssAfterFill = tf::rssKb();
             rssMax = std::max(rssMax, tf::rssKb());
-            QVERIFY(model.totalFrameCount() <= kMaxFrames);
+            if (model.totalFrameCount() > kMaxFrames) ringBounded = false;
         }
 
         // stop the device, let everything in flight arrive
         stopGen = true;
-        deviceTimer.stop();
-        if (device) { device->wait(); delete device; }
+        mainDevice.stop();
+        if (!threaded) left = mainPending();
         const quint64 total = generated.load();
         QElapsedTimer settle;
         settle.start();
-        std::atomic<qsizetype> left{1};
         while (settle.elapsed() < 30000)
         {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-            inConnThread([&] { left = pending(); });
-            if (left == 0 && conn->getQueue().peek() == nullptr) break;
+            if (!threaded) left = mainPending();
+            if (left.load() == 0 && conn->getQueue().peek() == nullptr) break;
         }
         QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
         model.sendBulkRefresh();
         stopReader = true;
-        reader->wait();
-        delete reader;
+        reader.join();
         guiTick.stop();
         gapTimer.stop();
 
@@ -323,7 +350,7 @@ private slots:
                                  .arg(model.rowCount()).arg(ticks).arg(maxGapMs)
                                  .arg(rssStart / 1024).arg(rssAfterFill / 1024).arg(rssMax / 1024).arg(tf::rssKb() / 1024)
                                  .arg(readerReads.load()).arg(maxAddMs).arg(maxTickMs).arg(maxGapAfterStartMs);
-
+        if (showView)
         {
             QStringList costs;
             for (auto it = view.maxMs.cbegin(); it != view.maxMs.cend(); ++it)
@@ -331,11 +358,32 @@ private slots:
                 else if (it.value() >= 5) costs << QString("%1 %2 ms").arg(it.key()).arg(it.value());
             qInfo().noquote() << "view, longest calls:" << costs.join(", ");
         }
+
+        // take the connection down before any check can return early
+        QObject::disconnect(ingest);
+        mgr->remove(conn);
+        const qsizetype leftAtEnd = left.load();
+        const bool queueEmpty = conn->getQueue().peek() == nullptr;
+        if (threaded)
+        {
+            quitConn = true;
+            {
+                std::lock_guard<std::mutex> lk(connMutex);
+                connRemoved = true;
+            }
+            connCv.notify_all();
+            connThread.join();
+        }
+        else
+            delete conn;
+
         // every frame accounted for
-        QCOMPARE(left.load(), qsizetype(0));
+        QCOMPARE(leftAtEnd, qsizetype(0));
+        QVERIFY(queueEmpty);
         QCOMPARE(inModel + dropped, total);
         QVERIFY(total >= quint64(rate) * quint64(seconds) * 9 / 10);
         // the ring stays bounded, and the rows match it
+        QVERIFY(ringBounded);
         QVERIFY(model.totalFrameCount() <= kMaxFrames);
         QCOMPARE(qsizetype(model.rowCount()), qsizetype(model.totalFrameCount()));
         QCOMPARE(readerBad.load(), qint64(0));
@@ -357,10 +405,6 @@ private slots:
             QVERIFY2(maxGapAfterStartMs < 250, qPrintable(QString("GUI thread stalled %1 ms").arg(maxGapAfterStartMs)));
             QCOMPARE(dropped, quint64(0));
         }
-
-        QObject::disconnect(ingest);
-        mgr->remove(conn);
-        delete conn;
     }
 };
 

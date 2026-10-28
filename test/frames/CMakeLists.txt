@@ -1,6 +1,8 @@
 # web-savvycan: tests of the frame store, the trace model, the GVRET/LAWICEL receive path and a
 # full-rate replay load test. Standalone (like unit_tests/), desktop only:
 #
+#   test/frames/run.sh [plain|address|thread]   (configures, builds and runs; see the script)
+# or by hand:
 #   cmake -S test/frames -B build-tests -G Ninja -DCMAKE_PREFIX_PATH=$QT_DESKTOP [-DFRAMES_SANITIZER=address|thread]
 #   ninja -C build-tests && (cd build-tests && QT_QPA_PLATFORM=offscreen ctest --output-on-failure)
 #
