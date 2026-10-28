@@ -20,13 +20,13 @@ is the check with the real device, the real Chrome and a real bus.
 From the rig, without copying anything (the page runs in your Chrome, rc1 is plugged into your PC):
 
 ```
-ssh -L 8000:127.0.0.1:8000 hil 'node ~/src/web-savvycan-integration/tests/web/server.mjs --port 8000 --dist ~/src/web-savvycan-integration/dist'
+ssh -L 8000:127.0.0.1:8000 hil 'node ~/src/web-savvycan/tests/web/server.mjs --port 8000 --dist ~/src/web-savvycan/dist'
 ```
 
 or copy the folder and serve it on your PC:
 
 ```
-scp -r hil:src/web-savvycan-integration/dist ~/web-savvycan-dist
+scp -r hil:src/web-savvycan/dist ~/web-savvycan-dist
 cd ~/web-savvycan-dist && python3 -m http.server 8000 --bind 127.0.0.1
 ```
 

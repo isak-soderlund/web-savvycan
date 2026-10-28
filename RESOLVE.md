@@ -40,9 +40,14 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
   Web Serial stand-in and the parsers.
 - **On the rig:** rc1 with the Kvaser as the peer, classic and CAN FD. Every frame the Kvaser sends must appear in
   the trace and in the log file.
-- **Logging:** `test/web` (Playwright; `run-disklog-tests.sh`): the download's bytes equal SavvyCAN's own rows and load in the
-  desktop SavvyCAN (`test/nativecsv`), Chromium and Firefox; the app with the fake rc1 (every frame sent is in the
-  download); a multi-GB log (`--project=chromium-large`, through `heavy.sh`). Crash test only with `LOG_TO_DISK_LIVE`.
+- **Where:** browser tests in `tests/web` (`run.sh`: the fake rc1 (`fake/rc1.js`), the app in headless Chromium,
+  the logging module alone in Chromium and Firefox; `--long`, `--large`, `--screenshots` opt-in), desktop C++ tests in
+  `tests/desktop` (`run.sh plain|address|thread`, through `heavy.sh`); the smoke test is `scripts/smoke-wasm.sh`
+  (`tests/web`'s smoke spec, also in CI). Builds: CMake only (`scripts/build-*.sh`; `SavvyCAN.pro` is upstream's, unused).
+- **Logging:** `tests/web` download and logging specs: the download's bytes equal SavvyCAN's own rows and load in the
+  desktop SavvyCAN's parser (`nativecsv_tool`, `tests/desktop`), Chromium and Firefox; the app with the fake rc1 (every
+  frame sent is in the download); a multi-GB log (`run.sh --large`, through `heavy.sh`). Writing to disk while logging,
+  and its tests, are on branch `disklog-live`.
   Measured 2026-10-28 (headless, rows copied out of a fixed "wasm heap" buffer, 3G `heavy.sh` slice): page JS heap
   1 MB and wasm heap flat throughout; collecting at ~520-590 MB/s.
   - **Chromium:** 2, 3, 4, 6 and 8 GB logs downloaded byte-exact (SHA-256); its blob storage holds ~2 GB in RAM
@@ -135,7 +140,7 @@ cleverness, one way to do each thing (e.g. one serial mock, one build path). Fin
 
 - Stage 1's web build leaves the scripting window (Qt Qml) out (`WEB_SAVVYCAN_SCRIPTING=OFF` for wasm): 5.7 MB less;
   scripting returns with its stage.
-- Ship with `--gzip-loader` (the page fetches `SavvyCAN.wasm.gz` and unpacks it; every file under Oxygen's 20 MB).
+- Ship with the gzip loader (`build-wasm.sh`'s default: the page fetches `SavvyCAN.wasm.gz` and unpacks it; every file under Oxygen's 20 MB).
   Building Qt from source for JSPI (smaller still) is deferred.
 
 ## Found by the sanitizer builds (2026-10-28, for the simplification/fix pass)

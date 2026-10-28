@@ -52,6 +52,7 @@ B2. **A second fake rc1 in C++** (`wasm/webserial/tests/fakerc1.h`, 226 lines) f
 (219 lines). The browser suite runs the same GVRET/LAWICEL code in the real wasm app against the one fake
 (`tests/web/fake/rc1.js`) — connect, traffic, unplug, refused channel. **Change:** delete both; the stand-in's own
 unit test (`tst_webserialport`, fake backend) stays.
+*Done* (test side): both deleted; `tst_webserialport` + `fakebackend.h` moved to `tests/desktop` unchanged.
 
 B3. **API nobody calls.** The stand-in implements Qt API SavvyCAN never uses (parity/stop-bit/flow setters'
 change signals, `setBreakEnabled`, `pinoutSignals`, `readBufferSize`, `canReadLine`/`readLineData`,
@@ -89,6 +90,7 @@ them out of the dialog in the browser (not just hidden), and a test that they ar
 D3. **`SavvyCAN.pro` half-updated** (qmake): our sources were added to it partly (no `framestore`, no wasm), so it
 builds neither tree. CMake is the one build path (scripts, CI). **Change:** our edits to `SavvyCAN.pro` reverted;
 RESOLVE.md says CMake only.
+*Done:* `SavvyCAN.pro` is upstream's 9c3b0af again; RESOLVE.md "Tests" and `scripts/README.md` say CMake only.
 
 ## E. Tests: one location, one harness, one fake, one mock, one server
 
@@ -102,31 +104,55 @@ Playwright install in `scripts/package.json`), `scripts/screenshots/` (`wasm.cjs
 E1. **The selftest client** (`tests/web/selftest/index.html`, 258 lines, and the `selftest` project that runs every
 spec twice) was the reference before the app existed. The app now passes the same specs. **Change:** delete it and
 its driver; the specs run against the app only.
+*Done:* the page, its driver and project, the overload test's selftest branch, the selftest-only unplug test and the
+fake's file-picker mocks (only the selftest and the live-to-disk specs used them) are gone.
 
 E2. **`test/web` moves into `tests/web`** (one `package.json`, one config, one server, one harness): the download
 module spec and the multi-GB spec (`large` project, through `heavy.sh`); `download-app.spec` merged into
 `specs/logging.spec` (same checks, one driver); live-logging specs go with A1 to `disklog-live`.
+*Done:* `tests/web` has one `package.json`, config, server (`/__src/` added for the module's page) and harness.
+Projects `app`, `download` (the module alone, `lib/disklog.html`), `firefox` (the same in Firefox); opt-in tags
+`@long`, `@large`, `@screenshots` (`run.sh --long/--large/--screenshots`; `--long` and `--large` through `heavy.sh`).
+`logging.spec` gained the "name asked at Cease" test and the check with SavvyCAN's parser; the download spec tests only
+start/write/stop, `_blob()`, `status()` and the "leave site?" prompt. The multi-GB spec makes its rows in JS (no tool
+needed). Deleted: the four live specs, `global-setup.mjs`, `common.mjs`, `run-disklog-tests.sh`, the second server,
+`desktop-load.sh` (no test used it; a by-hand check).
 
 E3. **`wasm/webserial/tests/e2e.mjs`** (175 lines) duplicates `connect`/`traffic` with its own driver and server.
 **Change:** delete. `bridge.test.mjs` moves to `tests/web/unit/`.
+*Done:* `run.sh` runs it with the fake's unit tests (no `WSC_RC1_FAKE`, no skip: the fake is next to it).
 
 E4. **Desktop C++ tests in three places** (`test/frames`, `test/nativecsv`, `wasm/webserial/tests`), each with
 its own CMake project and runner. **Change:** one `tests/desktop` CMake project and one `run.sh` (plain,
 `--asan`, `--tsan`).
+*Done:* `tests/desktop/CMakeLists.txt` (frame tests, `tst_webserialport`, `nativecsv_tool` with its continuous and
+round-trip checks as ctest tests; `WSC_SANITIZER=address|thread`), `tests/desktop/run.sh [plain|address|thread]`
+(default plain; build trees `build/desktop-tests*`). `wasm/webserial/scripts/build-tests.sh` deleted.
 
 E5. **Smoke test with its own server and Playwright install** (`scripts/smoke-wasm.cjs`, `scripts/package.json`).
 **Change:** a `smoke` spec in `tests/web`; `scripts/smoke-wasm.sh` runs it; CI installs `tests/web`.
+*Done:* `specs/smoke.spec.mjs` (no fake: the page as a visitor gets it; failed requests count as errors); pictures to
+`tests/web/results/`; `smoke-wasm.cjs`, `scripts/package*.json` deleted; CI uploads the pictures with `dist/`.
 
 E6. **A second fake GVRET device for screenshots** (`scripts/screenshots/fake_gvret_pty.py`). **Change:** use
 `tests/desktop/rc1_pty.py --tcp` (the one fake). `scripts/screenshots/wasm.cjs` uses the suite's driver or goes.
+*Done:* `desktop.sh` runs `rc1_pty.py --tcp --enable-bus` (new option: rc1 starts with the bus disabled and
+SavvyCAN's restored connection doesn't enable it; the option sends the host's SETUP_CANBUS/SETUP_FD once the host
+switched to GVRET); `fake_gvret_pty.py` deleted. `wasm.cjs` deleted: its checks (follow the browser's theme, kept
+after reload) are in `theme.spec`; its pictures are the opt-in `screenshots.spec` (`run.sh --screenshots`).
 
 ## F. Build scripts
 
 F1. **`scripts/wasm-size-experiments.sh`**: the experiment is done and its decisions are in RESOLVE.md.
 **Change:** delete (git history keeps it).
+*Done.*
 
 F2. One build path: `scripts/build-wasm.sh` and `scripts/build-desktop.sh` (CMake); options nobody uses get cut
 where found.
+*Done:* `build-wasm.sh` lost `--opt`, `--wasm-opt` (size experiments only), `--gzip-loader` (a no-op, it is the
+default) and `-j` (`WSC_JOBS`); kept `--clean`, `--no-gzip-loader`, `--scripting`, `--jspi` (one line), `--dist`, `--`.
+`build-desktop.sh` lost `--tests` (upstream's `BUILD_TESTS` doesn't compile) and `-j`. `setup-toolchain.sh`: nothing
+unused. The CMake cache option `WEB_SAVVYCAN_WASM_LINK_OPT` (app side) is now only ever its default.
 
 ## How the lines are counted
 
