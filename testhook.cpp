@@ -11,6 +11,7 @@
 
 #ifdef Q_OS_WASM
 #include <emscripten.h>
+#include "wasm/disklog/webdisklog.h"
 #endif
 
 namespace {
@@ -124,6 +125,11 @@ void install(CommFrameModel *model)
         registerStat("queued", [] { return QJsonValue(double(CANConManager::getInstance()->getQueuedFrames())); });
     }
 #ifdef Q_OS_WASM
+    if (!registry().contains("logging")) {
+        registerStat("logging", [] { return QJsonValue(WebDiskLog::instance()->isActive()); });
+        registerStat("logFile", [] { return QJsonValue(WebDiskLog::instance()->fileName()); });
+        registerStat("logFramesWritten", [] { return QJsonValue(double(WebDiskLog::instance()->framesWritten())); });
+    }
     wsc_install_hook();
 #endif
 }

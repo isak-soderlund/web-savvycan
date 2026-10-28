@@ -10,9 +10,9 @@ import { execSync } from 'node:child_process';
 import { HARNESS, HEADER, loadRows, bytesFor, savvycanCheck, note, BASE } from './common.mjs';
 
 // on the real disk (/tmp is a RAM disk on the rig)
-const BASE = path.join(os.homedir(), '.cache/web-savvycan-disklog-xvfb');
-const PROFILE = path.join(BASE, 'profile');
-const LOGS = path.join(BASE, 'logs');
+const DIR = path.join(os.homedir(), '.cache/web-savvycan-disklog-xvfb');
+const PROFILE = path.join(DIR, 'profile');
+const LOGS = path.join(DIR, 'logs');
 
 test.skip(!process.env.DISPLAY, 'needs a display (xvfb-run)');
 test.describe.configure({ mode: 'serial' });
@@ -70,7 +70,7 @@ async function allowAfterRestart(settled) {
 const launch = () => chromium.launchPersistentContext(PROFILE, { headless: false, baseURL: BASE });
 
 test.beforeAll(() => {
-  fs.rmSync(BASE, { recursive: true, force: true });
+  fs.rmSync(DIR, { recursive: true, force: true });
   fs.mkdirSync(LOGS, { recursive: true });
 });
 

@@ -1,0 +1,258 @@
+<!doctype html>
+<!--
+  The harness self-test page: a small reference client that does what web-savvycan's stage 1 will do (choose rc1 over
+  Web Serial, GVRET or slcan as SavvyCAN drives them, a bounded trace with a dropped-frames counter, logging in SavvyCAN's
+  native CSV as one download on stop (the MVP), a light/dark theme), so the fake rc1, the Web Serial mock, the
+  file pickers and the probe are tested in Chromium before the app exists. It exposes the same test hook the specs
+  expect from the app: window.webSavvyCAN (tests/web/README.md, "The app's test hook").
+
+  Query: ?buf=<Web Serial bufferSize, 4096> &ring=<trace size, 100000> &queue=<ingest queue, 20000> &stall=<ms of
+  extra work per UI batch, 0> &commit=<period of folding log rows into a Blob, ms, 2000>
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>rc1 harness self-test</title>
+<style>
+  body { font: 13px sans-serif; margin: 12px; background: #fff; color: #111; }
+  body.dark { background: #1e1e1e; color: #ddd; }
+  table { border-collapse: collapse; font-family: monospace; }
+  td, th { padding: 1px 6px; border-bottom: 1px solid #8884; }
+  .row > * { margin-right: 8px; }
+  #canvas { width: 400px; height: 120px; background: #f4f4f4; display: block; margin-top: 8px; }
+  body.dark #canvas { background: #2b2b2b; }
+</style>
+</head>
+<body>
+<div class="row">
+  <button id="choose">Choose device</button>
+  <select id="proto" aria-label="Protocol"><option value="gvret">GVRET</option><option value="slcan">LAWICEL / SLCAN</option></select>
+  <label>Speed <input id="bitrate" value="500000" size="8"></label>
+  <label><input id="fd" type="checkbox" checked> CAN FD</label>
+  <label>Data rate <input id="dbitrate" value="2000000" size="8"></label>
+  <button id="connect">Connect</button>
+  <button id="disconnect">Disconnect</button>
+</div>
+<div class="row">
+  <button id="logStart">Start logging</button>
+  <button id="logStop">Stop logging</button>
+  <button id="theme">Dark theme</button>
+</div>
+<p>Status: <span id="status">not connected</span> · Received: <span id="received">0</span> · In trace: <span id="trace">0</span>
+  · Dropped: <span id="dropped">0</span> · Log: <span id="log">off</span></p>
+<canvas id="canvas"></canvas>
+<table><thead><tr><th>Time</th><th>ID</th><th>Ext</th><th>FD</th><th>BRS</th><th>Len</th><th>Data</th></tr></thead><tbody id="rows"></tbody></table>
+<script src="../fake/rc1.js"></script>
+<script>
+'use strict';
+const Q = new URLSearchParams(location.search);
+const BUF = Number(Q.get('buf') || 4096), RING = Number(Q.get('ring') || 100000), QUEUE = Number(Q.get('queue') || 20000);
+const STALL = Number(Q.get('stall') || 0), COMMIT = Number(Q.get('commit') || 2000);
+const $ = (id) => document.getElementById(id);
+const S = { port: null, reader: null, writer: null, connected: false, received: 0, dropped: 0, evicted: 0, ring: new Array(RING),
+  ringHead: 0, ringCount: 0, queue: [], log: null, keepalive: null, errors: [] };
+
+// ---- theme, remembered
+function setTheme(t) {
+  document.body.classList.toggle('dark', t === 'dark');
+  localStorage.setItem('wsc-theme', t);
+  $('theme').textContent = t === 'dark' ? 'Light theme' : 'Dark theme';
+  const c = $('canvas').getContext('2d');
+  c.fillStyle = t === 'dark' ? '#2b2b2b' : '#f4f4f4';
+  c.fillRect(0, 0, 400, 120);
+}
+setTheme(localStorage.getItem('wsc-theme') || 'light');
+$('theme').onclick = () => setTheme(document.body.classList.contains('dark') ? 'light' : 'dark');
+
+// ---- frames: ingest queue (bounded: the dropped counter), batches into the ring on animation frames
+function ingest(f) {
+  S.received++;
+  if (S.queue.length >= QUEUE) {
+    S.dropped++;
+    return;
+  }
+  S.queue.push(f);
+}
+function uiBatch() {
+  const batch = S.queue;
+  S.queue = [];
+  if (STALL) {
+    const end = performance.now() + STALL;
+    while (performance.now() < end) {} // a slow UI
+  }
+  for (const f of batch) {
+    if (S.ringCount === RING) S.evicted++;
+    S.ring[S.ringHead] = f;
+    S.ringHead = (S.ringHead + 1) % RING;
+    S.ringCount = Math.min(S.ringCount + 1, RING);
+    if (S.log) S.log.rows.push(csvRow(f));
+  }
+  $('received').textContent = S.received;
+  $('trace').textContent = S.ringCount;
+  $('dropped').textContent = S.dropped;
+  if (batch.length) {
+    const rows = [];
+    for (let i = 1; i <= Math.min(20, S.ringCount); i++) {
+      const f = S.ring[(S.ringHead - i + RING) % RING];
+      rows.push(`<tr><td>${f.ts}</td><td>${f.id.toString(16).toUpperCase()}</td><td>${f.ext}</td><td>${f.fd}</td><td>${f.brs}</td><td>${f.data.length}</td><td>${Array.from(f.data, (b) => b.toString(16).padStart(2, '0')).join(' ')}</td></tr>`);
+    }
+    $('rows').innerHTML = rows.join('');
+  }
+  requestAnimationFrame(uiBatch);
+}
+requestAnimationFrame(uiBatch);
+
+// ---- logging: SavvyCAN native CSV (framefileio.cpp nativeCSVRow), as the app's MVP (RESOLVE.md MVP #7): rows
+// collected in the page as Blobs while logging, one download on stop, named by the start time
+const hex2 = (b) => b.toString(16).toUpperCase().padStart(2, '0');
+function csvRow(f) {
+  const cols = [];
+  const n = f.fd ? Math.max(8, f.data.length) : 8;
+  for (let i = 0; i < n; i++) cols.push(i < f.data.length ? hex2(f.data[i]) : '00');
+  let r = `${f.ts},${f.id.toString(16).toUpperCase().padStart(8, '0')},${f.ext},Rx,0,${f.data.length},${cols.join(',')},`;
+  if (f.fd) r += 'FD' + (f.brs ? '+BRS' : '') + ',';
+  return r + '\n';
+}
+function flushRows() {
+  const L = S.log;
+  if (!L || !L.rows.length) return;
+  L.parts.push(new Blob([L.rows.join('')]));
+  L.written += L.rows.length;
+  L.rows = [];
+}
+const two = (n) => String(n).padStart(2, '0');
+$('logStart').onclick = () => {
+  const d = new Date();
+  const name = `SavvyCAN_${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}_${two(d.getHours())}-${two(d.getMinutes())}-${two(d.getSeconds())}.csv`;
+  const header = 'Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n';
+  S.log = { name, parts: [header], rows: [], written: 0, timer: setInterval(flushRows, COMMIT) };
+  $('log').textContent = name;
+};
+$('logStop').onclick = () => {
+  if (!S.log) return;
+  clearInterval(S.log.timer);
+  flushRows();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(S.log.parts, { type: 'text/csv' }));
+  a.download = S.log.name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  S.lastLog = { name: S.log.name, written: S.log.written };
+  S.log = null;
+  $('log').textContent = 'off';
+};
+
+// ---- the device
+$('choose').onclick = async () => {
+  try {
+    S.port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x1209, usbProductId: 0x0001 }] });
+    $('status').textContent = 'device chosen';
+  } catch (e) {
+    $('status').textContent = 'no device: ' + e.name;
+  }
+};
+const le = (v) => [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff];
+async function write(bytes) {
+  await S.writer.write(typeof bytes === 'string' ? new TextEncoder().encode(bytes) : Uint8Array.from(bytes));
+}
+$('connect').onclick = async () => {
+  if (!S.port) {
+    const ports = await navigator.serial.getPorts();
+    S.port = ports[0];
+  }
+  if (!S.port) return;
+  const proto = $('proto').value, bitrate = Number($('bitrate').value), fd = $('fd').checked, dbr = Number($('dbitrate').value);
+  try {
+    await S.port.open({ baudRate: proto === 'gvret' ? 1000000 : 115200, bufferSize: BUF, flowControl: proto === 'gvret' ? 'none' : 'hardware' });
+  } catch (e) {
+    S.errors.push(String(e));
+    $('status').textContent = 'open failed: ' + e.name;
+    return;
+  }
+  S.writer = S.port.writable.getWriter();
+  S.reader = S.port.readable.getReader();
+  S.proto = proto;
+  const parser = proto === 'gvret' ? new RC1Fake.GvretHostParser() : null;
+  if (proto === 'gvret') {
+    await S.port.setSignals({ dataTerminalReady: false, requestToSend: false });
+    parser.onFrame = ingest;
+    await write([0xe7, 0xe7, 0xf1, 0x0c, 0xf1, 0x06, 0xf1, 0x07, 0xf1, 22, 0xf1, 0x01, 0xf1, 0x09]);
+    S.keepalive = setInterval(() => write([0xf1, 0x09]).catch(() => {}), 250);
+  }
+  let line = '';
+  const slcanLine = (l) => {
+    if (!/^[tTrRdDbB]/.test(l)) return;
+    const f = RC1Fake.slcanParseFrame(Array.from(l, (c) => c.charCodeAt(0)));
+    if (f) ingest({ ts: Math.round(performance.now() * 1000), id: f.id, ext: f.ext, fd: f.fd, brs: f.brs, data: RC1Fake.frameData(f) });
+  };
+  const readLoop = async () => {
+    try {
+      for (;;) {
+        const { value, done } = await S.reader.read();
+        if (done) break;
+        if (parser) parser.push(value);
+        else {
+          for (const b of value) {
+            if (b === 13 || b === 7) {
+              slcanLine(line);
+              line = '';
+            } else line += String.fromCharCode(b);
+          }
+        }
+      }
+    } catch (e) {
+      S.errors.push(String(e));
+      $('status').textContent = 'lost: ' + e.message;
+      S.connected = false;
+      clearInterval(S.keepalive);
+    }
+  };
+  S.loop = readLoop();
+  if (proto === 'gvret') {
+    for (let i = 0; i < 50 && !parser.replies[12]; i++) await new Promise((r) => setTimeout(r, 10));
+    await write([0xf1, 5, ...le((bitrate | 0xc0000000) >>> 0), ...le(0x80000000), 0]);
+    if (parser.replies[22]) await write([0xf1, 21, 0, fd ? 0x02 : 0x00, ...le(dbr)]);
+    S.gvret = parser;
+  } else {
+    const idx = [10000, 20000, 50000, 100000, 125000, 250000, 500000, 800000, 1000000].indexOf(bitrate);
+    await write(`C\rS${idx}\r` + (fd ? `Y${dbr / 1000000}\r` : '') + 'O\r');
+  }
+  S.connected = true;
+  $('status').textContent = 'connected';
+};
+$('disconnect').onclick = async () => {
+  if (!S.port) return;
+  clearInterval(S.keepalive);
+  try {
+    if (S.proto === 'slcan') await write('C\r');
+    else await write([0xf1, 5, 0, 0, 0, 0x80, 0, 0, 0, 0x80, 0]);
+  } catch {}
+  try { await S.reader.cancel(); } catch {}
+  S.reader.releaseLock();
+  S.writer.releaseLock();
+  await S.loop;
+  await S.port.close();
+  S.connected = false;
+  $('status').textContent = 'not connected';
+};
+
+// ---- the test hook (the same contract the specs expect from web-savvycan)
+window.webSavvyCAN = {
+  version: 'selftest',
+  stats: () => ({ connected: S.connected, framesReceived: S.received, framesInTrace: S.ringCount, framesEvicted: S.evicted, framesDropped: S.dropped,
+    queued: S.queue.length, logging: !!S.log, logFile: S.log ? S.log.name : S.lastLog ? S.lastLog.name : null,
+    logFramesWritten: S.log ? S.log.written + S.log.rows.length : S.lastLog ? S.lastLog.written : 0, errors: S.errors.slice() }),
+  theme: () => (document.body.classList.contains('dark') ? 'dark' : 'light'),
+  traceTail: (n) => {
+    const out = [];
+    for (let i = Math.min(n, S.ringCount); i >= 1; i--) {
+      const f = S.ring[(S.ringHead - i + RING) % RING];
+      out.push({ id: f.id, ext: f.ext, fd: f.fd, brs: f.brs, data: Array.from(f.data) });
+    }
+    return out;
+  },
+};
+</script>
+</body>
+</html>

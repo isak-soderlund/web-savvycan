@@ -6,14 +6,12 @@
 //
 //   node wasm/webserial/tests/e2e.mjs --dist dist [--out /tmp/wsc-webserial-e2e] [--protocol gvret|lawicel|both]
 //        [--granted] (a returning visitor: the port is listed without "Choose device")
-// Playwright and the fake: from PLAYWRIGHT_DIR / WSC_RC1_FAKE, else tests/web in this tree, else
-// ~/src/web-savvycan-tests/tests/web.
+// Playwright and the fake: from PLAYWRIGHT_DIR / WSC_RC1_FAKE, else tests/web in this tree.
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir } from 'node:os';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -25,7 +23,7 @@ const DIST = resolve(opt('--dist', join(here, '../../../dist')));
 const OUT = resolve(opt('--out', '/tmp/wsc-webserial-e2e'));
 const PROTOCOLS = opt('--protocol', 'both') === 'both' ? ['gvret', 'lawicel'] : [opt('--protocol')];
 const GRANTED = args.includes('--granted');
-const webDirs = [join(here, '../../../tests/web'), join(homedir(), 'src/web-savvycan-tests/tests/web')];
+const webDirs = [join(here, '../../../tests/web')];
 const pwDir = process.env.PLAYWRIGHT_DIR || webDirs.find((d) => existsSync(join(d, 'node_modules/playwright')));
 const { chromium } = createRequire(join(pwDir, 'package.json'))('playwright');
 const FAKE = process.env.WSC_RC1_FAKE || webDirs.map((d) => join(d, 'fake/rc1.js')).find((p) => existsSync(p));

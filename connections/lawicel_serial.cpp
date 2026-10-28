@@ -559,9 +559,20 @@ void LAWICELSerial::processLine()
     if (!useSystemTime)
     {
         bool isFD = false;
+        bool isRemote = false;
         char offset;
         char len_index;
         switch(mBuildLine[0].toLatin1()) {
+            case 'r':
+                isRemote = true;
+                offset = 5;
+                len_index = 4;
+                break;
+            case 'R':
+                isRemote = true;
+                offset = 10;
+                len_index = 9;
+                break;
             case 'b':
             case 'd':
                 isFD = true;
@@ -587,7 +598,7 @@ void LAWICELSerial::processLine()
         //the DLC is one hex digit: CAN FD codes A-F (16-64 bytes) read as decimal gave 0, so the
         //hardware timestamp was taken from the middle of the data for frames of 16 bytes or more
         int dlc = mBuildLine.mid(len_index, 1).toInt(nullptr, 16);
-        int byteCount = isFD ? (int)dlc_code_to_bytes(dlc) : dlc;
+        int byteCount = isRemote ? 0 : isFD ? (int)dlc_code_to_bytes(dlc) : dlc; //a remote frame has no data
         int frameStringLen = offset + byteCount * 2;
         if (mBuildLine.length() > frameStringLen + 1)
         {
@@ -666,6 +677,17 @@ void LAWICELSerial::processLine()
         buildFrame.setPayload(buildData);
         if (!isCapSuspended()) enqueueReceivedFrame(buildFrame);
         break;
+    case 'r': //standard remote frame: riiil (web-savvycan: upstream dropped remote frames)
+    case 'R': //extended remote frame: Riiiiiiiil
+    {
+        const bool ext = mBuildLine[0] == QLatin1Char('R');
+        buildFrame.setFrameId(mBuildLine.mid(1, ext ? 8 : 3).toInt(nullptr, 16));
+        buildFrame.setReceived(true);
+        buildFrame.setFrameType(CommFrame::FrameType::RemoteRequestFrame);
+        buildFrame.setExtendedFrameFormat(ext);
+        if (!isCapSuspended()) enqueueReceivedFrame(buildFrame);
+        break;
+    }
     }
 }
 

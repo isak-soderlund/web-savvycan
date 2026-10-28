@@ -2,12 +2,11 @@
 // (tests/web/fake/rc1.js: the firmware's GVRET/slcan, Chrome's Web Serial behaviour), standing in for the C++ side:
 // what SavvyCAN's GVRET/LAWICEL do through the QSerialPort stand-in, as calls and callbacks.
 //   node --test wasm/webserial/tests/bridge.test.mjs
-// The fake: $WSC_RC1_FAKE, else tests/web/fake/rc1.js in this tree, else ~/src/web-savvycan-tests/tests/web/fake/rc1.js.
+// The fake: $WSC_RC1_FAKE, else tests/web/fake/rc1.js in this tree.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
@@ -15,8 +14,7 @@ import vm from 'node:vm';
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const BRIDGE = readFileSync(join(here, '../webserial.js'), 'utf8');
-const FAKE = [process.env.WSC_RC1_FAKE, join(here, '../../../tests/web/fake/rc1.js'),
-  join(homedir(), 'src/web-savvycan-tests/tests/web/fake/rc1.js')].find((p) => p && existsSync(p));
+const FAKE = [process.env.WSC_RC1_FAKE, join(here, '../../../tests/web/fake/rc1.js')].find((p) => p && existsSync(p));
 const RC1Fake = FAKE ? require(FAKE) : null;
 const skip = RC1Fake ? false : 'no fake rc1 (tests/web/fake/rc1.js): set WSC_RC1_FAKE';
 
