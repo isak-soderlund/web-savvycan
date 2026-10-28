@@ -90,7 +90,7 @@ CommFrameModel::CommFrameModel(QObject *parent)
     lastUpdateNumFrames = 0;
     timeFormat =  "MMM-dd HH:mm:ss.zzz";
     sortDirAsc = false;
-    bytesPerLine = 8;
+    bytesPerLine = 16; // web-savvycan: 16 (was 8), a 64-byte CAN FD payload is 4 lines
 }
 
 qsizetype CommFrameModel::FilteredView::sizeLocked() const
@@ -527,6 +527,50 @@ QVariant CommFrameModel::data(const QModelIndex &index, int role) const
         return QApplication::palette().color(QPalette::WindowText);
     }
 
+    // web-savvycan: CAN FD in the trace. The Type column spells out FD/BRS/ESI, the Data column
+    // shows the whole payload (up to 64 bytes) with byte offsets, also when the row is collapsed.
+    if (role == Qt::ToolTipRole)
+    {
+        if (Column(index.column()) == Column::Type)
+        {
+            QStringList parts;
+            switch (thisFrame.frameType())
+            {
+            case CommFrame::FrameType::CANDataFrame:       parts << tr("Classic CAN data frame"); break;
+            case CommFrame::FrameType::CANFDDataFrame:
+                parts << tr("CAN FD data frame");
+                parts << (thisFrame.hasBitrateSwitch() ? tr("BRS: bit rate switch (data phase at the data bit rate)")
+                                                       : tr("no BRS (whole frame at the nominal bit rate)"));
+                parts << (thisFrame.hasErrorStateIndicator() ? tr("ESI: the sender was error passive")
+                                                             : tr("ESI clear: the sender was error active"));
+                break;
+            case CommFrame::FrameType::RemoteRequestFrame: parts << tr("Remote request frame"); break;
+            case CommFrame::FrameType::ErrorFrame:         parts << tr("Error frame"); break;
+            case CommFrame::FrameType::LINDataFrame:       parts << tr("LIN frame"); break;
+            case CommFrame::FrameType::FLEXRAYDataFrame:   parts << tr("FlexRay frame"); break;
+            default:                                       parts << tr("Invalid frame"); break;
+            }
+            parts << (thisFrame.hasExtendedFrameFormat() ? tr("extended (29-bit) ID") : tr("standard (11-bit) ID"));
+            return parts.join(QLatin1Char('\n'));
+        }
+        if (Column(index.column()) == Column::Data && thisFrame.isDataFrame() && dataLen > 0)
+        {
+            if (dataLen <= bytesPerLine && thisFrame.frameType() != CommFrame::FrameType::CANFDDataFrame)
+                return QVariant();
+            QString tip = tr("%1 bytes").arg(dataLen);
+            for (int i = 0; i < dataLen; i++)
+            {
+                if (i % 16 == 0) tip.append(QStringLiteral("\n%1:").arg(i, 2, 10, QLatin1Char('0')));
+                if (i % 16 == 8) tip.append(QLatin1Char(' '));
+                tip.append(QLatin1Char(' '));
+                if (useHexMode) tip.append(QString::number(data[i], 16).toUpper().rightJustified(2, '0'));
+                else tip.append(QString::number(data[i], 10).rightJustified(3, ' '));
+            }
+            return QStringLiteral("<pre>%1</pre>").arg(tip.toHtmlEscaped());
+        }
+        return QVariant();
+    }
+
     if (role == Qt::TextAlignmentRole)
     {
         switch(Column(index.column()))
@@ -723,6 +767,18 @@ QVariant CommFrameModel::data(const QModelIndex &index, int role) const
 QVariant CommFrameModel::headerData(int section, Qt::Orientation orientation,
                                      int role) const
 {
+    if (role == Qt::ToolTipRole && orientation == Qt::Horizontal)
+    {
+        if (Column(section) == Column::Type)
+            return tr("C = classic CAN, D = CAN FD, B = bit rate switch (BRS),\n"
+                      "E = error state indicator (ESI, sender error passive),\n"
+                      "R = remote request, X = extended (29-bit) ID");
+        if (Column(section) == Column::Data)
+            return tr("Payload, wrapped at \"Maximum data bytes per line\" (Preferences).\n"
+                      "A \"+N B\" badge marks bytes out of sight: click the row to expand it.");
+        return QVariant();
+    }
+
     if (role != Qt::DisplayRole)
         return QVariant();
 
@@ -796,6 +852,58 @@ bool CommFrameModel::any_dirfilters_are_configured(void)
     return false;
 }
 
+bool CommFrameModel::any_typefilters_are_configured(void)
+{
+    for (auto const &val : std::as_const(typeFilters))
+        if (val == false) return true;
+    return false;
+}
+
+int CommFrameModel::typeFilterKey(const CommFrame &frame)
+{
+    switch (frame.frameType()) {
+    case CommFrame::FrameType::CANDataFrame:       return TypeClassic;
+    case CommFrame::FrameType::CANFDDataFrame:     return frame.hasBitrateSwitch() ? TypeFDBRS : TypeFD;
+    case CommFrame::FrameType::RemoteRequestFrame: return TypeRemote;
+    case CommFrame::FrameType::ErrorFrame:         return TypeError;
+    default:                                       return TypeOther;
+    }
+}
+
+QString CommFrameModel::typeFilterLabel(int key)
+{
+    switch (key) {
+    case TypeClassic: return tr("CAN");
+    case TypeFD:      return tr("FD");
+    case TypeFDBRS:   return tr("FD+BRS");
+    case TypeRemote:  return tr("RTR");
+    case TypeError:   return tr("Error");
+    default:          return tr("Other");
+    }
+}
+
+QString CommFrameModel::typeFilterToolTip(int key)
+{
+    switch (key) {
+    case TypeClassic: return tr("Classic CAN data frames (Type C)");
+    case TypeFD:      return tr("CAN FD frames without bit rate switch (Type D)");
+    case TypeFDBRS:   return tr("CAN FD frames with bit rate switch, data phase at the data bit rate (Type DB)");
+    case TypeRemote:  return tr("Remote request frames (Type R)");
+    case TypeError:   return tr("Error frames (Type E)");
+    default:          return tr("LIN, FlexRay and other frames");
+    }
+}
+
+void CommFrameModel::registerFilterKeys(const CommFrame &frame, bool newOnesEnabled)
+{
+    const int type = typeFilterKey(frame);
+    if (!typeFilters.contains(type))
+    {
+        typeFilters.insert(type, newOnesEnabled ? (any_typefilters_are_configured() ? false : true) : true);
+        needFilterRefresh = true;
+    }
+}
+
 bool CommFrameModel::any_lengthfilters_are_configured(void)
 {
     for (auto const &val : std::as_const(lengthFilters))
@@ -812,6 +920,7 @@ bool CommFrameModel::passesFrameFilters(const CommFrame &frame)
     int dir = frame.isReceived() ? 1 : 0;
     if (!dirFilters.value(dir, true)) return false;
     if (!lengthFilters.value(frame.payload().length(), true)) return false;
+    if (!typeFilters.value(typeFilterKey(frame), true)) return false;
     if (!m_searchFilter.isEmpty() &&
         !QString::number(frame.frameId(), 16).contains(m_searchFilter, Qt::CaseInsensitive))
         return false;
@@ -840,6 +949,18 @@ void CommFrameModel::setLengthFilterState(int length, bool state)
     if (!lengthFilters.contains(length)) return;
     lengthFilters[length] = state;
     sendRefresh();
+}
+
+void CommFrameModel::setTypeFilterState(int type, bool state)
+{
+    if (!typeFilters.contains(type)) return;
+    typeFilters[type] = state;
+    sendRefresh();
+}
+
+const QMap<int, bool> *CommFrameModel::getTypeFiltersReference() const
+{
+    return &typeFilters;
 }
 
 void CommFrameModel::setChangingOnly(bool state)
@@ -909,7 +1030,11 @@ void CommFrameModel::ingestLocked(const CommFrame &frame, bool applyOffset)
         tempFrame.setTimeStamp(CommFrame::TimeStamp(0, tempFrame.timeStamp().microSeconds() - timeOffset));
 
     lastUpdateNumFrames++;
+    mIngested++;
     registerFilters(tempFrame);
+
+    // Register frame type (classic / FD / FD+BRS ...) in typeFilters (a loaded file: always shown)
+    registerFilterKeys(tempFrame, applyOffset);
 
     if (!overwriteDups)
     {
@@ -1126,6 +1251,8 @@ void CommFrameModel::clearFrames()
         QWriteLocker lk(&store.lock());
         store.clear();
         store.setCapacity(preallocSize); //a file load may have grown it
+        mWrappedBase = store.totalWrapped();
+        mIngested = 0;
         filteredSeqs.clear();
         filteredSorted = false;
         overwriteFrames.clear();
@@ -1139,6 +1266,7 @@ void CommFrameModel::clearFrames()
         busFilters.clear();
         dirFilters.clear();
         lengthFilters.clear();
+        typeFilters.clear();
     }
     lastSeenData.clear();
     lastUpdateNumFrames = 0;
@@ -1198,6 +1326,7 @@ void CommFrameModel::loadFilterFile(QString filename)
     busFilters.clear();
     dirFilters.clear();
     lengthFilters.clear();
+    typeFilters.clear();
 
     while (!inFile->atEnd()) {
         line = inFile->readLine().simplified();
@@ -1211,6 +1340,8 @@ void CommFrameModel::loadFilterFile(QString filename)
                 dirFilters.insert(tokens[1].toInt(), tokens[2].toUpper() == "T");
             } else if (prefix == "LEN" && tokens.size() >= 3) {
                 lengthFilters.insert(tokens[1].toInt(), tokens[2].toUpper() == "T");
+            } else if (prefix == "TYPE" && tokens.size() >= 3) {
+                typeFilters.insert(tokens[1].toInt(), tokens[2].toUpper() == "T");
             } else if (prefix == "CHANGINGONLY") {
                 // handled via QSettings now; skip
             } else {
@@ -1249,6 +1380,8 @@ void CommFrameModel::saveFilterFile(QString filename)
         outFile->write(QString("DIR,%1,%2\n").arg(it.key()).arg(it.value() ? "T" : "F").toUtf8());
     for (it = lengthFilters.cbegin(); it != lengthFilters.cend(); ++it)
         outFile->write(QString("LEN,%1,%2\n").arg(it.key()).arg(it.value() ? "T" : "F").toUtf8());
+    for (it = typeFilters.cbegin(); it != typeFilters.cend(); ++it)
+        outFile->write(QString("TYPE,%1,%2\n").arg(it.key()).arg(it.value() ? "T" : "F").toUtf8());
     outFile->close();
 }
 
@@ -1280,7 +1413,7 @@ const FrameListView* CommFrameModel::getFilteredListReference() const
 
 quint64 CommFrameModel::framesWrapped() const
 {
-    return store.totalWrapped();
+    return store.totalWrapped() - mWrappedBase;
 }
 
 qsizetype CommFrameModel::storeCapacity() const

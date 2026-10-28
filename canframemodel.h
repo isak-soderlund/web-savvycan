@@ -60,6 +60,7 @@ public:
     void setBusFilterState(unsigned int BusID, bool state);
     void setDirFilterState(int dir, bool state);
     void setLengthFilterState(int length, bool state);
+    void setTypeFilterState(int type, bool state);
     void setAllFilters(bool state);
     void setChangingOnly(bool state);
     bool getChangingOnly() const;
@@ -82,11 +83,20 @@ public:
     const FrameListView *getFilteredListReference() const; //Thus saith the Lord, NO.
     //Frames the ring has dropped from its front (oldest) to make room since the last clear.
     quint64 framesWrapped() const;
+    //Frames taken in (live or loaded) since the last clear, including those wrapped out since.
+    quint64 framesIngested() const { return mIngested; }
     qsizetype storeCapacity() const;
     const QMap<int, bool> *getFiltersReference() const; //this neither
     const QMap<int, bool> *getBusFiltersReference() const; //this neither
     const QMap<int, bool> *getDirFiltersReference() const;
     const QMap<int, bool> *getLengthFiltersReference() const;
+    const QMap<int, bool> *getTypeFiltersReference() const;
+
+    // web-savvycan: the trace's frame type filter (CAN FD versus classic).
+    enum TypeFilterKey { TypeClassic = 0, TypeFD = 1, TypeFDBRS = 2, TypeRemote = 3, TypeError = 4, TypeOther = 5 };
+    static int typeFilterKey(const CommFrame &frame);
+    static QString typeFilterLabel(int key);
+    static QString typeFilterToolTip(int key);
     bool passesFrameFilters(const CommFrame &frame);
 
 public slots:
@@ -123,6 +133,8 @@ private:
     bool any_busfilters_are_configured(void);
     bool any_dirfilters_are_configured(void);
     bool any_lengthfilters_are_configured(void);
+    bool any_typefilters_are_configured(void);
+    void registerFilterKeys(const CommFrame &frame, bool newOnesEnabled);
 
     FrameStore store;                       //every frame (ring)
     std::deque<quint64> filteredSeqs;        //rows of the trace in normal mode: seqs into store
@@ -131,12 +143,15 @@ private:
     QHash<quint64, int> overwriteRow;        //overwriteKey -> row in overwriteFrames
     qsizetype publishedRows = 0;             //rows the views have been told about (rowCount())
     bool pendingPrune = false;
+    quint64 mIngested = 0;                   //frames taken in since the last clear
+    quint64 mWrappedBase = 0;                //store.totalWrapped() at the last clear
     FrameStoreView allView;
     FilteredView filteredView;
     QMap<int, bool> filters;
     QMap<int, bool> busFilters;
     QMap<int, bool> dirFilters;
     QMap<int, bool> lengthFilters;
+    QMap<int, bool> typeFilters;
     DBCHandler *dbcHandler;
     bool interpretFrames; //should we use the dbcHandler?
     bool overwriteDups; //should we display all frames or only the newest for each ID?

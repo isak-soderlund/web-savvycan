@@ -37,6 +37,8 @@ public:
      */
     quint64 getDroppedFrames() const;
     void resetDroppedFrames();
+    // frames waiting in the connections' queues for the GUI thread
+    quint64 getQueuedFrames();
     int getBusBase(CANConnection *);
 
     /**

@@ -1,0 +1,11 @@
+{
+  "name": "web-savvycan-web-tests",
+  "private": true,
+  "description": "Browser tests of web-savvycan's JS parts (Playwright)",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

@@ -104,6 +104,13 @@ quint64 CANConManager::getDroppedFrames() const
     return total;
 }
 
+quint64 CANConManager::getQueuedFrames()
+{
+    quint64 total = 0;
+    for (CANConnection *conn_p : mConns) total += quint64(conn_p->getQueue().count());
+    return total;
+}
+
 void CANConManager::resetDroppedFrames()
 {
     mDroppedRemoved = 0;

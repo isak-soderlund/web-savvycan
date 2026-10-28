@@ -10,8 +10,19 @@
 #include "helpwindow.h"
 #include "utility.h"
 #include "filterutility.h"
+#include "enabledfeatures.h"
+#include "theme.h"
+#include "aboutdialog.h"
+#include "tracedatadelegate.h"
+#ifdef Q_OS_WASM
+#include <QMessageBox>
+#include <QInputDialog>
+#include "wasm/disklog/webdisklog.h"
+#include "wasm/disklog/weblogstartdialog.h"
+#endif
 
 #include <QClipboard>
+#include <QActionGroup>
 #include <QTimer>
 /*
 Some notes on things I'd like to put into the program but haven't put on github (yet)
@@ -148,9 +159,26 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(ui->actionSignal_Viewer, &QAction::triggered, this, &MainWindow::showSignalViewer);
     connect(ui->actionSave_Continuous_Logfile, &QAction::triggered, this, &MainWindow::handleContinousLogging);
     connect(ui->actionSave_Continuous_Filtered_Logfile, &QAction::triggered, this, &MainWindow::handleContinousLoggingFiltered);
+#ifdef Q_OS_WASM
+    setupWebDiskLog();
+#endif
     connect(ui->actionTemporal_Graph, &QAction::triggered, this, &MainWindow::showTemporalGraphWindow);
     connect(ui->actionCAN_Bridge, &QAction::triggered, this, &MainWindow::showCANBridgeWindow);
     connect(ui->actionFrame_Search, &QAction::triggered, this, &MainWindow::showSearchWindow);
+    connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
+    {
+        // View > Light Theme / Dark Theme / Follow System Theme (one of three, as Preferences > Theme)
+        QActionGroup *themeGroup = new QActionGroup(this);
+        themeGroup->setExclusive(true);
+        themeGroup->addAction(ui->actionLight_Theme);
+        themeGroup->addAction(ui->actionDark_Theme);
+        themeGroup->addAction(ui->actionSystem_Theme);
+        connect(ui->actionLight_Theme, &QAction::triggered, this, [] { Theme::instance()->setMode(Theme::Mode::Light); });
+        connect(ui->actionDark_Theme, &QAction::triggered, this, [] { Theme::instance()->setMode(Theme::Mode::Dark); });
+        connect(ui->actionSystem_Theme, &QAction::triggered, this, [] { Theme::instance()->setMode(Theme::Mode::System); });
+        connect(Theme::instance(), &Theme::changed, this, &MainWindow::themeChanged);
+        themeChanged(Theme::isDark());
+    }
 
     //handlers fror interactions with the main can frame view table
     connect(ui->canFramesView, &QAbstractItemView::clicked, this, &MainWindow::gridClicked);
@@ -177,6 +205,7 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(ui->listBusFilters, &QListWidget::itemChanged, this, &MainWindow::busFilterListItemChanged);
     connect(ui->listDirFilters, &QListWidget::itemChanged, this, &MainWindow::dirFilterListItemChanged);
     connect(ui->listLengthFilters, &QListWidget::itemChanged, this, &MainWindow::lengthFilterListItemChanged);
+    connect(ui->listTypeFilters, &QListWidget::itemChanged, this, &MainWindow::typeFilterListItemChanged);
 
     connect(ui->btnCaptureToggle, &QAbstractButton::clicked, this, &MainWindow::toggleCapture);
     connect(ui->btnClearFrames, &QAbstractButton::clicked, this, &MainWindow::clearFrames);
@@ -233,7 +262,13 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->listLengthFilters->setResizeMode(QListView::Adjust);
     ui->listBusFilters->installEventFilter(this);
     ui->listDirFilters->installEventFilter(this);
+    ui->listTypeFilters->setWrapping(true);
+    ui->listTypeFilters->setResizeMode(QListView::Adjust);
     ui->listLengthFilters->installEventFilter(this);
+    ui->listTypeFilters->installEventFilter(this);
+
+    // web-savvycan: CAN FD payloads in the Data column (a "+N B" badge for bytes out of sight)
+    ui->canFramesView->setItemDelegateForColumn((int)Column::Data, new TraceDataDelegate(ui->canFramesView));
 
     // Restore or default splitterLeft after the window has real geometry.
     // QTimer::singleShot(0) defers to first event loop tick.
@@ -315,7 +350,111 @@ MainWindow::MainWindow(QWidget *parent) :
     frameSender->initialize(); //creates the thread and sets things up
     frameSender->startSending(); //start the timer in the object so enabled things can send
 
+    applyFeatures();
+
     installEventFilter(this);
+}
+
+// web-savvycan: hide everything whose feature is off in enabledfeatures.h (menus, buttons, panels), on the
+// desktop and in the browser. Hidden actions are also disabled, so their shortcuts do nothing.
+void MainWindow::applyFeatures()
+{
+    using Features::Feature;
+    const QList<QPair<QAction *, Feature>> actions = {
+        // File
+        {ui->actionOpen_Log_File, Feature::LoadLog},
+        {ui->actionSave_Log_File, Feature::Logging},
+        {ui->actionSave_Filtered_Log_File, Feature::Logging},
+        {ui->actionSave_Continuous_Logfile, Feature::Logging},
+        {ui->actionSave_Continuous_Filtered_Logfile, Feature::Logging},
+        {ui->actionLoad_Filter_Definition, Feature::FilterFiles},
+        {ui->actionSave_Filter_Definition, Feature::FilterFiles},
+        {ui->actionDBC_File_Manager, Feature::DBC},
+        {ui->actionSave_Decoded_Frames, Feature::DBC},
+        {ui->actionSave_Decoded_Frames_CSV, Feature::DBC},
+        {ui->actionCrop_Log, Feature::CropLog},
+        {ui->actionPreferences, Feature::Preferences},
+        // View, Help
+        {ui->actionLight_Theme, Feature::ThemeSwitch},
+        {ui->actionDark_Theme, Feature::ThemeSwitch},
+        {ui->actionSystem_Theme, Feature::ThemeSwitch},
+        {ui->actionAbout, Feature::About},
+        // RE Tools
+        {ui->actionFlow_View, Feature::FlowView},
+        {ui->actionGraph_Dta, Feature::Graphs},
+        {ui->actionFrame_Data_Analysis, Feature::FrameInfo},
+        {ui->actionFile_Comparison, Feature::FileComparator},
+        {ui->actionDBC_Comparison, Feature::DBCComparator},
+        {ui->actionRange_State_2, Feature::RangeState},
+        {ui->actionSingle_Multi_State_2, Feature::DiscreteState},
+        {ui->actionISO_TP_Decoder, Feature::ISOTP},
+        {ui->actionSniffer, Feature::Sniffer},
+        {ui->actionCapture_Bisector, Feature::Bisector},
+        {ui->actionSignal_Viewer, Feature::SignalViewer},
+        {ui->actionTemporal_Graph, Feature::TemporalGraph},
+        {ui->actionFrame_Search, Feature::FrameSearch},
+        // Send Frames
+        {ui->action_Playback, Feature::Playback},
+        {ui->action_Custom, Feature::FrameSender},
+        {ui->actionScripting_INterface, Feature::Scripting},
+        {ui->actionFuzzing, Feature::Fuzzing},
+        {ui->actionUDS_Scanner, Feature::UDSScanner},
+        {ui->actionUDS_Firmware_Update, Feature::UDSFirmwareUpdate},
+        {ui->actionMotorControlConfig, Feature::MotorControlConfig},
+        {ui->actionCAN_Bridge, Feature::CANBridge},
+        // Connection
+        {ui->actionSetup, Feature::Connection},
+    };
+    for (const auto &entry : actions) {
+        const bool enabled = Features::on(entry.second);
+        entry.first->setVisible(enabled);
+        entry.first->setEnabled(enabled);
+    }
+    // Actions in the .ui that no menu shows (no handler or unfinished upstream): never reachable.
+    for (QAction *a : {ui->actionFuzzy_Scope, ui->actionLoad_DBC_File, ui->actionEdit_Messages_Signals,
+                       ui->actionSave_DBC_File, ui->actionFirmware_Uploader, ui->actionConnect,
+                       ui->actionFirmware_Update}) {
+        a->setVisible(false);
+        a->setEnabled(false);
+    }
+#ifdef Q_OS_WASM
+    // A web page can't quit; closing the tab is the way out.
+    ui->actionExit_Application->setVisible(false);
+    ui->actionExit_Application->setEnabled(false);
+#endif
+
+    // A menu with nothing left in it is hidden as a whole.
+    for (QMenu *menu : ui->menuBar->findChildren<QMenu *>(Qt::FindDirectChildrenOnly)) {
+        bool any = false;
+        for (QAction *a : menu->actions())
+            if (!a->isSeparator() && a->isVisible()) any = true;
+        menu->menuAction()->setVisible(any);
+    }
+
+    // The main window's own controls.
+    ui->cbInterpret->setVisible(Features::on(Feature::DBC));
+    if (!Features::on(Feature::FrameSender)) ui->tableSimpleSender->setVisible(false);
+}
+
+void MainWindow::showAboutDialog()
+{
+    if (!Features::on(Features::Feature::About)) return;
+    // Modal (exec()): also the stage-1 build's check that a modal dialog works in the browser
+    // (scripts/smoke-wasm.cjs, Asyncify/JSPI).
+    AboutDialog about(this);
+    about.exec();
+}
+
+void MainWindow::themeChanged(bool dark)
+{
+    Q_UNUSED(dark);
+    switch (Theme::instance()->mode()) {
+    case Theme::Mode::Light:  ui->actionLight_Theme->setChecked(true); break;
+    case Theme::Mode::Dark:   ui->actionDark_Theme->setChecked(true); break;
+    case Theme::Mode::System: ui->actionSystem_Theme->setChecked(true); break;
+    }
+    // Row colours come from the model (palette, per-ID colours): repaint with the new set.
+    ui->canFramesView->viewport()->update();
 }
 
 MainWindow::~MainWindow()
@@ -438,7 +577,7 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
         }
     }
     // Recalculate height of wrapping filter lists when they are resized (panel drag etc.)
-    if ((obj == ui->listBusFilters || obj == ui->listDirFilters || obj == ui->listLengthFilters)
+    if ((obj == ui->listBusFilters || obj == ui->listDirFilters || obj == ui->listLengthFilters || obj == ui->listTypeFilters)
         && event->type() == QEvent::Resize) {
         QListWidget *list = qobject_cast<QListWidget*>(obj);
         QTimer::singleShot(0, this, [this, list]() {
@@ -596,7 +735,7 @@ void MainWindow::readUpdateableSettings()
     model->setTimeFormat(settings.value("Main/TimeFormat", "MMM-dd HH:mm:ss.zzz").toString());
     ignoreDBCColors = settings.value("Main/IgnoreDBCColors", false).toBool();
     model->setIgnoreDBCColors(ignoreDBCColors);
-    int bpl = settings.value("Main/BytesPerLine", 8).toInt();
+    int bpl = settings.value("Main/BytesPerLine", 16).toInt();
     model->setBytesPerLine(bpl);
 
     CSVAbsTime = settings.value("Main/CSVAbsTime", false).toBool();
@@ -606,7 +745,8 @@ void MainWindow::readUpdateableSettings()
     else
         ui->listFilters->setMaximumWidth(175);
 
-    bool showSendPanel = settings.value("Main/ShowSendPanel", true).toBool();
+    bool showSendPanel = settings.value("Main/ShowSendPanel", true).toBool()
+                         && Features::on(Features::Feature::FrameSender);
     ui->tableSimpleSender->setVisible(showSendPanel);
 
     updateFilterList();    
@@ -948,7 +1088,7 @@ void MainWindow::gridContextMenuRequest(QPoint pos)
 
     menu->addAction(copyAct);
 
-    if (idx.column() == 8) //we're over the DATA column
+    if (idx.column() == 8 && Features::on(Features::Feature::Graphs)) //we're over the DATA column
     {
         contextMenuPosition = pos;
         menu->addSeparator();
@@ -1035,6 +1175,7 @@ uint32_t MainWindow::getMessageIDFromPosition(QPoint pos)
 
 void MainWindow::setupAddToNewGraph()
 {
+    if (!Features::on(Features::Feature::Graphs)) return; // web-savvycan: enabledfeatures.h
     showGraphingWindow(); //creates a new window and sets it as latest
     setupSendToLatestGraphWindow(); //then call the other function to finish
 }
@@ -1042,6 +1183,7 @@ void MainWindow::setupAddToNewGraph()
 
 void MainWindow::setupSendToLatestGraphWindow()
 {
+    if (!Features::on(Features::Feature::Graphs)) return; // web-savvycan: enabledfeatures.h
     if (!lastGraphingWindow) showGraphingWindow();
     GraphParams param;
     QString signalName = getSignalNameFromPosition(contextMenuPosition);
@@ -1165,6 +1307,7 @@ void MainWindow::updateFilterList()
     ui->listBusFilters->clear();
     ui->listDirFilters->clear();
     ui->listLengthFilters->clear();
+    ui->listTypeFilters->clear();
 
     if (filters->isEmpty()) return;
 
@@ -1206,6 +1349,20 @@ void MainWindow::updateFilterList()
         }
     }
 
+    // Frame type filters (classic CAN / CAN FD / FD with BRS ...)
+    const QMap<int, bool> *typeFilters = model->getTypeFiltersReference();
+    if (typeFilters && !typeFilters->isEmpty())
+    {
+        for (filterIter = typeFilters->begin(); filterIter != typeFilters->end(); ++filterIter)
+        {
+            QListWidgetItem *item = new QListWidgetItem(CommFrameModel::typeFilterLabel(filterIter.key()), ui->listTypeFilters);
+            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+            item->setCheckState(filterIter.value() ? Qt::Checked : Qt::Unchecked);
+            item->setData(Qt::UserRole, filterIter.key());
+            item->setToolTip(CommFrameModel::typeFilterToolTip(filterIter.key()));
+        }
+    }
+
     // Adjust height of the wrapping filter lists to fit their items (deferred so layout is done first)
     QTimer::singleShot(0, this, [this]() {
         auto fitH = [](QListWidget *list) {
@@ -1217,6 +1374,7 @@ void MainWindow::updateFilterList()
         fitH(ui->listBusFilters);
         fitH(ui->listDirFilters);
         fitH(ui->listLengthFilters);
+        fitH(ui->listTypeFilters);
     });
 
     inhibitFilterUpdate = false;
@@ -1260,6 +1418,18 @@ void MainWindow::dirFilterListItemChanged(QListWidgetItem *item)
     bool isSet = (item->checkState() == Qt::Checked);
 
     model->setDirFilterState(dir, isSet);
+
+    manageRowExpansion();
+}
+
+void MainWindow::typeFilterListItemChanged(QListWidgetItem *item)
+{
+    if (inhibitFilterUpdate) return;
+
+    int type = item->data(Qt::UserRole).toInt();
+    bool isSet = (item->checkState() == Qt::Checked);
+
+    model->setTypeFilterState(type, isSet);
 
     manageRowExpansion();
 }
@@ -1368,6 +1538,11 @@ void MainWindow::tickGUIUpdate()
             continuousLogFlushCounter++;
             if ((continuousLogFlushCounter % 3) == 0)
             {
+#ifdef Q_OS_WASM
+                webLogBlinkOn = !webLogBlinkOn;
+                ui->lblContMsg->setText(webLogLabelText(webLogBlinkOn));
+                updateWebLogTooltip();
+#else
                 if (ui->lblContMsg->text().length() > 2)
                 {
                     ui->lblContMsg->setText("");
@@ -1376,6 +1551,7 @@ void MainWindow::tickGUIUpdate()
                 {
                     ui->lblContMsg->setText("LOGGING");
                 }
+#endif
             }
             if (continuousLogFlushCounter > 8)
             {
@@ -1449,6 +1625,7 @@ void MainWindow::normalizeTiming()
 
 void MainWindow::handleCropLog()
 {
+    if (!Features::on(Features::Feature::CropLog)) return; // web-savvycan: enabledfeatures.h
     const FrameListView *src = model->getListReference();
     if (src->isEmpty())
     {
@@ -1474,6 +1651,7 @@ void MainWindow::handleCropLog()
 
 void MainWindow::handleLoadFile()
 {
+    if (!Features::on(Features::Feature::LoadLog)) return; // web-savvycan: enabledfeatures.h
     QString filename;
     QVector<CommFrame> tempFrames;
 
@@ -1511,6 +1689,7 @@ void MainWindow::handleLoadFile()
 
 void MainWindow::handleDroppedFile(const QString &filename)
 {
+    if (!Features::on(Features::Feature::LoadLog)) return; // web-savvycan: enabledfeatures.h
     QProgressDialog progress(qApp->activeWindow());
     progress.setWindowModality(Qt::WindowModal);
     progress.setLabelText("Loading file...");
@@ -1568,6 +1747,10 @@ void MainWindow::handleSaveFile()
 
 void MainWindow::handleContinousLogging()
 {
+#ifdef Q_OS_WASM
+    webContinuousLogging(false);
+    return;
+#endif
     // If already doing unfiltered logging, stop it
     if (continuousLogging && !continuousLoggingUseFilter)
     {
@@ -1598,6 +1781,10 @@ void MainWindow::handleContinousLogging()
 
 void MainWindow::handleContinousLoggingFiltered()
 {
+#ifdef Q_OS_WASM
+    webContinuousLogging(true);
+    return;
+#endif
     // If already doing filtered logging, stop it
     if (continuousLogging && continuousLoggingUseFilter)
     {
@@ -1626,6 +1813,188 @@ void MainWindow::handleContinousLoggingFiltered()
     ui->actionSave_Continuous_Filtered_Logfile->setText(tr("Cease Continuous Logging (Filtered)"));
 }
 
+#ifdef Q_OS_WASM
+//Continuous logging in the browser: the same menu items, but the file is opened (and written, committed every
+//few seconds) by WebDiskLog, asynchronously. Starting asks how to name the file (WebLogStartDialog).
+static void showWebLogMessage(QWidget *parent, QMessageBox::Icon icon, const QString &title, const QString &text)
+{
+    auto *box = new QMessageBox(icon, title, text, QMessageBox::Ok, parent);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->open(); //no exec() in the browser
+}
+
+static QString byteSize(qint64 bytes)
+{
+    if (bytes < 10 * 1024) return QObject::tr("%1 bytes").arg(bytes);
+    if (bytes < 10 * 1024 * 1024) return QObject::tr("%1 kB").arg(bytes / 1024);
+    return QObject::tr("%1 MB").arg(bytes / (1024 * 1024));
+}
+
+void MainWindow::setupWebDiskLog()
+{
+    WebDiskLog *log = WebDiskLog::instance();
+    if (!Features::LOG_TO_DISK_LIVE && Features::on(Features::Feature::Logging))
+    {
+        //MVP: the download is named by the start time; this asks for a name first, when logging stops
+        QSettings settings;
+        webLogAskNameAction = new QAction(tr("Choose the Log's Name When Logging Stops..."), this);
+        webLogAskNameAction->setObjectName("actionWebLogAskName");
+        webLogAskNameAction->setCheckable(true);
+        webLogAskNameAction->setChecked(settings.value("WebLog/AskName", false).toBool());
+        webLogAskNameAction->setToolTip(tr("Off: the download is named by the start time, e.g. %1")
+                                        .arg(QStringLiteral("SavvyCAN_2026-10-28_14-03-22.csv")));
+        connect(webLogAskNameAction, &QAction::toggled, this, [](bool on) {
+            QSettings().setValue("WebLog/AskName", on);
+        });
+        const QList<QAction *> fileActions = ui->menuFile->actions();
+        const int at = fileActions.indexOf(ui->actionSave_Continuous_Filtered_Logfile);
+        ui->menuFile->insertAction(at >= 0 && at + 1 < fileActions.size() ? fileActions.at(at + 1) : nullptr,
+                                   webLogAskNameAction);
+    }
+    connect(log, &WebDiskLog::started, this, [this](const QString &, const QString &, bool) {
+        continuousLoggingUseFilter = webLogPendingFiltered;
+        continuousLogging = true;
+        if (continuousLoggingUseFilter)
+            ui->actionSave_Continuous_Filtered_Logfile->setText(tr("Cease Continuous Logging (Filtered)"));
+        else
+            ui->actionSave_Continuous_Logfile->setText(tr("Cease Continuous Logging"));
+        ui->lblContMsg->setText(webLogLabelText(true));
+        updateWebLogTooltip();
+    });
+    connect(log, &WebDiskLog::startFailed, this, [this](const QString &code, const QString &message) {
+        if (code == QLatin1String("cancelled")) return;
+        showWebLogMessage(this, QMessageBox::Warning, tr("Continuous Logging"),
+                          tr("Logging could not start: %1").arg(message));
+    });
+    connect(log, &WebDiskLog::committed, this, [this](qint64) { updateWebLogTooltip(); });
+    connect(log, &WebDiskLog::fileChanged, this, [this](const QString &, int) { updateWebLogTooltip(); });
+    connect(log, &WebDiskLog::stopped, this, [this](const QString &name, qint64 bytes) {
+        if (WebDiskLog::instance()->activeBackend() == QLatin1String("blob"))
+            ui->lblContMsg->setToolTip(tr("Last log: %1 (%2), handed to the browser's downloads").arg(name, byteSize(bytes)));
+        else
+            ui->lblContMsg->setToolTip(tr("Last log: %1 (%2)").arg(name, byteSize(bytes)));
+    });
+    connect(log, &WebDiskLog::failed, this, [this](const QString &, const QString &message, qint64 bytes) {
+        const bool wasLogging = continuousLogging;
+        resetContinuousLoggingUi();
+        WebDiskLog *l = WebDiskLog::instance();
+        QString text = tr("Continuous logging stopped: %1").arg(message);
+        if (l->activeBackend() == QLatin1String("blob"))
+            text += QLatin1String("\n\n") + tr("The log \"%1\" was not downloaded.").arg(l->fileName());
+        else if (l->crashSafe())
+            text += QLatin1String("\n\n") + tr("The file \"%1\" keeps what was saved up to then (%2).")
+                                         .arg(l->fileName(), byteSize(bytes));
+        else
+            text += QLatin1String("\n\n") + tr("The download \"%1\" was not finished; the browser discards it.")
+                                         .arg(l->fileName());
+        if (wasLogging || bytes > 0)
+            showWebLogMessage(this, QMessageBox::Critical, tr("Continuous Logging"), text);
+    });
+}
+
+void MainWindow::resetContinuousLoggingUi()
+{
+    continuousLogging = false;
+    ui->actionSave_Continuous_Logfile->setText(tr("Start Continuous Logging"));
+    ui->actionSave_Continuous_Filtered_Logfile->setText(tr("Start Continuous Logging (Filtered)"));
+    ui->lblContMsg->setText("");
+}
+
+//The LOGGING label (it blinks, as on the desktop). Collected in the page (the MVP): the size and frame count so
+//far, and that nothing is saved before logging stops.
+QString MainWindow::webLogLabelText(bool on) const
+{
+    WebDiskLog *l = WebDiskLog::instance();
+    if (l->activeBackend() != QLatin1String("blob")) return on ? QStringLiteral("LOGGING") : QString();
+    return (on ? QStringLiteral("LOGGING") : QStringLiteral(" ")) + QLatin1Char('\n')
+           + tr("%1, %2 frames").arg(byteSize(l->bytesWritten())).arg(l->framesWritten()) + QLatin1Char('\n')
+           + tr("Not saved yet: downloaded on stop,\nlost if the tab crashes");
+}
+
+void MainWindow::updateWebLogTooltip()
+{
+    WebDiskLog *l = WebDiskLog::instance();
+    if (!l->isActive()) return;
+    QString tip;
+    if (l->activeBackend() == QLatin1String("blob"))
+    {
+        tip = tr("Collecting the log in the browser: %1, %2 frames.").arg(byteSize(l->bytesWritten())).arg(l->framesWritten())
+            + QLatin1String("\n") + tr("Cease Continuous Logging downloads it as %1.").arg(l->fileName())
+            + QLatin1String("\n") + tr("Nothing is saved before that: if the tab crashes or is closed, this log is lost.");
+        ui->lblContMsg->setToolTip(tip);
+        return;
+    }
+    tip = tr("Logging to %1").arg(l->fileName());
+    if (l->part() > 1) tip += QLatin1Char(' ') + tr("(part %1)").arg(l->part());
+    if (l->crashSafe())
+        tip += QLatin1String("\n") + tr("Saved up to %1: %2")
+                   .arg(QDateTime::fromMSecsSinceEpoch(l->lastCommitMSecsSinceEpoch()).toString("HH:mm:ss"),
+                        byteSize(l->committedBytes()));
+    else
+        tip += QLatin1String("\n") + tr("Download in progress: finished when logging stops; lost if the tab crashes");
+    ui->lblContMsg->setToolTip(tip);
+}
+
+//Stop: the rest is written and the file closed (live) or the download starts (MVP). With "Choose the Log's
+//Name" on, a name is asked first; Cancel keeps logging.
+void MainWindow::webStopLogging(bool askName, std::function<void()> then)
+{
+    WebDiskLog *log = WebDiskLog::instance();
+    if (!askName || log->activeBackend() != QLatin1String("blob"))
+    {
+        FrameFileIO::closeContinuousNative(); //WebDiskLog::stop()
+        resetContinuousLoggingUi();
+        if (then) then();
+        return;
+    }
+    if (webLogNameDialog) { webLogNameDialog->raise(); return; }
+    auto *dialog = new QInputDialog(this);
+    webLogNameDialog = dialog;
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Cease Continuous Logging"));
+    dialog->setLabelText(tr("Name of the log file to download:"));
+    dialog->setTextValue(log->fileName());
+    dialog->setOkButtonText(tr("Download"));
+    dialog->setCancelButtonText(tr("Keep Logging"));
+    connect(dialog, &QInputDialog::textValueSelected, this, [this, then](const QString &name) {
+        if (!WebDiskLog::instance()->isActive()) return;
+        WebDiskLog::instance()->stop(name.trimmed());
+        resetContinuousLoggingUi();
+        if (then) then();
+    });
+    dialog->open(); //no exec() in the browser
+}
+
+void MainWindow::webContinuousLogging(bool filtered)
+{
+    WebDiskLog *log = WebDiskLog::instance();
+    if (log->isStarting()) return;
+    auto startNew = [this, filtered]() {
+        webLogPendingFiltered = filtered;
+        if (!Features::LOG_TO_DISK_LIVE)
+        {
+            //MVP: starts at once, collected in the page, one download on stop
+            WebDiskLog::instance()->start(WebDiskLog::Mode::BlobDownload, FrameFileIO::nativeCSVHeader());
+            return;
+        }
+        auto *dialog = new WebLogStartDialog(filtered, this);
+        connect(dialog, &WebLogStartDialog::chosen, this, [](WebDiskLog::Mode mode, qint64 splitBytes) {
+            WebDiskLog::instance()->start(mode, FrameFileIO::nativeCSVHeader(), splitBytes);
+        });
+        dialog->open();
+    };
+    if (continuousLogging)
+    {
+        const bool same = (continuousLoggingUseFilter == filtered);
+        const bool askName = webLogAskNameAction && webLogAskNameAction->isChecked();
+        if (same) webStopLogging(askName, nullptr);
+        else webStopLogging(askName, startNew); //the other kind: this log ends, a new one starts
+        return;
+    }
+    startNew();
+}
+#endif
+
 void MainWindow::handleSaveFilteredFile()
 {
     QString filename;
@@ -1640,6 +2009,7 @@ void MainWindow::handleSaveFilteredFile()
 
 void MainWindow::handleSaveFilters()
 {
+    if (!Features::on(Features::Feature::FilterFiles)) return; // web-savvycan: enabledfeatures.h
     QString filename;
     QFileDialog dialog(this);
     QSettings settings;
@@ -1664,6 +2034,7 @@ void MainWindow::handleSaveFilters()
 
 void MainWindow::handleLoadFilters()
 {
+    if (!Features::on(Features::Feature::FilterFiles)) return; // web-savvycan: enabledfeatures.h
     QString filename;
     QFileDialog dialog(this);
     QSettings settings;
@@ -1687,11 +2058,13 @@ void MainWindow::handleLoadFilters()
 
 void MainWindow::handleSaveDecoded()
 {
+    if (!Features::on(Features::Feature::DBC)) return; // web-savvycan: enabledfeatures.h
     handleSaveDecodedMethod(false);
 }
 
 void MainWindow::handleSaveDecodedCsv()
 {
+    if (!Features::on(Features::Feature::DBC)) return; // web-savvycan: enabledfeatures.h
     handleSaveDecodedMethod(true);
 }
 
@@ -2038,6 +2411,7 @@ void MainWindow::showSettingsDialog()
 //now always creates a new window. This allows for multiple independent graphing windows
 void MainWindow::showGraphingWindow()
 {
+    if (!Features::on(Features::Feature::Graphs)) return; // web-savvycan: enabledfeatures.h
 /* could only allow the latest window to have these centering signals.
    if (lastGraphingWindow)
     {
@@ -2072,6 +2446,7 @@ void MainWindow::showGraphingWindow()
 
 void MainWindow::showTemporalGraphWindow()
 {
+    if (!Features::on(Features::Feature::TemporalGraph)) return; // web-savvycan: enabledfeatures.h
     //only create an instance of the object if we dont have one. Otherwise just display the existing one.
     if (!temporalGraphWindow)
     {
@@ -2100,6 +2475,7 @@ void MainWindow::showTemporalGraphWindow()
 
 void MainWindow::showFrameDataAnalysis()
 {
+    if (!Features::on(Features::Feature::FrameInfo)) return; // web-savvycan: enabledfeatures.h
     //only create an instance of the object if we dont have one. Otherwise just display the existing one.
     if (!frameInfoWindow)
     {
@@ -2113,6 +2489,7 @@ void MainWindow::showFrameDataAnalysis()
 
 void MainWindow::showISOInterpreterWindow()
 {
+    if (!Features::on(Features::Feature::ISOTP)) return; // web-savvycan: enabledfeatures.h
     if (!isoWindow)
     {
         if (!useFiltered)
@@ -2125,6 +2502,7 @@ void MainWindow::showISOInterpreterWindow()
 
 void MainWindow::showSnifferWindow()
 {
+    if (!Features::on(Features::Feature::Sniffer)) return; // web-savvycan: enabledfeatures.h
     if (!snifferWindow)
         snifferWindow = new SnifferWindow(this);
     snifferWindow->show();
@@ -2132,6 +2510,7 @@ void MainWindow::showSnifferWindow()
 
 void MainWindow::showBisectWindow()
 {
+    if (!Features::on(Features::Feature::Bisector)) return; // web-savvycan: enabledfeatures.h
     if (!bisectWindow)
     {
         bisectWindow = new BisectWindow(model->getListReference());
@@ -2141,6 +2520,7 @@ void MainWindow::showBisectWindow()
 
 void MainWindow::showCANBridgeWindow()
 {
+    if (!Features::on(Features::Feature::CANBridge)) return; // web-savvycan: enabledfeatures.h
     if (!canBridgeWindow)
     {
         canBridgeWindow = new CANBridgeWindow(model->getListReference());
@@ -2150,6 +2530,7 @@ void MainWindow::showCANBridgeWindow()
 
 void MainWindow::showSearchWindow()
 {
+    if (!Features::on(Features::Feature::FrameSearch)) return; // web-savvycan: enabledfeatures.h
     if (!searchWindow)
     {
         searchWindow = new SearchWindow(model->getFilteredListReference(), dbcHandler);
@@ -2183,6 +2564,7 @@ void MainWindow::jumpToSearchFrame(int frameIndex)
 
 void MainWindow::showFrameSenderWindow()
 {
+    if (!Features::on(Features::Feature::FrameSender)) return; // web-savvycan: enabledfeatures.h
     if (!frameSenderWindow)
     {
         if (!useFiltered)
@@ -2195,6 +2577,7 @@ void MainWindow::showFrameSenderWindow()
 
 void MainWindow::showPlaybackWindow()
 {
+    if (!Features::on(Features::Feature::Playback)) return; // web-savvycan: enabledfeatures.h
     if (!playbackWindow)
     {
         if (!useFiltered)
@@ -2207,6 +2590,7 @@ void MainWindow::showPlaybackWindow()
 
 void MainWindow::showUDSFirmwareUploaderWindow()
 {
+    if (!Features::on(Features::Feature::UDSFirmwareUpdate)) return; // web-savvycan: enabledfeatures.h
     if (!udsFirmwareUploaderWindow)
     {
         udsFirmwareUploaderWindow = new UDSFirmwareUploaderWindow(model->getListReference());
@@ -2216,6 +2600,7 @@ void MainWindow::showUDSFirmwareUploaderWindow()
 
 void MainWindow::showComparisonWindow()
 {
+    if (!Features::on(Features::Feature::FileComparator)) return; // web-savvycan: enabledfeatures.h
     if (!comparatorWindow)
     {
         comparatorWindow = new FileComparatorWindow();
@@ -2225,6 +2610,7 @@ void MainWindow::showComparisonWindow()
 
 void MainWindow::showDBCComparisonWindow()
 {
+    if (!Features::on(Features::Feature::DBCComparator)) return; // web-savvycan: enabledfeatures.h
     if (!dbcComparatorWindow)
     {
         dbcComparatorWindow = new DBCComparatorWindow();
@@ -2234,6 +2620,7 @@ void MainWindow::showDBCComparisonWindow()
 
 void MainWindow::showSingleMultiWindow()
 {
+    if (!Features::on(Features::Feature::DiscreteState)) return; // web-savvycan: enabledfeatures.h
     if (!discreteStateWindow)
     {
         discreteStateWindow = new DiscreteStateWindow(model->getListReference());
@@ -2243,6 +2630,7 @@ void MainWindow::showSingleMultiWindow()
 
 void MainWindow::showFuzzingWindow()
 {
+    if (!Features::on(Features::Feature::Fuzzing)) return; // web-savvycan: enabledfeatures.h
     if (!fuzzingWindow)
     {
         fuzzingWindow = new FuzzingWindow(model->getListReference());
@@ -2252,6 +2640,7 @@ void MainWindow::showFuzzingWindow()
 
 void MainWindow::showMCConfigWindow()
 {
+    if (!Features::on(Features::Feature::MotorControlConfig)) return; // web-savvycan: enabledfeatures.h
     if (!motorctrlConfigWindow)
     {
         motorctrlConfigWindow = new MotorControllerConfigWindow(model->getListReference());
@@ -2263,6 +2652,7 @@ void MainWindow::showMCConfigWindow()
 
 void MainWindow::showUDSScanWindow()
 {
+    if (!Features::on(Features::Feature::UDSScanner)) return; // web-savvycan: enabledfeatures.h
     if (!udsScanWindow)
     {
         udsScanWindow = new UDSScanWindow(model->getListReference());
@@ -2272,6 +2662,7 @@ void MainWindow::showUDSScanWindow()
 
 void MainWindow::showScriptingWindow()
 {
+    if (!Features::on(Features::Feature::Scripting)) return; // web-savvycan: enabledfeatures.h
 #ifndef SAVVYCAN_NO_SCRIPTING
     if (!scriptingWindow)
     {
@@ -2283,6 +2674,7 @@ void MainWindow::showScriptingWindow()
 
 void MainWindow::showRangeWindow()
 {
+    if (!Features::on(Features::Feature::RangeState)) return; // web-savvycan: enabledfeatures.h
     if (!rangeWindow)
     {
         rangeWindow = new RangeStateWindow(model->getListReference());
@@ -2297,6 +2689,7 @@ void MainWindow::showFuzzyScopeWindow()
 
 void MainWindow::showFlowViewWindow()
 {
+    if (!Features::on(Features::Feature::FlowView)) return; // web-savvycan: enabledfeatures.h
     if (!flowViewWindow)
     {
         if (!useFiltered)
@@ -2325,6 +2718,7 @@ void MainWindow::DBCSettingsUpdated()
 
 void MainWindow::showDBCFileWindow()
 {
+    if (!Features::on(Features::Feature::DBC)) return; // web-savvycan: enabledfeatures.h
     if (!dbcFileWindow)
     {
         dbcFileWindow = new DBCLoadSaveWindow(model->getListReference());
@@ -2335,6 +2729,7 @@ void MainWindow::showDBCFileWindow()
 
 void MainWindow::showSignalViewer()
 {
+    if (!Features::on(Features::Feature::SignalViewer)) return; // web-savvycan: enabledfeatures.h
     if (!signalViewerWindow)
     {
         if (!useFiltered)

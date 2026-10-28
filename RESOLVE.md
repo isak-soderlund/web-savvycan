@@ -29,7 +29,7 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 | 4 | **Single-threaded GVRET** | No `QThread` in the wasm build (the spike's three changes); incoming bytes parsed in batches from the JS read loop; no per-byte debug string (fix M-series) |
 | 5 | **Bus setup** | Nominal bit rate, CAN FD on/off, data bit rate, listen-only, through GVRET's own commands (rc1 firmware 0.1.3 implements them, classic + FD verified with desktop SavvyCAN on 2026-10-28) |
 | 6 | **Main window trace** | Live frame list with CAN FD (64-byte data, BRS/ESI columns), frame counter, **dropped-frames counter**; ring-buffer frame store and an index list for the filtered view (fixes M-series), so it never stalls on a full list |
-| 7 | **Logging to disk** | File System Access API: name the file in a prompt, or create it directly with the start time as its name; frames written as they arrive, committed every few seconds (close and reopen in append mode), so a crash loses at most the last seconds. Format: SavvyCAN's native GVRET CSV, FD rows included. Firefox: streaming-download fallback |
+| 7 | **Logging (download)** | Owner's MVP choice 2026-10-28: File > Start Continuous Logging starts at once; the rows are collected in the page as Blobs, outside the wasm heap (the browser keeps them; Chrome pages big totals to disk); Cease Continuous Logging starts **one normal download** of the CSV, named by the start time (`SavvyCAN_YYYY-MM-DD_HH-MM-SS.csv`), or by a name asked at stop (File > Choose the Log's Name When Logging Stops...). The LOGGING label shows size and frames and that a crash loses the log (accepted); closing the tab while logging asks first. Same in every browser. Format: SavvyCAN's native GVRET CSV, FD rows included. Writing to disk while logging (File System Access, commits every 3 s, a remembered folder; Firefox streaming download through a service worker) stays in the tree, off: `enabledfeatures.h` `LOG_TO_DISK_LIVE` |
 | 8 | **Theme switch** | Light (SavvyCAN's normal) / dark, remembered between visits |
 | 9 | **Only stage-1 windows** | Every menu and window not in stage 1 hidden (not broken); they come back stage by stage |
 | 10 | **Settings kept** | Connection, theme and log settings remembered in the browser (whether `QSettings` persists in wasm: to check) |
@@ -40,8 +40,49 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
   Web Serial stand-in and the parsers.
 - **On the rig:** rc1 with the Kvaser as the peer, classic and CAN FD. Every frame the Kvaser sends must appear in
   the trace and in the log file.
-- **Crash test:** close the tab mid-log; the file must hold everything up to the last commit.
+- **Logging:** `test/web` (Playwright; `run-disklog-tests.sh`): the download's bytes equal SavvyCAN's own rows and load in the
+  desktop SavvyCAN (`test/nativecsv`), Chromium and Firefox; the app with the fake rc1 (every frame sent is in the
+  download); a multi-GB log (`--project=chromium-large`, through `heavy.sh`). Crash test only with `LOG_TO_DISK_LIVE`.
+  Measured 2026-10-28 (headless, rows copied out of a fixed "wasm heap" buffer, 3G `heavy.sh` slice): page JS heap
+  1 MB and wasm heap flat throughout; collecting at ~520-590 MB/s.
+  - **Chromium:** 2, 3, 4, 6 and 8 GB logs downloaded byte-exact (SHA-256); its blob storage holds ~2 GB in RAM
+    (browser PSS peak 2.2-2.6 GB) and pages the rest into the profile's `blob_storage` on disk; 8 GB downloaded in
+    53 s. One of three 4 GB runs ended with the download "canceled" (not seen again in 7 later runs up to 8 GB).
+  - **Firefox:** the log stays in RAM (~1.1x its size while logging) and the download roughly doubles it: 0.5 GB
+    fine (peak 1.4 GB); 1 GB was killed by the 3G slice at the download. Firefox's limit is the PC's free RAM / 2.
 - **Sanitizers:** AddressSanitizer and ThreadSanitizer runs of the desktop build of the same tree.
+
+## Stages switched on: `enabledfeatures.h`
+
+- **One list** of what is switched on: `enabledfeatures.h` (`Features::enabledFeature()`, one line per feature,
+  with its stage). Stage 1: connection, trace, logging, Preferences, About, theme switch.
+- `MainWindow::applyFeatures()` hides and disables every menu entry, panel and button of a feature that is off (a
+  disabled action's shortcut is dead too); menus left empty disappear; the `show...()` slots return at once for a
+  feature that is off (drag-and-drop, context menu "Add to graph", Ctrl+O included); Preferences hides the groups
+  of windows that are off. Same on the desktop and in the browser.
+- **To open a stage:** set its lines to `true`, check the window in light and dark and with CAN FD.
+
+## Theme
+
+- `theme.h/.cpp`: Light (SavvyCAN's normal look) / Dark (Fusion + dark palette) / Follow system (default, the
+  OS's or the browser's `prefers-color-scheme`); Preferences > Theme and View > Dark Theme; `QSettings`
+  `Main/Theme`. In the browser QSettings is the page's `localStorage` (`main.cpp` sets `WebLocalStorageFormat`:
+  Qt's wasm `IniFormat` is a temporary file, lost on reload).
+- Dark covers the palette, the trace's per-ID row colours (`kRowPaletteDark` in `utility.h`) and every
+  `QCustomPlot` (themed when shown and on every switch: background, axes, ticks, grid, legend, titles).
+- **Hard-coded colours left for later stages** (fix when the window is switched on):
+  - graphs (stage 2): `GraphParams` line colour black (`re/graphingwindow.cpp` l. ~1676), random dark line colours
+    from the trace's context menu (`mainwindow.cpp` "Add to graph") and `re/newgraphdialog.cpp` (button palette);
+  - DBC (stage 3): message colours from the DBC (`GenMsgBackgroundColor`/`Foreground`, `dbc/dbchandler.cpp`), shown
+    as row colours in the trace when "Interpret Frames" is on (white background in dark); DBC editors' colour
+    pickers;
+  - Sniffer: `re/sniffer/sniffermodel.cpp` (grey levels and dark red/green, palette read once) and
+    `SnifferDelegate.cpp`;
+  - Frame Info: `graphColors` with `Qt::black` (`re/frameinfowindow.cpp`); Flow view: `graphColors[8]` with
+    `Qt::black`, black text pen (`re/flowviewwindow.cpp`); Range state: black graph pen
+    (`re/rangestatewindow.cpp`); Discrete state: fixed label palettes (`re/discretestatewindow.cpp`);
+  - `candatagrid.cpp` (bit grid colours, used by the DBC editor, New graph, sender);
+  - Scripting: `jsedit.cpp` syntax colours, line numbers, cursor and bracket colours.
 
 ## Hosting (decide before the first public build)
 
@@ -65,7 +106,7 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 - Work on branches, merge into `main` here. Commit messages end with the repo's Co-Authored-By line.
 - **Don't test on the real rc1** (the rig runs scheduled tests); use the fake GVRET device and the browser mock.
 - **Heavy jobs** (Qt/WebAssembly and desktop builds, sanitizer runs, Lighthouse) only through
-  `~/.local/share/web-savvycan/heavy.sh <cmd>`: one at a time, in web-savvycan's own memory slice (`wscjobs.slice`,
+  `scripts/heavy.sh <cmd>` (`~/.local/share/web-savvycan/heavy.sh` links to it): one at a time, in web-savvycan's own memory slice (`wscjobs.slice`,
   3G), separate from resolve-can's `rcanjobs.slice` where the rig's Windows VM runs (on 2026-10-28 a build in that
   shared slice got the VM killed). `-j$WSC_JOBS`; exit 137 = lower `-j`, never raise the cap.
 
@@ -77,9 +118,28 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 | **Shop security** | Allowing WebAssembly (`'wasm-unsafe-eval'`) site-wide weakens the shop's CSP | Added for the tool's route only |
 | **File size on Oxygen** | Oxygen's static files are ≤ 20 MB each; the full SavvyCAN wasm was 38.7 MB | Stage-1 build trimmed and measured; if over, `tools.resolve-ev.com` (static container next to the forum) or a Cloudflare Worker + R2 on the same path |
 | **Browser support** | Web Serial is Chromium-only (and Firefox 151+); no iPhone | Stated on the page; desktop build for others |
-| **Data loss while logging** | Tab crash or close | Log written to disk as it runs, committed every few seconds |
+| **Data loss while logging** | Tab crash or close | MVP: accepted by the owner (the log is lost); the label says so, closing the tab asks first. Later: `LOG_TO_DISK_LIVE` (written to disk as it runs) |
 | **Frame loss in the browser** | Single-threaded wasm stalls on a busy bus | Ring buffer, batched parsing, visible dropped-frames counter; a full-load replay test |
 | **Memory cap** | wasm32's 4 GB limits the in-memory window | A bounded window (scrolls), everything on disk |
 | **Fork drift** | Upstream QT6WIP moves fast | Upstream changes taken in deliberately (merge from `upstream`), never automatically |
 | **GPL** | Hosting a build without its source | This public repo; each hosted build names its commit |
 | **Rig** | Heavy builds starve the rig's night tests | memcap + one build at a time (the lock above) |
+
+## After the MVP (owner 2026-10-28)
+
+A **"Karpathy-style" simplification review** of everything we added (Web Serial, frame store, logging, theme/UI, build
+scripts, tests): less code, fewer abstractions and layers, delete what stage 1 doesn't need, plain readable code over
+cleverness, one way to do each thing (e.g. one serial mock, one build path). Findings fixed on a branch, tests kept green.
+
+## Decisions on the build (2026-10-28)
+
+- Stage 1's web build leaves the scripting window (Qt Qml) out (`WEB_SAVVYCAN_SCRIPTING=OFF` for wasm): 5.7 MB less;
+  scripting returns with its stage.
+- Ship with `--gzip-loader` (the page fetches `SavvyCAN.wasm.gz` and unpacks it; every file under Oxygen's 20 MB).
+  Building Qt from source for JSPI (smaller still) is deferred.
+
+## Found by the sanitizer builds (2026-10-28, for the simplification/fix pass)
+
+- ASan/UBSan: `canframemodel.cpp:171`: load of value 190 for a `bool` (an uninitialised `bool` member, upstream).
+- TSan: 6 data-race warnings at start-up, first in `QEvent::type()`; Qt itself isn't TSan-built, so some may be false.
+- clang: `canframemodel.cpp:689` compares two different enum types (upstream).

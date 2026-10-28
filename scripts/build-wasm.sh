@@ -2,11 +2,16 @@
 # WebAssembly build of web-savvycan (Qt 6.12 wasm_singlethread + Emscripten 5.0.5).
 #
 # Usage: scripts/build-wasm.sh [--clean] [--jspi] [--opt -Oz|-Os|-O2] [--wasm-opt] [--dist DIR]
-#                              [-j N] [-- extra cmake args]
+#                              [--gzip-loader] [-j N] [-- extra cmake args]
 #   --jspi      JSPI instead of Asyncify (WEB_SAVVYCAN_JSPI; Chrome 137+)
 #   --opt       optimisation level for our code and the link (default -Oz)
 #   --wasm-opt  an extra `wasm-opt -Oz` pass over the linked .wasm before it goes to dist/
 #   --dist      output directory (default dist/)
+#   Defaults (2026-10-28): --gzip-loader on (--no-gzip-loader for the raw .wasm), scripting window off
+#               (--scripting to build it; stage 1 doesn't use it, 5.7 MB less).
+#   --gzip-loader  ship the wasm only as SavvyCAN.wasm.gz: the page fetches it and decompresses it
+#               with DecompressionStream('gzip') (Chrome 80+, Firefox 113+, Safari 16.4+), so no file
+#               is over a static host's 20 MB limit (Shopify Oxygen). The raw .wasm is left out.
 # Output: dist/SavvyCAN.{html,js,wasm}, qtloader.js, qtlogo.svg, each also as .gz and .br;
 # sizes printed at the end (Shopify Oxygen allows 20 MB per file).
 #
@@ -26,17 +31,20 @@ fi
 [ -n "${QT_WASM:-}" ] && [ -n "${QT_DESKTOP:-}" ] || { echo "QT_WASM/QT_DESKTOP not set (run scripts/setup-toolchain.sh)" >&2; exit 1; }
 command -v emcc >/dev/null || { echo "emcc not on PATH (source $ENV_FILE)" >&2; exit 1; }
 
-CLEAN=0 JSPI=OFF OPT=-Oz WASMOPT=0 DIST="$ROOT/dist" JOBS="${WSC_JOBS:-2}" EXTRA=()
+CLEAN=0 JSPI=OFF OPT=-Oz WASMOPT=0 GZLOADER=1 SCRIPTING=OFF DIST="$ROOT/dist" JOBS="${WSC_JOBS:-2}" EXTRA=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --clean) CLEAN=1 ;;
         --jspi) JSPI=ON ;;
         --opt) OPT="$2"; shift ;;
         --wasm-opt) WASMOPT=1 ;;
+        --gzip-loader) GZLOADER=1 ;;
+        --no-gzip-loader) GZLOADER=0 ;;
+        --scripting) SCRIPTING=ON ;;
         --dist) DIST="$(realpath -m "$2")"; shift ;;
         -j) JOBS="$2"; shift ;;
         --) shift; EXTRA=("$@"); break ;;
-        -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
@@ -51,7 +59,7 @@ command -v ccache >/dev/null && LAUNCHER=(-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -
 echo "== wasm ($OPT, JSPI=$JSPI) -> $B"
 "$QT_WASM/bin/qt-cmake" -S "$ROOT" -B "$B" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DQT_HOST_PATH="$QT_DESKTOP" \
-    -DWEB_SAVVYCAN_JSPI="$JSPI" -DWEB_SAVVYCAN_WASM_LINK_OPT="$OPT" \
+    -DWEB_SAVVYCAN_JSPI="$JSPI" -DWEB_SAVVYCAN_WASM_LINK_OPT="$OPT" -DWEB_SAVVYCAN_SCRIPTING="$SCRIPTING" \
     "${LAUNCHER[@]}" "${EXTRA[@]}"
 cmake --build "$B" -j "$JOBS"
 
@@ -96,3 +104,29 @@ for f in files:
     flag = "  > 20 MB" if len(data) > limit else ""
     print(f"{f:<16}{mb(len(data)):>14}{mb(len(gz)):>14}{mb(len(br) if br else None):>14}{flag}")
 PYEOF
+
+if [ "$GZLOADER" = 1 ]; then
+    "$PY" - "$DIST/SavvyCAN.html" <<'PYEOF'
+import sys
+p = sys.argv[1]; s = open(p).read()
+anchor = 'entryFunction: window.SavvyCAN_entry,'
+if anchor not in s:
+    sys.exit('gzip loader: entryFunction line not found in SavvyCAN.html')
+s = s.replace(anchor, anchor + """
+                        // web-savvycan: the wasm ships gzip-compressed (static hosts' 20 MB per-file
+                        // limit); the browser decompresses it while compiling.
+                        module: WebAssembly.compileStreaming(fetch('SavvyCAN.wasm.gz').then(r => {
+                            if (!r.ok) throw new Error('SavvyCAN.wasm.gz: HTTP ' + r.status);
+                            return new Response(r.body.pipeThrough(new DecompressionStream('gzip')),
+                                                { headers: { 'Content-Type': 'application/wasm' } });
+                        })),""", 1)
+open(p, 'w').write(s)
+PYEOF
+    rm -f "$DIST/SavvyCAN.wasm" "$DIST/SavvyCAN.wasm.br"
+    "$PY" -c "import gzip,sys
+p=sys.argv[1]; d=open(p,'rb').read(); open(p+'.gz','wb').write(gzip.compress(d,9,mtime=0))
+try:
+    import brotli; open(p+'.br','wb').write(brotli.compress(d,quality=11))
+except ImportError: pass" "$DIST/SavvyCAN.html"
+    echo "gzip loader: SavvyCAN.html loads SavvyCAN.wasm.gz ($(stat -c %s "$DIST/SavvyCAN.wasm.gz") bytes); no raw .wasm in $DIST"
+fi

@@ -1,0 +1,3 @@
+// web-savvycan: the wasm build has no Qt Serial Port; this is the Web Serial stand-in (wasm/webserial).
+#pragma once
+#include "../webserialport.h"
