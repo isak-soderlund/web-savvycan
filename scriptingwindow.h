@@ -2,6 +2,7 @@
 #define SCRIPTINGWINDOW_H
 
 #include "scriptcontainer.h"
+#include "framestore.h"
 #include "can_structs.h"
 #include "connections/canconnection.h"
 #include "jsedit.h"
@@ -20,7 +21,7 @@ class ScriptingWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit ScriptingWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit ScriptingWindow(const FrameListView *frames, QWidget *parent = 0);
     void showEvent(QShowEvent*);
     ~ScriptingWindow();
 
@@ -58,7 +59,7 @@ private:
     JSEdit *editor;
     QList<ScriptContainer *> scripts;
     ScriptContainer *currentScript;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     QElapsedTimer elapsedTime;
     QTimer valuesTimer;
 };

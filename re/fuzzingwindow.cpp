@@ -8,7 +8,7 @@
 #include "connections/canconmanager.h"
 #include "filterutility.h"
 
-FuzzingWindow::FuzzingWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+FuzzingWindow::FuzzingWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::FuzzingWindow)
 {

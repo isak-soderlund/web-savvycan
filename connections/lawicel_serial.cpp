@@ -4,12 +4,15 @@
 #include <QSerialPortInfo>
 #include <QSettings>
 #include <QStringBuilder>
+#include <QElapsedTimer>
+#include <QDateTime>
+#include <algorithm>
 
 #include "lawicel_serial.h"
 #include "utility.h"
 
-LAWICELSerial::LAWICELSerial(QString portName, int serialSpeed, int lawicelSpeed, bool canFd, int dataRate) :
-    CANConnection(portName, "LAWICEL", CANCon::LAWICEL,serialSpeed, lawicelSpeed, canFd, dataRate, 3, 4000, true),
+LAWICELSerial::LAWICELSerial(QString portName, int serialSpeed, int lawicelSpeed, bool canFd, int dataRate, bool useThread) :
+    CANConnection(portName, "LAWICEL", CANCon::LAWICEL,serialSpeed, lawicelSpeed, canFd, dataRate, 3, CANConnection::SerialQueueLen, useThread),
     mTimer(this) /*NB: set this as parent of timer to manage it from working thread */
 {
     sendDebug("LAWICELSerial()");
@@ -31,7 +34,7 @@ LAWICELSerial::~LAWICELSerial()
 void LAWICELSerial::sendDebug(const QString debugText)
 {
     qDebug() << debugText;
-    debugOutput(debugText);
+    if (isDebugConsoleActive()) debugOutput(debugText);
 }
 
 void LAWICELSerial::sendToSerial(const QByteArray &bytes)
@@ -48,13 +51,16 @@ void LAWICELSerial::sendToSerial(const QByteArray &bytes)
         return;
     }
 
-    QString buildDebug;
-    buildDebug = "Write to serial -> ";
-    foreach (int byt, bytes) {
-        byt = (unsigned char)byt;
-        buildDebug = buildDebug % QString::number(byt, 16) % " ";
+    if (isDebugConsoleActive())
+    {
+        QString buildDebug;
+        buildDebug = "Write to serial -> ";
+        foreach (int byt, bytes) {
+            byt = (unsigned char)byt;
+            buildDebug = buildDebug % QString::number(byt, 16) % " ";
+        }
+        sendDebug(buildDebug);
     }
-    sendDebug(buildDebug);
 
     if (serial) serial->write(bytes);
 }
@@ -477,230 +483,212 @@ void LAWICELSerial::connectionTimeout()
 void LAWICELSerial::readSerialData()
 {
     QByteArray data;
-    QString debugBuild;
 
     if (serial) data = serial->readAll();
 
-    //sendDebug("Got data from serial. Len = " % QString::number(data.length()));
-    for (int i = 0; i < data.length(); i++)
+    //web-savvycan (M8): the hex text of every byte only while the debug console listens
+    if (isDebugConsoleActive())
     {
-        unsigned char c = data.at(i);
-        //qDebug() << c << "    " << QString::number(c, 16) << "     " << QString(c);
-        debugBuild = debugBuild % QString::number(c, 16).rightJustified(2,'0') % " ";
-        //procRXChar(c);
-        mBuildLine.append(QChar(c));
-        if (c == '\x0D') //all lawicel commands end in CR
+        QString debugBuild;
+        debugBuild.reserve(data.length() * 3);
+        for (int i = 0; i < data.length(); i++)
+            debugBuild = debugBuild % QString::number((unsigned char)data.at(i), 16).rightJustified(2,'0') % " ";
+        debugOutput(debugBuild);
+    }
+
+    processRxBytes(data);
+}
+
+void LAWICELSerial::processRxBytes(const QByteArray &data)
+{
+    if (data.isEmpty()) return;
+    if (mRxPos >= mRxPending.size())
+    {
+        mRxPending = data;
+        mRxPos = 0;
+    }
+    else
+    {
+        if (mRxPos > 0) { mRxPending.remove(0, mRxPos); mRxPos = 0; }
+        mRxPending.append(data);
+    }
+    if (!mRxScheduled) processPendingRx();
+}
+
+void LAWICELSerial::processPendingRx()
+{
+    mRxScheduled = false;
+    QElapsedTimer budget;
+    budget.start();
+    const qsizetype n = mRxPending.size();
+    while (mRxPos < n)
+    {
+        const qsizetype end = std::min<qsizetype>(n, mRxPos + 1024);
+        while (mRxPos < end)
         {
-            //qDebug() << "Got CR!";
-
-            CommFrame buildFrame;
-            QByteArray buildData;
-
-            buildFrame.setTimeStamp(CommFrame::TimeStamp(0, QDateTime::currentMSecsSinceEpoch() * 1000ll));
-            if (!useSystemTime)
+            const char c = mRxPending.at(mRxPos++);
+            mBuildLine.append(QLatin1Char(c));
+            if (c == '\x0D') //all lawicel commands end in CR
             {
-                bool isFD = false;
-                bool isRemote = false;
-                char offset;
-                char len_index;
-                switch(mBuildLine[0].toLatin1()) {
-                    case 'r':
-                        isRemote = true;
-                        offset = 5;
-                        len_index = 4;
-                        break;
-                    case 'R':
-                        isRemote = true;
-                        offset = 10;
-                        len_index = 9;
-                        break;
-                    case 'b':
-                    case 'd':
-                        isFD = true;
-                        [[fallthrough]];
-                    case 't':
-                        offset = 5;
-                        len_index = 4;
-                        break;
-                    case 'B':
-                    case 'D':
-                        isFD = true;
-                        [[fallthrough]];
-                    case 'T':
-                        offset = 10;
-                        len_index = 9;
-                        break;
-                    default:
-                        offset = 5;
-                        len_index = 4;
-                        break;
-                }
-
-                //the DLC is one hex digit: CAN FD codes A-F (16-64 bytes) read as decimal gave 0, so the
-                //hardware timestamp was taken from the middle of the data for frames of 16 bytes or more
-                int dlc = mBuildLine.mid(len_index, 1).toInt(nullptr, 16);
-                int byteCount = isRemote ? 0 : isFD ? (int)dlc_code_to_bytes(dlc) : dlc; //a remote frame has no data
-                int frameStringLen = offset + byteCount * 2;
-                if (mBuildLine.length() > frameStringLen + 1)
-                {
-                    qint64 hardwareMs = mBuildLine.mid(frameStringLen, 4).toInt(nullptr, 16);
-                    if (lastHWTimestamp >= 0 && hardwareMs < lastHWTimestamp) { wrapAdder += 60000; }
-                    lastHWTimestamp = hardwareMs;
-                    qint64 unwrappedMs = wrapAdder + hardwareMs;
-                    if (timeBasis == 0) { timeBasis = QDateTime::currentMSecsSinceEpoch() - unwrappedMs; }
-                    buildFrame.setTimeStamp(CommFrame::TimeStamp(0, (timeBasis + unwrappedMs) * 1000ll));
-                }
-            };
-
-            switch (mBuildLine[0].toLatin1())
-            {
-            case 't': //standard frame
-                //tIIILDD
-                buildFrame.setFrameId(mBuildLine.mid(1, 3).toInt(nullptr, 16));
-                buildFrame.setReceived(true);
-                buildFrame.setFrameType(CommFrame::FrameType::CANDataFrame);
-                buildData.resize(mBuildLine.mid(4, 1).toInt());
-                for (int c = 0; c < buildData.size(); c++)
-                {
-                    buildData[c] = mBuildLine.mid(5 + (c*2), 2).toInt(nullptr, 16);
-                }
-                buildFrame.setPayload(buildData);
-                //addTimestamp(1 + 3 + 1 + buildData.size() * 2);
-                if (!isCapSuspended())
-                {
-                    /* get frame from queue */
-                    CommFrame* frame_p = getQueue().get();
-                    if(frame_p) {
-                        //qDebug() << "Lawicel got frame on bus " << frame_p->bus;
-                        /* copy frame */
-                        *frame_p = buildFrame;
-                        checkTargettedFrame(buildFrame);
-                        /* enqueue frame */
-                        getQueue().queue();
-                    }
-                    else
-                        qDebug() << "can't get a frame, ERROR";
-                }
-                break;
-            case 'T': //extended frame
-                //TIIIIIIIILDD.
-                buildFrame.setFrameId(mBuildLine.mid(1, 8).toInt(nullptr, 16));
-                buildFrame.setReceived(true);
-                buildFrame.setFrameType(CommFrame::FrameType::CANDataFrame);
-                buildFrame.setExtendedFrameFormat(true);
-                buildData.resize(mBuildLine.mid(9, 1).toInt());
-                for (int c = 0; c < buildData.size(); c++)
-                {
-                    buildData[c] = mBuildLine.mid(10 + (c*2), 2).toInt(nullptr, 16);
-                }
-                buildFrame.setPayload(buildData);
-                //addTimestamp(1 + 8 + 1 + buildData.size() * 2);
-                if (!isCapSuspended())
-                {
-                    /* get frame from queue */
-                    CommFrame* frame_p = getQueue().get();
-                    if(frame_p) {
-                        //qDebug() << "Lawicel got frame on bus " << frame_p->bus;
-                        /* copy frame */
-                        *frame_p = buildFrame;
-                        checkTargettedFrame(buildFrame);
-                        /* enqueue frame */
-                        getQueue().queue();
-                    }
-                    else
-                        qDebug() << "can't get a frame, ERROR";
-                }
-                break;
-            case 'b':
-                buildFrame.setBitrateSwitch(true); //BRS enabled
-                [[fallthrough]];
-            case 'd': //standard fd frame, BRS disabled
-                //tIIILDD
-                buildFrame.setFlexibleDataRateFormat(true);
-                buildFrame.setFrameId(mBuildLine.mid(1, 3).toInt(nullptr, 16));
-                buildFrame.setReceived(true);
-                buildFrame.setFrameType(CommFrame::FrameType::CANFDDataFrame); //keeps the FD flag (and BRS) set above
-                buildData.resize(LAWICELSerial::dlc_code_to_bytes(mBuildLine.mid(4, 1).toInt(nullptr, 16)));
-                for (int c = 0; c < buildData.size(); c++)
-                {
-                    buildData[c] = mBuildLine.mid(5 + (c*2), 2).toInt(nullptr, 16);
-                }
-                buildFrame.setPayload(buildData);
-                if (!isCapSuspended())
-                {
-                    /* get frame from queue */
-                    CommFrame* frame_p = getQueue().get();
-                    if(frame_p) {
-                        //qDebug() << "Lawicel got frame on bus " << frame_p->bus;
-                        /* copy frame */
-                        *frame_p = buildFrame;
-                        checkTargettedFrame(buildFrame);
-                        /* enqueue frame */
-                        getQueue().queue();
-                    }
-                    else
-                        qDebug() << "can't get a frame, ERROR";
-                }
-                break;
-            case 'B':
-                buildFrame.setBitrateSwitch(true); //BRS enabled
-                [[fallthrough]];
-            case 'D': //extended fd frame, BRS disabled ('B' falls through with BRS already set)
-                //TIIIIIIIILDD.
-                buildFrame.setFlexibleDataRateFormat(true);
-                buildFrame.setFrameId(mBuildLine.mid(1, 8).toInt(nullptr, 16));
-                buildFrame.setReceived(true);
-                buildFrame.setFrameType(CommFrame::FrameType::CANFDDataFrame); //keeps the FD flag (and BRS) set above
-                buildFrame.setExtendedFrameFormat(true);
-                buildData.resize(LAWICELSerial::dlc_code_to_bytes(mBuildLine.mid(9, 1).toInt(nullptr, 16)));
-                for (int c = 0; c < buildData.size(); c++)
-                {
-                    buildData[c] = mBuildLine.mid(10 + (c*2), 2).toInt(nullptr, 16);
-                }
-                buildFrame.setPayload(buildData);
-                if (!isCapSuspended())
-                {
-                    /* get frame from queue */
-                    CommFrame* frame_p = getQueue().get();
-                    if(frame_p) {
-                        //qDebug() << "Lawicel got frame on bus " << frame_p->bus;
-                        /* copy frame */
-                        *frame_p = buildFrame;
-                        checkTargettedFrame(buildFrame);
-                        /* enqueue frame */
-                        getQueue().queue();
-                    }
-                    else
-                        qDebug() << "can't get a frame, ERROR";
-                }
-                break;
-            case 'r': //standard remote frame: riiil (web-savvycan: upstream dropped remote frames)
-            case 'R': //extended remote frame: Riiiiiiiil
-            {
-                const bool ext = mBuildLine[0] == QLatin1Char('R');
-                buildFrame.setFrameId(mBuildLine.mid(1, ext ? 8 : 3).toInt(nullptr, 16));
-                buildFrame.setReceived(true);
-                buildFrame.setFrameType(CommFrame::FrameType::RemoteRequestFrame);
-                buildFrame.setExtendedFrameFormat(ext);
-                if (!isCapSuspended())
-                {
-                    CommFrame* frame_p = getQueue().get();
-                    if(frame_p) {
-                        *frame_p = buildFrame;
-                        checkTargettedFrame(buildFrame);
-                        getQueue().queue();
-                    }
-                    else
-                        qDebug() << "can't get a frame, ERROR";
-                }
-                break;
+                processLine();
+                mBuildLine.clear();
             }
-            }
-            mBuildLine.clear();
+            else if (mBuildLine.length() > MaxLineLength) //no CR in sight: garbage, start over
+                mBuildLine.clear();
+        }
+        if (mRxSliceMs > 0 && mRxPos < n && budget.elapsed() >= mRxSliceMs)
+        {
+            mRxScheduled = true;
+            QTimer::singleShot(0, this, &LAWICELSerial::processPendingRx);
+            return;
         }
     }
-    debugOutput(debugBuild);
-    //qDebug() << debugBuild;
+    mRxPending.clear();
+    mRxPos = 0;
+}
+
+//One complete line (ending in CR) in mBuildLine
+void LAWICELSerial::processLine()
+{
+    //qDebug() << "Got CR!";
+
+    CommFrame buildFrame;
+    QByteArray buildData;
+
+    buildFrame.setTimeStamp(CommFrame::TimeStamp(0, QDateTime::currentMSecsSinceEpoch() * 1000ll));
+    if (!useSystemTime)
+    {
+        bool isFD = false;
+        bool isRemote = false;
+        char offset;
+        char len_index;
+        switch(mBuildLine[0].toLatin1()) {
+            case 'r':
+                isRemote = true;
+                offset = 5;
+                len_index = 4;
+                break;
+            case 'R':
+                isRemote = true;
+                offset = 10;
+                len_index = 9;
+                break;
+            case 'b':
+            case 'd':
+                isFD = true;
+                [[fallthrough]];
+            case 't':
+                offset = 5;
+                len_index = 4;
+                break;
+            case 'B':
+            case 'D':
+                isFD = true;
+                [[fallthrough]];
+            case 'T':
+                offset = 10;
+                len_index = 9;
+                break;
+            default:
+                offset = 5;
+                len_index = 4;
+                break;
+        }
+
+        //the DLC is one hex digit: CAN FD codes A-F (16-64 bytes) read as decimal gave 0, so the
+        //hardware timestamp was taken from the middle of the data for frames of 16 bytes or more
+        int dlc = mBuildLine.mid(len_index, 1).toInt(nullptr, 16);
+        int byteCount = isRemote ? 0 : isFD ? (int)dlc_code_to_bytes(dlc) : dlc; //a remote frame has no data
+        int frameStringLen = offset + byteCount * 2;
+        if (mBuildLine.length() > frameStringLen + 1)
+        {
+            qint64 hardwareMs = mBuildLine.mid(frameStringLen, 4).toInt(nullptr, 16);
+            if (lastHWTimestamp >= 0 && hardwareMs < lastHWTimestamp) { wrapAdder += 60000; }
+            lastHWTimestamp = hardwareMs;
+            qint64 unwrappedMs = wrapAdder + hardwareMs;
+            if (timeBasis == 0) { timeBasis = QDateTime::currentMSecsSinceEpoch() - unwrappedMs; }
+            buildFrame.setTimeStamp(CommFrame::TimeStamp(0, (timeBasis + unwrappedMs) * 1000ll));
+        }
+    };
+
+    switch (mBuildLine[0].toLatin1())
+    {
+    case 't': //standard frame
+        //tIIILDD
+        buildFrame.setFrameId(mBuildLine.mid(1, 3).toInt(nullptr, 16));
+        buildFrame.setReceived(true);
+        buildFrame.setFrameType(CommFrame::FrameType::CANDataFrame);
+        buildData.resize(std::min(8, mBuildLine.mid(4, 1).toInt()));
+        for (int c = 0; c < buildData.size(); c++)
+        {
+            buildData[c] = mBuildLine.mid(5 + (c*2), 2).toInt(nullptr, 16);
+        }
+        buildFrame.setPayload(buildData);
+        //addTimestamp(1 + 3 + 1 + buildData.size() * 2);
+        if (!isCapSuspended()) enqueueReceivedFrame(buildFrame);
+        break;
+    case 'T': //extended frame
+        //TIIIIIIIILDD.
+        buildFrame.setFrameId(mBuildLine.mid(1, 8).toInt(nullptr, 16));
+        buildFrame.setReceived(true);
+        buildFrame.setFrameType(CommFrame::FrameType::CANDataFrame);
+        buildFrame.setExtendedFrameFormat(true);
+        buildData.resize(std::min(8, mBuildLine.mid(9, 1).toInt()));
+        for (int c = 0; c < buildData.size(); c++)
+        {
+            buildData[c] = mBuildLine.mid(10 + (c*2), 2).toInt(nullptr, 16);
+        }
+        buildFrame.setPayload(buildData);
+        //addTimestamp(1 + 8 + 1 + buildData.size() * 2);
+        if (!isCapSuspended()) enqueueReceivedFrame(buildFrame);
+        break;
+    case 'b':
+        buildFrame.setBitrateSwitch(true); //BRS enabled
+        [[fallthrough]];
+    case 'd': //standard fd frame, BRS disabled
+        //tIIILDD
+        buildFrame.setFlexibleDataRateFormat(true);
+        buildFrame.setFrameId(mBuildLine.mid(1, 3).toInt(nullptr, 16));
+        buildFrame.setReceived(true);
+        buildFrame.setFrameType(CommFrame::FrameType::CANFDDataFrame); //keeps the FD flag (and BRS) set above
+        buildData.resize(LAWICELSerial::dlc_code_to_bytes(mBuildLine.mid(4, 1).toInt(nullptr, 16)));
+        for (int c = 0; c < buildData.size(); c++)
+        {
+            buildData[c] = mBuildLine.mid(5 + (c*2), 2).toInt(nullptr, 16);
+        }
+        buildFrame.setPayload(buildData);
+        if (!isCapSuspended()) enqueueReceivedFrame(buildFrame);
+        break;
+    case 'B':
+        buildFrame.setBitrateSwitch(true); //BRS enabled
+        [[fallthrough]];
+    case 'D': //extended fd frame, BRS disabled ('B' falls through with BRS already set)
+        //TIIIIIIIILDD.
+        buildFrame.setFlexibleDataRateFormat(true);
+        buildFrame.setFrameId(mBuildLine.mid(1, 8).toInt(nullptr, 16));
+        buildFrame.setReceived(true);
+        buildFrame.setFrameType(CommFrame::FrameType::CANFDDataFrame); //keeps the FD flag (and BRS) set above
+        buildFrame.setExtendedFrameFormat(true);
+        buildData.resize(LAWICELSerial::dlc_code_to_bytes(mBuildLine.mid(9, 1).toInt(nullptr, 16)));
+        for (int c = 0; c < buildData.size(); c++)
+        {
+            buildData[c] = mBuildLine.mid(10 + (c*2), 2).toInt(nullptr, 16);
+        }
+        buildFrame.setPayload(buildData);
+        if (!isCapSuspended()) enqueueReceivedFrame(buildFrame);
+        break;
+    case 'r': //standard remote frame: riiil (web-savvycan: upstream dropped remote frames)
+    case 'R': //extended remote frame: Riiiiiiiil
+    {
+        const bool ext = mBuildLine[0] == QLatin1Char('R');
+        buildFrame.setFrameId(mBuildLine.mid(1, ext ? 8 : 3).toInt(nullptr, 16));
+        buildFrame.setReceived(true);
+        buildFrame.setFrameType(CommFrame::FrameType::RemoteRequestFrame);
+        buildFrame.setExtendedFrameFormat(ext);
+        if (!isCapSuspended()) enqueueReceivedFrame(buildFrame);
+        break;
+    }
+    }
 }
 
 //Debugging data sent from connection window. Inject it into Comm traffic.

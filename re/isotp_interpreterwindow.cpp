@@ -8,7 +8,7 @@
 #include "bus_protocols/isotp_handler.h"
 #include "bus_protocols/uds_handler.h"
 
-ISOTP_InterpreterWindow::ISOTP_InterpreterWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+ISOTP_InterpreterWindow::ISOTP_InterpreterWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::ISOTP_InterpreterWindow)
 {

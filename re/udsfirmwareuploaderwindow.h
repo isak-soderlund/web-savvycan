@@ -2,6 +2,7 @@
 #define UDSFIRMWAREUPLOADERWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QJsonDocument>
@@ -67,7 +68,7 @@ class UDSFirmwareUploaderWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit UDSFirmwareUploaderWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit UDSFirmwareUploaderWindow(const FrameListView *frames, QWidget *parent = 0);
     ~UDSFirmwareUploaderWindow();
 
 private slots:
@@ -113,7 +114,7 @@ private:
     void advanceState();
 
     Ui::UDSFirmwareUploaderWindow *ui;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     UDS_HANDLER *udsHandler;
     UPLOAD_STATE currentState;
     QTimer *timeoutTimer;

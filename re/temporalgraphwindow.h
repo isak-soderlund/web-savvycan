@@ -2,6 +2,7 @@
 #define TEMPORALGRAPHWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include "qcustomplot.h"
 #include "can_structs.h"
 
@@ -19,7 +20,7 @@ class TemporalGraphWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit TemporalGraphWindow(const QVector<CommFrame> *, QWidget *parent = nullptr);
+    explicit TemporalGraphWindow(const FrameListView *, QWidget *parent = nullptr);
     ~TemporalGraphWindow();
     void showEvent(QShowEvent*);
 
@@ -34,7 +35,7 @@ private slots:
 
 private:
     Ui::TemporalGraphWindow *ui;    
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     bool useOpenGL;
     bool followGraphEnd;
     QCPGraph *graph;

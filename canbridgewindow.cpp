@@ -5,7 +5,7 @@
 #include "filterutility.h"
 #include "mainwindow.h"
 
-CANBridgeWindow::CANBridgeWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+CANBridgeWindow::CANBridgeWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::CANBridgeWindow)
 {

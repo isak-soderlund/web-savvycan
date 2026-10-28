@@ -2,6 +2,7 @@
 #define DBCMAINEDITOR_H
 
 #include <QDialog>
+#include "framestore.h"
 #include <QDebug>
 #include <QIcon>
 #include <QTreeWidget>
@@ -30,7 +31,7 @@ class DBCMainEditor : public QDialog
     Q_OBJECT
 
 public:
-    explicit DBCMainEditor(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit DBCMainEditor(const FrameListView *frames, QWidget *parent = 0);
     ~DBCMainEditor();
     void setFileIdx(int idx);
 
@@ -62,7 +63,7 @@ private slots:
 private:
     Ui::DBCMainEditor *ui;
     DBCHandler *dbcHandler;
-    const QVector<CommFrame> *referenceFrames;
+    const FrameListView *referenceFrames;
     DBCSignalEditor *sigEditor;
     DBCMessageEditor *msgEditor;
     DBCNodeEditor *nodeEditor;

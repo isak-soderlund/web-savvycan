@@ -2,6 +2,7 @@
 #define DBCLOADSAVEWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include <QTableWidget>
 #include <QComboBox>
 #include "dbchandler.h"
@@ -16,7 +17,7 @@ class DBCLoadSaveWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit DBCLoadSaveWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit DBCLoadSaveWindow(const FrameListView *frames, QWidget *parent = 0);
     ~DBCLoadSaveWindow();
 
 private slots:
@@ -39,7 +40,7 @@ private:
     Ui::DBCLoadSaveWindow *ui;
     DBCHandler *dbcHandler;
     DBCFile *currentlyEditingFile;
-    const QVector<CommFrame> *referenceFrames;
+    const FrameListView *referenceFrames;
     DBCMainEditor *editorWindow;
     bool inhibitCellProcessing;
 

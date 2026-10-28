@@ -5,10 +5,9 @@
  * web-savvycan: the test hook for the browser tests (branch tests, tests/web/README.md).
  *
  * In the wasm build install() sets window.webSavvyCAN = { version, stats(), theme(), traceTail(n) }.
- * stats() is built from named counters: this file registers "connected", "framesInTrace", the logging
- * state from WebDiskLog (logging, logFile, logFramesWritten) and, for upstream's frame model, framesReceived
- * (counted at CANConManager) with framesEvicted/framesDropped/queued = 0. The frame store registers its own
- * with registerStat() before install() (install() keeps an entry that is already there).
+ * stats() is built from named counters: this file registers "connected", "framesInTrace", the frame store's
+ * framesReceived/framesEvicted/framesDropped/queued and the logging state from WebDiskLog (logging, logFile,
+ * logFramesWritten); registerStat() adds others or replaces one (install() keeps an entry already registered).
  * On the desktop install() does nothing; registerStat() and stats() work the same (for unit tests).
  */
 

@@ -1,6 +1,7 @@
 #include <QSettings>
 #include <QThread>
 #include <QMutexLocker>
+#include <QMetaMethod>
 #include "canconnection.h"
 
 CANConnection::CANConnection(QString pPort,
@@ -26,6 +27,7 @@ CANConnection::CANConnection(QString pPort,
     mStarted(false),
     mThread_p(nullptr)
 {
+    useSystemTime = false; //set from the settings in start(); was uninitialised until then
     /* register types */
     qRegisterMetaType<CANBus>("CANBus");
     qRegisterMetaType<CommFrame>("CommFrame");
@@ -195,13 +197,17 @@ bool CANConnection::sendFrame(const CommFrame& pFrame)
         return ret;
     }
 
+    //local echo of a sent frame into the trace (queue() only after a slot was obtained: queueing into a
+    //full queue made it look empty and lost its whole content)
     CommFrame *txFrame;
     txFrame = getQueue().get();
     if (txFrame)
     {
-        *txFrame = pFrame;        
-    }    
-    getQueue().queue();
+        *txFrame = pFrame;
+        getQueue().queue();
+    }
+    else
+        mDroppedFrames.fetchAndAddRelaxed(1);
 
     return piSendFrame(pFrame);
 }
@@ -385,6 +391,26 @@ void CANConnection::checkTargettedFrame(CommFrame &frame)
             QMetaObject::invokeMethod(filt.observer, "gotTargettedFrame",Qt::QueuedConnection, Q_ARG(CommFrame, frame));
         }
     }
+}
+
+bool CANConnection::enqueueReceivedFrame(const CommFrame &frame)
+{
+    CommFrame *frame_p = getQueue().get();
+    if (!frame_p)
+    {
+        mDroppedFrames.fetchAndAddRelaxed(1);
+        return false;
+    }
+    *frame_p = frame;
+    checkTargettedFrame(*frame_p);
+    getQueue().queue();
+    return true;
+}
+
+bool CANConnection::isDebugConsoleActive() const
+{
+    static const QMetaMethod sig = QMetaMethod::fromSignal(&CANConnection::debugOutput);
+    return isSignalConnected(sig);
 }
 
 bool CANConnection::piSendFrames(const QList<CommFrame>& pFrames)

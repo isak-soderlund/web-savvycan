@@ -4,7 +4,7 @@
 #define CAN_FRAME_SIZE  8
 #define FF_PCI_SIZE 2
 
-ISOTP_HANDLER::ISOTP_HANDLER(const QVector<CommFrame> &modelFrames,
+ISOTP_HANDLER::ISOTP_HANDLER(const FrameListView &modelFrames,
                              CanSendCallback sendCb,
                              GetNoOfBusesCallback getBusesCb,
                              PendingConnection<ISOTP_HANDLER> pendingConn )

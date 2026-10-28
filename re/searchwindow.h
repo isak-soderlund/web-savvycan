@@ -2,6 +2,7 @@
 #define SEARCHWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include "../can_structs.h"
 #include "../dbc/dbchandler.h"
 
@@ -14,7 +15,7 @@ class SearchWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit SearchWindow(const QVector<CommFrame> *frames, DBCHandler *handler, QWidget *parent = nullptr);
+    explicit SearchWindow(const FrameListView *frames, DBCHandler *handler, QWidget *parent = nullptr);
     ~SearchWindow();
 
     void updatedFrames(int numFrames);
@@ -42,7 +43,7 @@ private:
     void updateNavigationState();
 
     Ui::SearchWindow *ui;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     DBCHandler *dbcHandler;
     DBC_SIGNAL *assocSignal;
     int startBit;

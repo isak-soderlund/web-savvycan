@@ -15,7 +15,7 @@
  * these days too. It is not maintained any longer as the project it was meant for is abandoned. YMMV.
 */
 
-MotorControllerConfigWindow::MotorControllerConfigWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+MotorControllerConfigWindow::MotorControllerConfigWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::MotorControllerConfigWindow)
 {

@@ -2,6 +2,7 @@
 #define UDSSCANWINDOW_H
 
 #include "can_structs.h"
+#include "framestore.h"
 #include "connections/canconnection.h"
 #include "bus_protocols/uds_handler.h"
 
@@ -56,7 +57,7 @@ class UDSScanWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit UDSScanWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit UDSScanWindow(const FrameListView *frames, QWidget *parent = 0);
     ~UDSScanWindow();
 
 private slots:
@@ -85,7 +86,7 @@ private slots:
 
 private:
     Ui::UDSScanWindow *ui;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     UDS_HANDLER *udsHandler;
     QTimer *waitTimer;
     QList<UDS_MESSAGE> sendingFrames;

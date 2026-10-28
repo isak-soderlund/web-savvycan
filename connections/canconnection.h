@@ -98,6 +98,20 @@ public:
      */
     void setConsoleOutput(bool state);
 
+    /**
+     * @brief web-savvycan: frames this connection received but had to discard because its queue to the
+     * GUI was full (the GUI fell behind). Thread safe.
+     */
+    quint64 getDroppedFrames() const { return mDroppedFrames.loadRelaxed(); }
+    void resetDroppedFrames() { mDroppedFrames.storeRelaxed(0); }
+
+    /**
+     * @brief web-savvycan: queue length used by the serial connections (GVRET, LAWICEL): 2 s of a full
+     * CAN FD bus at 32k frames/s, so a GUI stall of that long loses nothing (was 4000 frames, 0.44 s at
+     * 9000 FD frames/s).
+     */
+    static constexpr int SerialQueueLen = 65536;
+
 
 signals:
     /*not implemented yet */
@@ -220,6 +234,18 @@ public slots:
     void debugInput(QByteArray bytes);
 
 protected:
+    /**
+     * @brief web-savvycan: hand a received frame to the GUI's queue. Checks targetted frames. If the queue
+     * is full the frame is dropped and counted (getDroppedFrames()). Returns false when dropped.
+     */
+    bool enqueueReceivedFrame(const CommFrame &frame);
+
+    /**
+     * @brief web-savvycan: true when someone listens to debugOutput (the connection window's debug console
+     * is on for this connection). Build per-byte debug text only then (M8).
+     */
+    bool isDebugConsoleActive() const;
+
     int mNumBuses; //protected to allow connected device to figure out how many buses are available
     QVector<BusData> mBusData;
     int mSerialSpeed;
@@ -341,6 +367,7 @@ private:
     // Protects mTargettedFrames across the worker-thread reader (checkTargettedFrame)
     // and the main-thread writers (add/removeTargettedFrame).
     QMutex              mTargettedMutex;
+    QAtomicInteger<quint64> mDroppedFrames {0};
 };
 
 #endif // CANCONNECTION_H

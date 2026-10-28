@@ -4,13 +4,15 @@
 #include <QSerialPortInfo>
 #include <QSettings>
 #include <QStringBuilder>
+#include <QElapsedTimer>
+#include <algorithm>
 #include <QtNetwork>
 
 #include "gvretserial.h"
 #include "canconmanager.h"
 
-GVRetSerial::GVRetSerial(QString portName, bool useTcp) :
-    CANConnection(portName, "gvret", CANCon::GVRET_SERIAL, 0, 0, false, 0, 3, 4000, true),
+GVRetSerial::GVRetSerial(QString portName, bool useTcp, bool useThread) :
+    CANConnection(portName, "gvret", CANCon::GVRET_SERIAL, 0, 0, false, 0, 3, CANConnection::SerialQueueLen, useThread),
     mTimer(this), /*NB: set this as parent of timer to manage it from working thread */
     useTcp(useTcp)
 {
@@ -45,7 +47,7 @@ GVRetSerial::~GVRetSerial()
 void GVRetSerial::sendDebug(const QString debugText)
 {
     qDebug() << debugText;
-    debugOutput(debugText);
+    if (isDebugConsoleActive()) debugOutput(debugText);
 }
 
 void GVRetSerial::sendToSerial(const QByteArray &bytes)
@@ -74,13 +76,16 @@ void GVRetSerial::sendToSerial(const QByteArray &bytes)
         return;
     }
 
-    QString buildDebug;
-    buildDebug = "Write to serial -> ";
-    foreach (int byt, bytes) {
-        byt = (unsigned char)byt;
-        buildDebug = buildDebug % QString::number(byt, 16) % " ";
+    if (isDebugConsoleActive())
+    {
+        QString buildDebug;
+        buildDebug = "Write to serial -> ";
+        foreach (int byt, bytes) {
+            byt = (unsigned char)byt;
+            buildDebug = buildDebug % QString::number(byt, 16) % " ";
+        }
+        sendDebug(buildDebug);
     }
-    sendDebug(buildDebug);
 
     if (serial) serial->write(bytes);
     if (tcpClient) tcpClient->write(bytes);
@@ -468,6 +473,10 @@ void GVRetSerial::deviceConnected()
 }
 
 void GVRetSerial::disconnectDevice() {
+    mRxPending.clear(); //unparsed bytes of the old link
+    mRxPos = 0;
+    rx_state = IDLE;
+    rx_step = 0;
     if (serial != nullptr)
     {
         if (serial->isOpen())
@@ -620,23 +629,62 @@ void GVRetSerial::connectionTimeout()
 void GVRetSerial::readSerialData()
 {
     QByteArray data;
-    unsigned char c;
-    QString debugBuild;
 
     if (serial) data = serial->readAll();
     if (tcpClient) data = tcpClient->readAll();
     if (udpClient) data = udpClient->readAll();
 
-    sendDebug("Got data from serial. Len = " % QString::number(data.length()));
-    for (int i = 0; i < data.length(); i++)
+    //web-savvycan (M8): the hex text of every byte only while the debug console listens
+    if (isDebugConsoleActive())
     {
-        c = data.at(i);
-        //qDebug() << c << "    " << QString::number(c, 16) << "     " << QString(c);
-        debugBuild = debugBuild % QString::number(c, 16).rightJustified(2,'0') % " ";
-        procRXChar(c);
+        QString debugBuild;
+        debugBuild.reserve(data.length() * 3);
+        for (int i = 0; i < data.length(); i++)
+            debugBuild = debugBuild % QString::number((unsigned char)data.at(i), 16).rightJustified(2,'0') % " ";
+        sendDebug("Got data from serial. Len = " % QString::number(data.length()));
+        debugOutput(debugBuild);
     }
-    debugOutput(debugBuild);
-    //qDebug() << debugBuild;
+
+    processRxBytes(data);
+}
+
+void GVRetSerial::processRxBytes(const QByteArray &data)
+{
+    if (data.isEmpty()) return;
+    if (mRxPos >= mRxPending.size())
+    {
+        mRxPending = data;
+        mRxPos = 0;
+    }
+    else
+    {
+        if (mRxPos > 0) { mRxPending.remove(0, mRxPos); mRxPos = 0; }
+        mRxPending.append(data);
+    }
+    if (!mRxScheduled) processPendingRx();
+}
+
+void GVRetSerial::processPendingRx()
+{
+    mRxScheduled = false;
+    QElapsedTimer budget;
+    budget.start();
+    const qsizetype n = mRxPending.size();
+    while (mRxPos < n)
+    {
+        const qsizetype end = std::min<qsizetype>(n, mRxPos + 1024);
+        const unsigned char *p = reinterpret_cast<const unsigned char *>(mRxPending.constData());
+        while (mRxPos < end) procRXChar(p[mRxPos++]);
+        if (mRxSliceMs > 0 && mRxPos < n && budget.elapsed() >= mRxSliceMs)
+        {
+            //the rest on the next event-loop turn
+            mRxScheduled = true;
+            QTimer::singleShot(0, this, &GVRetSerial::processPendingRx);
+            return;
+        }
+    }
+    mRxPending.clear();
+    mRxPos = 0;
 }
 
 //Debugging data sent from connection window. Inject it into Comm traffic.
@@ -661,18 +709,8 @@ void GVRetSerial::emitBuiltFrame(CommFrame::FrameType frameType)
     buildFrame.setFlexibleDataRateFormat(frameType == CommFrame::FrameType::CANFDDataFrame);
     if (isCapSuspended()) return;
 
-    /* get frame from queue */
-    CommFrame* frame_p = getQueue().get();
-    if (frame_p)
-    {
-        /* copy frame */
-        *frame_p = buildFrame;
-        checkTargettedFrame(buildFrame);
-        /* enqueue frame */
-        getQueue().queue();
-    }
-    else
-        qDebug() << "can't get a frame, ERROR";
+    //into the GUI's queue; when it is full the frame is counted as dropped (shown in the main window)
+    enqueueReceivedFrame(buildFrame);
 }
 
 void GVRetSerial::procRXChar(unsigned char c)
@@ -787,6 +825,12 @@ void GVRetSerial::procRXChar(unsigned char c)
             buildFrame.setFrameId(buildId);
             break;
         case 8:
+            if ((c & 0xF) > 8) //not a valid classic CAN length: drop it and resync on the next 0xF1
+            {
+                rx_state = IDLE;
+                rx_step = 0;
+                return;
+            }
             buildData.resize(c & 0xF);
             buildFrame.setBus((c & 0xF0) >> 4);
             if (buildData.isEmpty()) //no data bytes follow, so the frame is complete now

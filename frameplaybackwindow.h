@@ -2,6 +2,7 @@
 #define FRAMEPLAYBACKWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include <QListWidget>
 #include "can_structs.h"
 #include "framefileio.h"
@@ -16,7 +17,7 @@ class FramePlaybackWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit FramePlaybackWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit FramePlaybackWindow(const FrameListView *frames, QWidget *parent = 0);
     ~FramePlaybackWindow();
 
 private slots:
@@ -51,7 +52,7 @@ private:
     Ui::FramePlaybackWindow *ui;
     QList<int> foundID;
     QList<CommFrame> frameCache;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     QList<SequenceItem> seqItems;
     SequenceItem *currentSeqItem;
     int currentSeqNum;

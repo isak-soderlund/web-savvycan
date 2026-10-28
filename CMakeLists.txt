@@ -74,6 +74,8 @@ qt_add_executable(SavvyCAN WIN32 MACOSX_BUNDLE
     candatagrid.cpp candatagrid.h
     canfilter.cpp canfilter.h
     canframemodel.cpp canframemodel.h
+    framestore.cpp framestore.h
+    tracerowheader.h
     config.h
     connections/canbus.cpp connections/canbus.h
     connections/canconconst.h
