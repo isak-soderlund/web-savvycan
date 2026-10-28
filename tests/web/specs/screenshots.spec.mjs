@@ -20,7 +20,7 @@ for (const theme of ['light', 'dark']) {
       await app.menu('Help', 'About');
       await page.waitForTimeout(1000);
       await shot('about');
-      await page.keyboard.press('Escape');
+      await app.click('button', /^Close$/i, 'button "Close"');
       await page.waitForTimeout(500);
       await app.menu('File', 'Preferences');
       await page.waitForTimeout(1000);
