@@ -63,6 +63,9 @@ else
     echo "already installed"
 fi
 
+# The all_os wasm archive has its shell scripts (qt-cmake, ...) without the exec bit.
+find "$QT_WASM/bin" -maxdepth 1 -type f ! -name '*.bat' ! -name '*.conf' -exec chmod +x {} +
+
 step "Emscripten $EMSDK_VERSION -> $EMSDK"
 if [ ! -d "$EMSDK/.git" ]; then
     git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$EMSDK"
