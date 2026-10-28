@@ -11,6 +11,7 @@
 
 #ifdef Q_OS_WASM
 #include <emscripten.h>
+#include "wasm/disklog/webdisklog.h"
 #endif
 
 namespace {
@@ -108,7 +109,23 @@ void install(CommFrameModel *model)
             return QJsonValue(g_model ? g_model->getFilteredListReference()->count() : 0);
         });
     }
+    // Until the frame store (branch framestore) registers its own: upstream's model takes every frame the
+    // connection manager hands over at once (no queue, no drops); it evicts only past Main/MaximumFrames.
+    if (!registry().contains("framesReceived")) {
+        static qint64 received = 0;
+        QObject::connect(CANConManager::getInstance(), &CANConManager::framesReceived,
+                         [](CANConnection *, QVector<CommFrame> &frames) { received += frames.count(); });
+        registerStat("framesReceived", [] { return QJsonValue(double(received)); });
+        registerStat("framesDropped", [] { return QJsonValue(0); });
+        registerStat("framesEvicted", [] { return QJsonValue(0); });
+        registerStat("queued", [] { return QJsonValue(0); });
+    }
 #ifdef Q_OS_WASM
+    if (!registry().contains("logging")) {
+        registerStat("logging", [] { return QJsonValue(WebDiskLog::instance()->isActive()); });
+        registerStat("logFile", [] { return QJsonValue(WebDiskLog::instance()->fileName()); });
+        registerStat("logFramesWritten", [] { return QJsonValue(double(WebDiskLog::instance()->framesWritten())); });
+    }
     wsc_install_hook();
 #endif
 }
