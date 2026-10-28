@@ -102,10 +102,18 @@ public:
     static bool saveCARBUSAnalzyer(QString filename, const QVector<CommFrame>* frames);
     static bool savePCANFile(QString filename, const QVector<CommFrame>* frames);
 
+    //Continuous logging in the native CSV format. The first one asks for the file name (desktop).
+    //In the browser (Q_OS_WASM) the file is opened by WebDiskLog (wasm/disklog), asynchronously; the
+    //write/flush/close calls below go to it.
     static bool openContinuousNative();
+    static bool openContinuousNative(const QString &filename);
     static bool closeContinuousNative();
     static bool writeContinuousNative(const QVector<CommFrame>*, int);
     static bool flushContinuousNative();
+
+    //The native CSV format's header line and one row (both with the line end); FD rows are longer
+    static QByteArray nativeCSVHeader();
+    static QByteArray nativeCSVRow(const CommFrame &frame);
 
 private:
     static QFile continuousFile;

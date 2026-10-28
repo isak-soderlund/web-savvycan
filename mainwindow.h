@@ -185,6 +185,14 @@ private:
     bool continuousLogging;
     bool continuousLoggingUseFilter;
     int continuousLogFlushCounter;
+#ifdef Q_OS_WASM
+    //browser: the log file is opened asynchronously by WebDiskLog (wasm/disklog)
+    bool webLogPendingFiltered = false;
+    void webContinuousLogging(bool filtered);
+    void setupWebDiskLog();
+    void resetContinuousLoggingUi();
+    void updateWebLogTooltip();
+#endif
 
     //References to other windows we can display
 

@@ -170,6 +170,11 @@ endif()
 
 set_debug_sanitizer_options(SavvyCAN)
 
+# web-savvycan: continuous logging straight to disk in the browser
+if(EMSCRIPTEN)
+    include(wasm/disklog/disklog.cmake)
+endif()
+
 target_link_libraries(SavvyCAN PRIVATE
     Qt6::Core
     Qt6::Gui
