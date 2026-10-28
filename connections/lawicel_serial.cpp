@@ -4,7 +4,6 @@
 #include <QSerialPortInfo>
 #include <QSettings>
 #include <QStringBuilder>
-#include <QElapsedTimer>
 #include <QDateTime>
 #include <algorithm>
 
@@ -499,52 +498,17 @@ void LAWICELSerial::readSerialData()
     processRxBytes(data);
 }
 
-void LAWICELSerial::processRxBytes(const QByteArray &data)
+//web-savvycan: one received byte (CANConnection::processRxBytes); the lines are slcan's
+void LAWICELSerial::processRxByte(unsigned char c)
 {
-    if (data.isEmpty()) return;
-    if (mRxPos >= mRxPending.size())
+    mBuildLine.append(QLatin1Char(char(c)));
+    if (c == '\x0D') //all lawicel commands end in CR
     {
-        mRxPending = data;
-        mRxPos = 0;
+        processLine();
+        mBuildLine.clear();
     }
-    else
-    {
-        if (mRxPos > 0) { mRxPending.remove(0, mRxPos); mRxPos = 0; }
-        mRxPending.append(data);
-    }
-    if (!mRxScheduled) processPendingRx();
-}
-
-void LAWICELSerial::processPendingRx()
-{
-    mRxScheduled = false;
-    QElapsedTimer budget;
-    budget.start();
-    const qsizetype n = mRxPending.size();
-    while (mRxPos < n)
-    {
-        const qsizetype end = std::min<qsizetype>(n, mRxPos + 1024);
-        while (mRxPos < end)
-        {
-            const char c = mRxPending.at(mRxPos++);
-            mBuildLine.append(QLatin1Char(c));
-            if (c == '\x0D') //all lawicel commands end in CR
-            {
-                processLine();
-                mBuildLine.clear();
-            }
-            else if (mBuildLine.length() > MaxLineLength) //no CR in sight: garbage, start over
-                mBuildLine.clear();
-        }
-        if (mRxSliceMs > 0 && mRxPos < n && budget.elapsed() >= mRxSliceMs)
-        {
-            mRxScheduled = true;
-            QTimer::singleShot(0, this, &LAWICELSerial::processPendingRx);
-            return;
-        }
-    }
-    mRxPending.clear();
-    mRxPos = 0;
+    else if (mBuildLine.length() > MaxLineLength) //no CR in sight: garbage, start over
+        mBuildLine.clear();
 }
 
 //One complete line (ending in CR) in mBuildLine

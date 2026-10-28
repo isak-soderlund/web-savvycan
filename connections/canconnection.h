@@ -112,6 +112,16 @@ public:
      */
     static constexpr int SerialQueueLen = 65536;
 
+    /**
+     * @brief web-savvycan: parse received bytes (what a serial connection does with its port's data), one
+     * processRxByte() each. Parsing runs in slices of at most setRxSliceBudgetMs() per event-loop turn; the
+     * rest continues on the next turn, so a single-threaded (wasm) GUI stays responsive on a busy bus.
+     * Public for tests.
+     */
+    void processRxBytes(const QByteArray &data);
+    void setRxSliceBudgetMs(int ms) { mRxSliceMs = ms; } // 0: everything at once (desktop: own thread)
+    qsizetype pendingRxBytes() const { return mRxPending.size() - mRxPos; } // received, not parsed yet
+
 
 signals:
     /*not implemented yet */
@@ -246,6 +256,11 @@ protected:
      */
     bool isDebugConsoleActive() const;
 
+    /** @brief web-savvycan: the protocol parser, fed by processRxBytes() */
+    virtual void processRxByte(unsigned char) {}
+    /** @brief web-savvycan: forget received bytes not parsed yet (the link went down) */
+    void clearRx() { mRxPending.clear(); mRxPos = 0; }
+
     int mNumBuses; //protected to allow connected device to figure out how many buses are available
     QVector<BusData> mBusData;
     int mSerialSpeed;
@@ -368,6 +383,15 @@ private:
     // and the main-thread writers (add/removeTargettedFrame).
     QMutex              mTargettedMutex;
     QAtomicInteger<quint64> mDroppedFrames {0};
+    void processPendingRx();
+    QByteArray mRxPending;   //received bytes not parsed yet
+    qsizetype mRxPos = 0;    //next byte of mRxPending to parse
+    bool mRxScheduled = false;
+#ifdef Q_OS_WASM
+    int mRxSliceMs = 8;      //single thread: leave the rest of the frame time to the GUI
+#else
+    int mRxSliceMs = 0;
+#endif
 };
 
 #endif // CANCONNECTION_H
