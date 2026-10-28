@@ -1,11 +1,10 @@
 # web-savvycan: settings for the WebAssembly build (Qt for WebAssembly, wasm_singlethread).
 # Included from CMakeLists.txt when EMSCRIPTEN is set; the desktop build never reads this file.
 
-# Stand-ins for Qt Serial Port / Serial Bus (wasm/include), found before any Qt header.
+# Stand-ins for Qt Serial Bus (wasm/include), found before any Qt header.
 target_include_directories(SavvyCAN BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/wasm/include)
-target_sources(SavvyCAN PRIVATE
-    wasm/qserialport_wasm.cpp wasm/qserialport_wasm.h
-)
+# Qt Serial Port: the Web Serial stand-in (wasm/webserial: QSerialPort, QSerialPortInfo, the JS bridge).
+include(${CMAKE_CURRENT_LIST_DIR}/webserial/webserial.cmake)
 
 # No TLS in Qt for WebAssembly: MQTT over TLS is left out, and the TLS socket's header has no
 # QSslSocket to moc against.
