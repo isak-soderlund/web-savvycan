@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 #include "theme.h"
+#ifdef Q_OS_WASM
 #include "testhook.h"
+#endif
 #include <QApplication>
 #include <QKeyEvent>
 #include <QTranslator>
@@ -99,8 +101,10 @@ int main(int argc, char *argv[])
 
     a.mainWindow = new MainWindow();
 
-    // web-savvycan: window.webSavvyCAN for the browser tests (does nothing on the desktop)
+#ifdef Q_OS_WASM
+    // web-savvycan: window.webSavvyCAN for the browser tests
     TestHook::install(a.mainWindow->getCommFrameModel());
+#endif
 
     int fontSize = settings.value("Main/FontSize", 9).toUInt();
     QFont sysFont = QFont(); //get default font

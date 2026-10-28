@@ -23,13 +23,13 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 
 | # | Feature | Notes |
 | --- | --- | --- |
-| 1 | **WebAssembly build** | Qt 6.12 `wasm_singlethread` + Emscripten 5.0.5 (the spike's toolchain); Qt SerialBus and MQTT left out of the wasm build; Asyncify (or JSPI) for the dialogs that use `exec()`; the desktop build of the same tree keeps working |
+| 1 | **WebAssembly build** | Qt 6.12 `wasm_singlethread` + Emscripten 5.0.5 (the spike's toolchain); Qt SerialBus and MQTT left out of the wasm build; Asyncify for the dialogs that use `exec()`; the desktop build of the same tree keeps working |
 | 2 | **Web Serial port** | A `QSerialPort` stand-in backed by Web Serial (SavvyCAN uses ~15 of its calls: open, baud, DTR, readAll, write, readyRead, errorOccurred, ...), so the GVRET/LAWICEL code stays as it is. A "Choose device" button calls `requestPort()` (needs a user gesture), filtered to rc1's USB ID |
 | 3 | **Connection window** | SavvyCAN's own dialog, offering GVRET and LAWICEL (slcan) on the Web Serial port; the other connection types hidden in the browser |
 | 4 | **Single-threaded GVRET** | No `QThread` in the wasm build (the spike's three changes); incoming bytes parsed in batches from the JS read loop; no per-byte debug string (fix M-series) |
 | 5 | **Bus setup** | Nominal bit rate, CAN FD on/off, data bit rate, listen-only, through GVRET's own commands (rc1 firmware 0.1.3 implements them, classic + FD verified with desktop SavvyCAN on 2026-10-28) |
 | 6 | **Main window trace** | Live frame list with CAN FD (64-byte data, BRS/ESI columns), frame counter, **dropped-frames counter**; ring-buffer frame store and an index list for the filtered view (fixes M-series), so it never stalls on a full list |
-| 7 | **Logging (download)** | Owner's MVP choice 2026-10-28: File > Start Continuous Logging starts at once; the rows are collected in the page as Blobs, outside the wasm heap (the browser keeps them; Chrome pages big totals to disk); Cease Continuous Logging starts **one normal download** of the CSV, named by the start time (`SavvyCAN_YYYY-MM-DD_HH-MM-SS.csv`), or by a name asked at stop (File > Choose the Log's Name When Logging Stops...). The LOGGING label shows size and frames and that a crash loses the log (accepted); closing the tab while logging asks first. Same in every browser. Format: SavvyCAN's native GVRET CSV, FD rows included. Writing to disk while logging (File System Access, commits every 3 s, a remembered folder; Firefox streaming download through a service worker) stays in the tree, off: `enabledfeatures.h` `LOG_TO_DISK_LIVE` |
+| 7 | **Logging (download)** | Owner's MVP choice 2026-10-28: File > Start Continuous Logging starts at once; the rows are collected in the page as Blobs, outside the wasm heap (the browser keeps them; Chrome pages big totals to disk); Cease Continuous Logging starts **one normal download** of the CSV, named by the start time (`SavvyCAN_YYYY-MM-DD_HH-MM-SS.csv`), or by a name asked at stop (File > Choose the Log's Name When Logging Stops...). The LOGGING label shows size and frames and that a crash loses the log (accepted); closing the tab while logging asks first. Same in every browser. Format: SavvyCAN's native GVRET CSV, FD rows included. Writing to disk while logging (File System Access, commits every 3 s, a remembered folder; Firefox streaming download through a service worker) is on branch **`disklog-live`** (complete and tested there, = `main` 2d52b34), not in `main` |
 | 8 | **Theme switch** | Light (SavvyCAN's normal) / dark, remembered between visits |
 | 9 | **Only stage-1 windows** | Every menu and window not in stage 1 hidden (not broken); they come back stage by stage |
 | 10 | **Settings kept** | Connection, theme and log settings remembered in the browser (whether `QSettings` persists in wasm: to check) |
@@ -42,7 +42,7 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
   the trace and in the log file.
 - **Logging:** `test/web` (Playwright; `run-disklog-tests.sh`): the download's bytes equal SavvyCAN's own rows and load in the
   desktop SavvyCAN (`test/nativecsv`), Chromium and Firefox; the app with the fake rc1 (every frame sent is in the
-  download); a multi-GB log (`--project=chromium-large`, through `heavy.sh`). Crash test only with `LOG_TO_DISK_LIVE`.
+  download); a multi-GB log (`--project=chromium-large`, through `heavy.sh`). Crash test only on branch `disklog-live`.
   Measured 2026-10-28 (headless, rows copied out of a fixed "wasm heap" buffer, 3G `heavy.sh` slice): page JS heap
   1 MB and wasm heap flat throughout; collecting at ~520-590 MB/s.
   - **Chromium:** 2, 3, 4, 6 and 8 GB logs downloaded byte-exact (SHA-256); its blob storage holds ~2 GB in RAM
@@ -118,7 +118,7 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 | **Shop security** | Allowing WebAssembly (`'wasm-unsafe-eval'`) site-wide weakens the shop's CSP | Added for the tool's route only |
 | **File size on Oxygen** | Oxygen's static files are ≤ 20 MB each; the full SavvyCAN wasm was 38.7 MB | Stage-1 build trimmed and measured; if over, `tools.resolve-ev.com` (static container next to the forum) or a Cloudflare Worker + R2 on the same path |
 | **Browser support** | Web Serial is Chromium-only (and Firefox 151+); no iPhone | Stated on the page; desktop build for others |
-| **Data loss while logging** | Tab crash or close | MVP: accepted by the owner (the log is lost); the label says so, closing the tab asks first. Later: `LOG_TO_DISK_LIVE` (written to disk as it runs) |
+| **Data loss while logging** | Tab crash or close | MVP: accepted by the owner (the log is lost); the label says so, closing the tab asks first. Later: branch `disklog-live` (written to disk as it runs) |
 | **Frame loss in the browser** | Single-threaded wasm stalls on a busy bus | Ring buffer, batched parsing, visible dropped-frames counter; a full-load replay test |
 | **Memory cap** | wasm32's 4 GB limits the in-memory window | A bounded window (scrolls), everything on disk |
 | **Fork drift** | Upstream QT6WIP moves fast | Upstream changes taken in deliberately (merge from `upstream`), never automatically |

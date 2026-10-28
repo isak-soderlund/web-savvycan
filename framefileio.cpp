@@ -2412,7 +2412,8 @@ bool FrameFileIO::saveNativeCSVFile(QString filename, const QVector<CommFrame>* 
 bool FrameFileIO::openContinuousNative()
 {
 #ifdef Q_OS_WASM
-    return false; //in the browser the log is started by WebDiskLog::start() (asynchronous, see MainWindow)
+    WebDiskLog::start(nativeCSVHeader()); //collected in the page, downloaded on close
+    return true;
 #endif
     QFileDialog dialog(qApp->activeWindow());
     QSettings settings;
@@ -2451,12 +2452,9 @@ bool FrameFileIO::openContinuousNative(const QString &filename)
 bool FrameFileIO::closeContinuousNative()
 {
 #ifdef Q_OS_WASM
-    if (WebDiskLog::instance()->isActive())
-    {
-        WebDiskLog::instance()->stop();
-        return true;
-    }
-    return false;
+    if (!WebDiskLog::isActive()) return false;
+    WebDiskLog::stop(); //the download starts
+    return true;
 #endif
     if (continuousFile.isOpen())
     {
@@ -2469,12 +2467,11 @@ bool FrameFileIO::closeContinuousNative()
 bool FrameFileIO::writeContinuousNative(const QVector<CommFrame>* frames, int beginningFrame)
 {
 #ifdef Q_OS_WASM
-    //one batch of rows per call, handed to the browser's file writer (it batches and commits)
-    if (!WebDiskLog::instance()->isActive()) return false;
+    //one batch of rows per call, handed to the page
+    if (!WebDiskLog::isActive()) return false;
     QByteArray rows;
-    rows.reserve((frames->count() - beginningFrame) * 64);
     for (int c = beginningFrame; c < frames->count(); c++) rows.append(nativeCSVRow(frames->at(c)));
-    return WebDiskLog::instance()->write(rows, frames->count() - beginningFrame);
+    return WebDiskLog::write(rows, frames->count() - beginningFrame);
 #else
     if (!continuousFile.isOpen()) return false;
     for (int c = beginningFrame; c < frames->count(); c++)
@@ -2488,7 +2485,7 @@ bool FrameFileIO::writeContinuousNative(const QVector<CommFrame>* frames, int be
 bool FrameFileIO::flushContinuousNative()
 {
 #ifdef Q_OS_WASM
-    return WebDiskLog::instance()->isActive(); //the browser side commits on its own clock
+    return WebDiskLog::isActive(); //nothing to flush: written on close
 #endif
     if (continuousFile.isOpen())
     {
