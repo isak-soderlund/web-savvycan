@@ -43,9 +43,12 @@ test('start, rows in batches, stop: one download named by the start time, equal 
         SavvyDiskLog.write(lines.slice(fed, fed + n).join(''));
         fed += n;
       }
-      if (step === 4) {
-        midBlob = SavvyDiskLog._blob().size;
+      if (step === 4) { // the rows reach the Blob within a moment (the module may batch them)
         midBytes = header.length + lines.slice(0, fed).join('').length;
+        for (let i = 0; i < 40 && midBlob !== midBytes; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          midBlob = SavvyDiskLog._blob().size;
+        }
       }
       await new Promise((r) => setTimeout(r, 300));
     }
