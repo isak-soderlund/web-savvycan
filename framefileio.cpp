@@ -12,6 +12,9 @@
 
 #include "utility.h"
 #include "blfhandler.h"
+#ifdef Q_OS_WASM
+#include "wasm/disklog/webdisklog.h"
+#endif
 
 QFile FrameFileIO::continuousFile;
 
@@ -2234,12 +2237,20 @@ bool FrameFileIO::isNativeCSVFile(QString filename)
 //39747828,000001A0,false,Rx,1,12,00,01,02,03,04,05,06,07,08,09,0A,0B,FD+BRS,
 
 //one row of the native CSV format (see above), including the line end
-static QByteArray nativeCSVRow(const CommFrame &frame)
+QByteArray FrameFileIO::nativeCSVHeader()
+{
+    return QByteArrayLiteral("Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n");
+}
+
+QByteArray FrameFileIO::nativeCSVRow(const CommFrame &frame)
 {
     const unsigned char *data = reinterpret_cast<const unsigned char *>(frame.payload().constData());
     int dataLen = frame.payload().length();
     QByteArray row;
-    row.append(QString::number(frame.timeStamp().microSeconds()).toUtf8());
+    //whole time in µs: frames stamped from the system clock (TimeStamp::fromMicroSeconds) keep the seconds
+    //in seconds(), the device's own stamps have them all in microSeconds()
+    const CommFrame::TimeStamp ts = frame.timeStamp();
+    row.append(QString::number(ts.seconds() * 1000000LL + ts.microSeconds()).toUtf8());
     row.append(',');
     row.append(QString::number(frame.frameId(), 16).toUpper().rightJustified(8, '0').toUtf8());
     row.append(',');
@@ -2381,8 +2392,7 @@ bool FrameFileIO::saveNativeCSVFile(QString filename, const QVector<CommFrame>* 
         return false;
     }
 
-    outFile.write("Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8");
-    outFile.write("\n");
+    outFile.write(nativeCSVHeader());
 
     for (int c = 0; c < frames->count(); c++)
     {
@@ -2401,6 +2411,9 @@ bool FrameFileIO::saveNativeCSVFile(QString filename, const QVector<CommFrame>* 
 
 bool FrameFileIO::openContinuousNative()
 {
+#ifdef Q_OS_WASM
+    return false; //in the browser the log is started by WebDiskLog::start() (asynchronous, see MainWindow)
+#endif
     QFileDialog dialog(qApp->activeWindow());
     QSettings settings;
 
@@ -2415,23 +2428,36 @@ bool FrameFileIO::openContinuousNative()
 
     if (dialog.exec() == QDialog::Accepted)
     {
-        QString filename = dialog.selectedFiles()[0];
-        continuousFile.setFileName(filename);
-
-        if (!continuousFile.open(QIODevice::WriteOnly | QIODevice::Text))
-        {
-            return false;
-        }
-        continuousFile.write("Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8");
-        continuousFile.write("\n");
+        if (!openContinuousNative(dialog.selectedFiles()[0])) return false;
         settings.setValue("FileIO/LoadSaveDirectory", dialog.directory().path());
         return true;
     }
     return false;
 }
 
+bool FrameFileIO::openContinuousNative(const QString &filename)
+{
+    if (continuousFile.isOpen()) continuousFile.close();
+    continuousFile.setFileName(filename);
+
+    if (!continuousFile.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+        return false;
+    }
+    continuousFile.write(nativeCSVHeader());
+    return true;
+}
+
 bool FrameFileIO::closeContinuousNative()
 {
+#ifdef Q_OS_WASM
+    if (WebDiskLog::instance()->isActive())
+    {
+        WebDiskLog::instance()->stop();
+        return true;
+    }
+    return false;
+#endif
     if (continuousFile.isOpen())
     {
         continuousFile.close();
@@ -2442,17 +2468,28 @@ bool FrameFileIO::closeContinuousNative()
 
 bool FrameFileIO::writeContinuousNative(const QVector<CommFrame>* frames, int beginningFrame)
 {
+#ifdef Q_OS_WASM
+    //one batch of rows per call, handed to the browser's file writer (it batches and commits)
+    if (!WebDiskLog::instance()->isActive()) return false;
+    QByteArray rows;
+    rows.reserve((frames->count() - beginningFrame) * 64);
+    for (int c = beginningFrame; c < frames->count(); c++) rows.append(nativeCSVRow(frames->at(c)));
+    return WebDiskLog::instance()->write(rows, frames->count() - beginningFrame);
+#else
     if (!continuousFile.isOpen()) return false;
-    qDebug() << "Bgn: " << beginningFrame << "  Count: " << frames->count();
     for (int c = beginningFrame; c < frames->count(); c++)
     {
         continuousFile.write(nativeCSVRow(frames->at(c)));
     }
     return true;
+#endif
 }
 
 bool FrameFileIO::flushContinuousNative()
 {
+#ifdef Q_OS_WASM
+    return WebDiskLog::instance()->isActive(); //the browser side commits on its own clock
+#endif
     if (continuousFile.isOpen())
     {
         return continuousFile.flush();

@@ -54,6 +54,11 @@ SavvyCAN.xcodeproj
 # Qt Creator analyzer
 .qtc_clangd/
 
+# web tests
+node_modules/
+test-results/
+playwright-report/
+
 # web-savvycan: wasm output
 dist/
 dist-exp/

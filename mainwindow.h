@@ -32,6 +32,11 @@
 #include "re/isotp_interpreterwindow.h"
 #include "motorcontrollerconfigwindow.h"
 #include "signalviewerwindow.h"
+#include <QPointer>
+#include <functional>
+#ifdef Q_OS_WASM
+class QInputDialog;
+#endif
 #include "re/temporalgraphwindow.h"
 #include "re/dbccomparatorwindow.h"
 #include "re/udsfirmwareuploaderwindow.h"
@@ -190,6 +195,19 @@ private:
     bool continuousLogging;
     bool continuousLoggingUseFilter;
     int continuousLogFlushCounter;
+#ifdef Q_OS_WASM
+    //browser: the log file is opened asynchronously by WebDiskLog (wasm/disklog)
+    bool webLogPendingFiltered = false;
+    void webContinuousLogging(bool filtered);
+    void setupWebDiskLog();
+    void resetContinuousLoggingUi();
+    void updateWebLogTooltip();
+    QString webLogLabelText(bool on) const;
+    void webStopLogging(bool askName, std::function<void()> then);
+    QAction *webLogAskNameAction = nullptr;     //MVP: "Choose the Log's Name When Logging Stops..."
+    QPointer<QInputDialog> webLogNameDialog;
+    bool webLogBlinkOn = false;
+#endif
 
     //References to other windows we can display
 
