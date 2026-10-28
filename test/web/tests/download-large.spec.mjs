@@ -63,8 +63,8 @@ function makeBlock() {
   return Buffer.from(text.slice(0, end), 'latin1');
 }
 
-for (const gb of SIZES) {
-  test(`large blob log: ${gb} GB of rows collected, one download (${BROWSER})`, async () => {
+for (const [run, gb] of SIZES.entries()) {
+  test(`large blob log #${run + 1}: ${gb} GB of rows collected, one download (${BROWSER})`, async () => {
     fs.mkdirSync(DIR, { recursive: true });
     const profile = fs.mkdtempSync(path.join(DIR, 'profile-'));
     const downloads = fs.mkdtempSync(path.join(DIR, 'downloads-'));
@@ -154,7 +154,7 @@ for (const gb of SIZES) {
         profileDiskMBMax: Math.max(...samples.map((s) => s.profileDiskMB)),
         sha256: 'match',
       };
-      fs.writeFileSync(path.join(OUT, `large-${BROWSER}-${gb}GB.json`), JSON.stringify({ summary, samples }, null, 1));
+      fs.writeFileSync(path.join(OUT, `large-${BROWSER}-${gb}GB-${run + 1}.json`), JSON.stringify({ summary, samples }, null, 1));
       note(JSON.stringify(summary));
       fs.rmSync(file, { force: true });
     } finally {
