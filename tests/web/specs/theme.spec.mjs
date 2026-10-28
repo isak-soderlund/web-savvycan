@@ -1,5 +1,5 @@
 // The theme switch (RESOLVE.md MVP #8): light <-> dark, the screen visibly darker, remembered after a reload.
-import { test, expect, fake } from '../lib/harness.mjs';
+import { test, expect } from '../lib/harness.mjs';
 
 /** Mean luminance (0-255) of a PNG screenshot, decoded in the page. */
 async function luminance(page, png) {
@@ -17,7 +17,6 @@ async function luminance(page, png) {
 
 test('switch to dark and back; remembered between visits', async ({ app, page }) => {
   await app.open();
-  await fake.appStats(page); // skips while the app has no test hook
   const theme = () => page.evaluate(() => window.webSavvyCAN.theme());
   const start = await theme();
   expect(start).toBe('light'); // SavvyCAN's normal look on a first visit
@@ -34,8 +33,7 @@ test('switch to dark and back; remembered between visits', async ({ app, page })
 
 test.describe('the system is dark', () => {
   test.use({ colorScheme: 'dark' });
-  test('first visit follows the system (dark); Light Theme overrides it; Follow System Theme goes back', async ({ app, page, target }) => {
-    test.skip(target !== 'app', 'the reference client has no "follow the system" setting');
+  test('first visit follows the system (dark); Light Theme overrides it; Follow System Theme goes back', async ({ app, page }) => {
     await app.open();
     const theme = () => page.evaluate(() => window.webSavvyCAN.theme());
     await expect.poll(theme).toBe('dark');

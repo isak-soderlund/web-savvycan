@@ -4,28 +4,34 @@ No rc1 and no rig hardware: the tests run against a fake rc1 that speaks GVRET a
 firmware does, behind a `navigator.serial` (Web Serial) mock injected before the page loads.
 
 ```
-tests/web/run.sh                      # unit tests of the fake + the Playwright suite (selftest and app projects)
+tests/web/run.sh                      # unit tests + the Playwright suite (projects app, download, firefox)
 tests/web/run.sh --dist path/to/dist  # the app build to test (default <repo>/dist, env WSC_DIST)
-tests/web/run.sh --long               # also the 60 s full-load replays (runs under ~/.local/share/web-savvycan/heavy.sh)
+tests/web/run.sh --long               # also the 60 s full-load replays (through ~/.local/share/web-savvycan/heavy.sh)
+tests/web/run.sh --large              # also the multi-GB log (WSC_LARGE_GB=2,4,8; through heavy.sh)
+tests/web/run.sh --screenshots        # also pictures of the app in light and dark (results/screenshots/)
 tests/web/run.sh -- --project=app -g logging    # Playwright arguments after --
+scripts/smoke-wasm.sh                 # the smoke spec alone (CI)
+tests/desktop/run.sh                  # the desktop C++ tests (through heavy.sh), also builds nativecsv_tool
 python3 tests/desktop/check_pty.py    # the desktop fake (pty) checked with resolve-can's serial_proto.py
 ```
 
-Needs Node 22 and Playwright 1.56.1 (`npm ci` in `tests/web`, done by `run.sh`) with its Chromium (chromium-1194
-in `~/.cache/ms-playwright`, or `PLAYWRIGHT_BROWSERS_PATH`). Output: `tests/web/results/` (report.json, traces of
-failures, `fullload-*.json`).
+Needs Node 22 and Playwright 1.56.1 (`npm ci` in `tests/web`, done by `run.sh`) with its Chromium and Firefox
+(chromium-1194, firefox-1495 in `~/.cache/ms-playwright`, or `PLAYWRIGHT_BROWSERS_PATH`). The download specs need
+`build/desktop-tests/nativecsv_tool` (`tests/desktop/run.sh`; else they are skipped). Output: `tests/web/results/`
+(report.json, traces of failures, downloads, `fullload-*.json`).
 
 ## What is here
 
 | Path | What |
 | --- | --- |
-| `fake/rc1.js` | The fake rc1, one dependency-free file for the browser and Node: the firmware's serial engines ported line by line (`firmware/proto/src/serial.rs`, `gvret.rs`, `slcan.rs`; session end on DTR as `app/src/serialport.rs`), a CAN bus with traffic modes, the Web Serial mock, file-picker mocks (OPFS), an event-loop probe, a GVRET host parser and SavvyCAN's CSV parser |
+| `fake/rc1.js` | The fake rc1, one dependency-free file for the browser and Node: the firmware's serial engines ported line by line (`firmware/proto/src/serial.rs`, `gvret.rs`, `slcan.rs`; session end on DTR as `app/src/serialport.rs`), a CAN bus with traffic modes, the Web Serial mock, an event-loop probe, a GVRET host parser and SavvyCAN's CSV parser |
 | `fake/rc1-stdio.js` | The same fake on stdin/stdout, for the desktop pty |
 | `unit/rc1.test.js` | The fake against the firmware's own unit-test vectors (`node --test`) |
-| `selftest/index.html` | A small reference client doing what stage 1 will do (choose rc1, GVRET/slcan, bounded trace with a dropped counter, CSV logging as one download on stop (the MVP), theme), with the app's test hook: proves the fake, the mocks and every check in Chromium before the app exists |
-| `lib/harness.mjs` | Fixtures: the init script, console-error collection (every test fails on a console error or uncaught exception), a driver per target |
-| `specs/*.spec.mjs` | The suite, run once per project: `selftest` and `app` |
-| `server.mjs` | Static server: `dist/` at `/`, the harness at `/__harness/` |
+| `unit/bridge.test.mjs` | The Web Serial bridge (`wasm/webserial/webserial.js`) in Node against the fake and the mock |
+| `lib/harness.mjs` | Fixtures: the init script, console-error collection (every test fails on a console error or uncaught exception), the app driver |
+| `lib/disklog.html` | The logging module (`wasm/disklog/disklog.js`) alone on a page, for `download` and `large` |
+| `specs/*.spec.mjs` | The suite (below) |
+| `server.mjs` | Static server: `dist/` at `/`, `tests/web` at `/__harness/`, the repository at `/__src/` |
 | `../desktop/rc1_pty.py` | The fake on a pseudo-terminal (`/tmp/rc1-fake`) and optionally TCP, for the desktop build |
 | `../desktop/check_pty.py` | Runs resolve-can's `test/hil/serial_proto.py` (the firmware's M8 host tool) against the pty: GVRET classic+FD and slcan, both ways |
 
@@ -88,8 +94,6 @@ window.webSavvyCAN = {
 };
 ```
 
-`selftest/index.html` implements exactly this; use it as the reference.
-
 ## How the app driver works (`lib/harness.mjs` `AppDriver`)
 
 - Qt 6.12 puts its windows in a shadow root (`#qt-shadow-container`): `document.querySelector('canvas')` sees
@@ -118,24 +122,29 @@ window.webSavvyCAN = {
 | --- | --- |
 | connect | chooser filtered to rc1 from a gesture; GVRET FD / classic and slcan FD set up rc1 as asked; every FD length, BRS, 29-bit, classic and remote frame arrives exactly (`traceTail`); returning visitor (granted port, no chooser); chooser cancelled; channel refused |
 | traffic | Leaf bus 5 s: every frame counted; garbled stream resyncs; slcan error lines not counted as frames; overload (5x rc1's rate): received = trace + evicted + dropped; unplug mid-stream and reconnect |
-| logging | File > Start Continuous Logging / Cease: one download named `SavvyCAN_<start time>.csv`, SavvyCAN's native GVRET CSV, its rows equal to what the fake sent (FD rows, BRS); an empty log is the header |
+| logging | File > Start Continuous Logging / Cease: one download named `SavvyCAN_<start time>.csv`, SavvyCAN's native GVRET CSV, its rows equal to what the fake sent (FD rows, BRS), loaded by SavvyCAN's parser (when `nativecsv_tool` is built); an empty log is the header; Choose the Log's Name When Logging Stops: Keep Logging goes on, the typed name is the download's |
 | theme | light first, dark visibly darker (screenshot luminance), remembered after reload; a dark system: followed on a first visit, overridden and followed again |
+| smoke | the page as a visitor gets it (no fake): Qt starts, the main window is drawn, the About dialog (`exec()`, Asyncify) opens and closes with Enter, no failed request |
+| download (`download`, `firefox`) | the logging module alone: rows written in batches, one download named by the start time, byte for byte SavvyCAN's own rows (`nativecsv_tool gen`) and loaded by SavvyCAN's parser; `_blob()` while logging; the name given at stop; an empty log; a second log; "leave site?" while logging |
 | fullload `@long` | 60 s at 8 000 classic / 6 900 FD64 frames/s: accounting, rc1-side loss < 0.1 %, 10 ms timer lateness p95 < 50 ms, no stall > 1 s; `results/fullload-*.json` |
+| large `@large` | gigabytes of rows through the logging module, one download: size and SHA-256, JS heap, browser PSS and profile size every 256 MB; `results/large-*.json` |
+| screenshots `@screenshots` | pictures only: main window with traffic, View menu, About, Preferences, light and dark |
 | every test | no console error, no uncaught exception |
 
-Without `dist/SavvyCAN.html` every `app` test is skipped with that reason. `run.sh` uses port 8751 for its server and
+Without `dist/SavvyCAN.html` every `app` test is skipped with that reason (the smoke spec fails). `run.sh` uses port 8751 for its server and
 never reuses one already there (another worktree's server would serve its own harness and build): set `WSC_PORT`
 when two run at once.
 
-## Consolidation (proposal for the simplification review)
+## One place for the tests (simplification review, docs/SIMPLIFY.md E1-E6)
 
-Three browser-test locations exist today: `tests/web` (this suite), `test/web` (logging: the disk-log module, the
-download, multi-GB, Firefox, real pickers under Xvfb) and `wasm/webserial/tests` (`e2e.mjs`, `bridge.test.mjs`, the
-desktop Qt tests of the Web Serial stand-in). Proposal: one `tests/web` with one `package.json`, one server, one fake
-and one driver; `test/web`'s specs move in as Playwright projects (`logging-module`, `firefox`, `xvfb`, `large`);
-`e2e.mjs` is dropped (`connect` and `traffic` cover it with the same driver); `bridge.test.mjs` joins `unit/`; the
-desktop C++ tests (`tst_webserial*`, `test/frames`, `test/nativecsv`) go under one `tests/desktop` with one CMake
-project and one `run.sh`.
+Everything is here and in `tests/desktop`: one `package.json`, one Playwright config, one server, one fake rc1, one
+`navigator.serial` mock, one app driver. Gone: the reference client (`selftest/`; the specs run against the app
+only), `test/web` (its download module spec and the multi-GB spec moved here, the app download spec merged into
+`logging`, the live-to-disk specs went with that code to branch `disklog-live`), `wasm/webserial/tests/e2e.mjs`
+(`connect` and `traffic` cover it), the C++ fake rc1 (`fakerc1.h`, `tst_webserial_connections`), the smoke test's
+own server and Playwright install (`scripts/smoke-wasm.cjs`), the screenshot script's own driver and fake GVRET
+device. The desktop C++ tests (`test/frames`, `test/nativecsv`, `tst_webserialport`) are one CMake project in
+`tests/desktop` with one `run.sh` (plain, address, thread).
 
 ## The desktop fake
 
