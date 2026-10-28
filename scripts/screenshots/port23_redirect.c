@@ -1,6 +1,6 @@
 // LD_PRELOAD shim for screenshot runs: SavvyCAN's "Network connection (GVRET)" always connects to
 // TCP port 23 (a privileged port); this sends connect() to port 23 to $WSC_PORT23 (default 2323),
-// where fake_gvret_pty.py --tcp listens. No system change needed.
+// where the fake rc1 (tests/desktop/rc1_pty.py --tcp) listens. No system change needed.
 //   gcc -shared -fPIC -O1 port23_redirect.c -o port23_redirect.so -ldl
 #define _GNU_SOURCE
 #include <dlfcn.h>

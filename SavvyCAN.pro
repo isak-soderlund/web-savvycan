@@ -50,10 +50,6 @@ SOURCES += main.cpp\
     simplecrypt.cpp \
     triggerdialog.cpp \
     utility.cpp \
-    theme.cpp \
-    aboutdialog.cpp \
-    tracedatadelegate.cpp \
-    testhook.cpp \
     qcustomplot.cpp \
     frameplaybackwindow.cpp \
     candatagrid.cpp \
@@ -147,11 +143,6 @@ HEADERS  += mainwindow.h \
     simplecrypt.h \
     triggerdialog.h \
     utility.h \
-    enabledfeatures.h \
-    theme.h \
-    aboutdialog.h \
-    tracedatadelegate.h \
-    testhook.h \
     qcustomplot.h \
     frameplaybackwindow.h \
     candatagrid.h \

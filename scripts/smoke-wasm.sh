@@ -1,29 +1,12 @@
 #!/bin/bash
-# Smoke test of the wasm build in dist/: serves it on localhost and opens it in headless Chromium
-# (Playwright): Qt starts, the main window is drawn, no console errors. Screenshot: dist/smoke.png.
-# Usage: scripts/smoke-wasm.sh [--dist DIR] [--port N] [--wait MS]
-# Playwright: from scripts/node_modules (cd scripts && npm ci), else NODE_PATH, else the rig's
-# ~/src/resolve-hil/tools/web/node_modules. Browsers: ~/.cache/ms-playwright (npx playwright install chromium).
+# Smoke test of the wasm build: tests/web's smoke spec (Qt starts, the main window is drawn, a modal exec() dialog
+# opens and closes, no console errors). Pictures: tests/web/results/smoke*.png.
+# Usage: scripts/smoke-wasm.sh [--dist DIR]   (default dist/; WSC_PORT for another port than 8751)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-DIST="$PWD/dist" PORT="" WAIT=8000
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --dist) DIST="$(realpath "$2")"; shift ;;
-        --port) PORT="$2"; shift ;;
-        --wait) WAIT="$2"; shift ;;
-        -h|--help) sed -n '2,6p' "$0"; exit 0 ;;
-        *) echo "unknown argument: $1" >&2; exit 2 ;;
-    esac
-    shift
-done
+DIST="$PWD/dist"
+[ "${1:-}" = --dist ] && DIST="$(realpath "$2")"
 [ -f "$DIST/SavvyCAN.html" ] || { echo "no $DIST/SavvyCAN.html: run scripts/build-wasm.sh" >&2; exit 1; }
-# A free port unless --port (another server may hold any fixed one).
-[ -n "$PORT" ] || PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1', 0)); print(s.getsockname()[1])")
-export NODE_PATH="$PWD/scripts/node_modules:${NODE_PATH:-}:$HOME/src/resolve-hil/tools/web/node_modules"
-
-python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$DIST" >/dev/null 2>&1 &
-SERVER=$!
-trap 'kill $SERVER 2>/dev/null' EXIT
-for _ in $(seq 50); do curl -sf -o /dev/null "http://127.0.0.1:$PORT/SavvyCAN.html" && break; sleep 0.1; done
-node scripts/smoke-wasm.cjs "http://127.0.0.1:$PORT/SavvyCAN.html" "$DIST/smoke.png" "$WAIT"
+cd tests/web
+[ -d node_modules/@playwright/test ] || npm ci --no-audit --no-fund
+WSC_DIST="$DIST" npx playwright test --project=app specs/smoke.spec.mjs
