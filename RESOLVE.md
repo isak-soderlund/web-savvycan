@@ -43,6 +43,38 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 - **Crash test:** close the tab mid-log; the file must hold everything up to the last commit.
 - **Sanitizers:** AddressSanitizer and ThreadSanitizer runs of the desktop build of the same tree.
 
+## Stages switched on: `enabledfeatures.h`
+
+- **One list** of what is switched on: `enabledfeatures.h` (`Features::enabledFeature()`, one line per feature,
+  with its stage). Stage 1: connection, trace, logging, Preferences, About, theme switch.
+- `MainWindow::applyFeatures()` hides and disables every menu entry, panel and button of a feature that is off (a
+  disabled action's shortcut is dead too); menus left empty disappear; the `show...()` slots return at once for a
+  feature that is off (drag-and-drop, context menu "Add to graph", Ctrl+O included); Preferences hides the groups
+  of windows that are off. Same on the desktop and in the browser.
+- **To open a stage:** set its lines to `true`, check the window in light and dark and with CAN FD.
+
+## Theme
+
+- `theme.h/.cpp`: Light (SavvyCAN's normal look) / Dark (Fusion + dark palette) / Follow system (default, the
+  OS's or the browser's `prefers-color-scheme`); Preferences > Theme and View > Dark Theme; `QSettings`
+  `Main/Theme`. In the browser QSettings is the page's `localStorage` (`main.cpp` sets `WebLocalStorageFormat`:
+  Qt's wasm `IniFormat` is a temporary file, lost on reload).
+- Dark covers the palette, the trace's per-ID row colours (`kRowPaletteDark` in `utility.h`) and every
+  `QCustomPlot` (themed when shown and on every switch: background, axes, ticks, grid, legend, titles).
+- **Hard-coded colours left for later stages** (fix when the window is switched on):
+  - graphs (stage 2): `GraphParams` line colour black (`re/graphingwindow.cpp` l. ~1676), random dark line colours
+    from the trace's context menu (`mainwindow.cpp` "Add to graph") and `re/newgraphdialog.cpp` (button palette);
+  - DBC (stage 3): message colours from the DBC (`GenMsgBackgroundColor`/`Foreground`, `dbc/dbchandler.cpp`), shown
+    as row colours in the trace when "Interpret Frames" is on (white background in dark); DBC editors' colour
+    pickers;
+  - Sniffer: `re/sniffer/sniffermodel.cpp` (grey levels and dark red/green, palette read once) and
+    `SnifferDelegate.cpp`;
+  - Frame Info: `graphColors` with `Qt::black` (`re/frameinfowindow.cpp`); Flow view: `graphColors[8]` with
+    `Qt::black`, black text pen (`re/flowviewwindow.cpp`); Range state: black graph pen
+    (`re/rangestatewindow.cpp`); Discrete state: fixed label palettes (`re/discretestatewindow.cpp`);
+  - `candatagrid.cpp` (bit grid colours, used by the DBC editor, New graph, sender);
+  - Scripting: `jsedit.cpp` syntax colours, line numbers, cursor and bracket colours.
+
 ## Hosting (decide before the first public build)
 
 - The app is static (no server side). CAN data never leaves the browser; the app itself is a download of a few to
