@@ -38,6 +38,7 @@ Upstream's `BUILD_TESTS` target (`test/`) does not compile on QT6WIP (it still u
 scripts/build-wasm.sh                   # -> dist/
 scripts/build-wasm.sh --wasm-opt        # plus an extra wasm-opt -Oz pass
 scripts/build-wasm.sh --opt -Os         # another optimisation level (default -Oz)
+scripts/build-wasm.sh --gzip-loader     # wasm only as SavvyCAN.wasm.gz, decompressed in the page (20 MB file limits)
 scripts/build-wasm.sh --jspi            # JSPI instead of Asyncify
 WASM_BUILD_DIR=build/wasm-noscript scripts/build-wasm.sh -- -DWEB_SAVVYCAN_SCRIPTING=OFF  # no scripting window/Qt Qml (own build dir: toggling it in one leaves stale moc output)
 scripts/smoke-wasm.sh                   # serve dist/, open it in headless Chromium, dist/smoke.png
