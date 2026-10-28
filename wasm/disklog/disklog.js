@@ -422,9 +422,21 @@
                     if (this.state !== 'open') break;
                     if (this.pending.length) {
                         if (this.splitBytes && this.nextSink && this.sink.size >= this.splitBytes) await this.rotate();
-                        const chunks = this.pending, total = this.pendingBytes;
-                        this.pending = [];
-                        this.pendingBytes = 0;
+                        let chunks = this.pending, total = this.pendingBytes;
+                        if (this.splitBytes && this.nextSink) {
+                            // whole batches (whole rows) only up to the part's limit: a part ends at most
+                            // one batch past it
+                            const room = this.splitBytes - this.sink.size;
+                            let n = 0, b = 0;
+                            while (n < chunks.length && (n === 0 || b + chunks[n].byteLength <= room)) b += chunks[n++].byteLength;
+                            chunks = this.pending.slice(0, n);
+                            total = b;
+                            this.pending = this.pending.slice(n);
+                            this.pendingBytes -= b;
+                        } else {
+                            this.pending = [];
+                            this.pendingBytes = 0;
+                        }
                         await this.sink.write(concat(chunks, total));
                         continue;
                     }
