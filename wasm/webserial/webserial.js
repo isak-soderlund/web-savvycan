@@ -13,8 +13,12 @@ var webSerialBridge = (function () {
   // resolve-can rc1: the pid.codes test PID 1209:0001 (firmware/app/src/usb.rs; lab use only until it has its own).
   var RESOLVE_CAN_FILTERS = [{ usbVendorId: 0x1209, usbProductId: 0x0001 }];
   var KNOWN = { '1209:0001': 'resolve-can (rc1)' };
-  // Chrome's default is 255 bytes; a busy CAN FD bus over GVRET carries ~0.7 MB/s (docs/research/savvycan-web.md).
-  var BUFFER_SIZE = 1 << 20;
+  // Chrome's default is 255 bytes. GVRET can't tell the host about frames rc1 lost, and rc1 loses them as soon as
+  // its own buffers fill while the page doesn't read: the page has one thread, and a long Qt call (a dialog, a big
+  // redraw) stalls this read loop too. So take Chrome's maximum, 16 MiB: ~23 s of a busy CAN FD bus over GVRET
+  // (~0.7 MB/s, 9 000 FD-64 frames/s), minutes of a typical car. If Chrome refuses it, 1 MiB.
+  var BUFFER_SIZE = 16 * 1024 * 1024;
+  var BUFFER_SIZE_FALLBACK = 1 << 20;
 
   var serial = (typeof navigator !== 'undefined' && navigator.serial) ? navigator.serial : null;
   var entries = [];          // [{port, name, description, vid, pid, hasUsbIds, chain}], plugged in and granted
@@ -106,6 +110,8 @@ var webSerialBridge = (function () {
     call('webSerialError', handle, ERR.Resource, why);
   }
 
+  // Reads as fast as the browser delivers: each chunk is copied into wasm memory and queued for Qt's event loop
+  // (WebSerialHub), never waiting for SavvyCAN to take it.
   function readLoop(handle, s) {
     var port = s.entry.port;
     function next() {
@@ -161,7 +167,11 @@ var webSerialBridge = (function () {
         if (s.closing) return;
         var opts = { baudRate: options.baudRate, dataBits: options.dataBits, stopBits: options.stopBits,
                      parity: options.parity, flowControl: options.flowControl, bufferSize: BUFFER_SIZE };
-        return entry.port.open(opts).then(function () {
+        return entry.port.open(opts).catch(function (err) {
+          if (!(err instanceof TypeError) || opts.bufferSize === BUFFER_SIZE_FALLBACK) throw err;
+          opts.bufferSize = BUFFER_SIZE_FALLBACK; // an older or stricter browser: smaller buffer
+          return entry.port.open(opts);
+        }).then(function () {
           if (s.closing) return entry.port.close().catch(function () {});
           s.opened = true;
           s.writer = entry.port.writable.getWriter();

@@ -1,12 +1,13 @@
-// End-to-end in headless Chromium: the wasm SavvyCAN (a dist/ from scripts/build-wasm.sh) with the navigator.serial
-// mock (mock/mock-serial.js) in place of a real rc1. Drives the app's own UI through Qt's accessibility tree:
+// End-to-end in headless Chromium: the wasm SavvyCAN (a dist/ from scripts/build-wasm.sh) with the test harness's fake
+// rc1 and navigator.serial mock (tests/web/fake/rc1.js) in place of a real rc1. Drives the app's own UI through Qt's accessibility tree:
 // Connection window -> Add New Device Connection -> GVRET or LAWICEL -> Choose device -> Create New Connection, then
-// checks on the mock that the session runs (GVRET handshake, validation every 250 ms / slcan open), sends bus frames,
-// unplugs and replugs. Screenshots in the output directory.
+// checks on the fake that the session runs (GVRET mode and its validation polls / slcan open), Leaf traffic arrives
+// with nothing lost in rc1, unplugs and replugs. Screenshots in the output directory.
 //
 //   node wasm/webserial/tests/e2e.mjs --dist dist [--out /tmp/wsc-webserial-e2e] [--protocol gvret|lawicel|both]
 //        [--granted] (a returning visitor: the port is listed without "Choose device")
-// Playwright: from PLAYWRIGHT_DIR (a node_modules that has `playwright`), else ~/src/web-savvycan-tests/tests/web.
+// Playwright and the fake: from PLAYWRIGHT_DIR / WSC_RC1_FAKE, else tests/web in this tree, else
+// ~/src/web-savvycan-tests/tests/web.
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
@@ -24,9 +25,11 @@ const DIST = resolve(opt('--dist', join(here, '../../../dist')));
 const OUT = resolve(opt('--out', '/tmp/wsc-webserial-e2e'));
 const PROTOCOLS = opt('--protocol', 'both') === 'both' ? ['gvret', 'lawicel'] : [opt('--protocol')];
 const GRANTED = args.includes('--granted');
-const pwDir = process.env.PLAYWRIGHT_DIR || join(homedir(), 'src/web-savvycan-tests/tests/web');
+const webDirs = [join(here, '../../../tests/web'), join(homedir(), 'src/web-savvycan-tests/tests/web')];
+const pwDir = process.env.PLAYWRIGHT_DIR || webDirs.find((d) => existsSync(join(d, 'node_modules/playwright')));
 const { chromium } = createRequire(join(pwDir, 'package.json'))('playwright');
-const MOCK = readFileSync(join(here, '../mock/mock-serial.js'), 'utf8');
+const FAKE = process.env.WSC_RC1_FAKE || webDirs.map((d) => join(d, 'fake/rc1.js')).find((p) => existsSync(p));
+const FAKE_SRC = readFileSync(FAKE, 'utf8');
 mkdirSync(OUT, { recursive: true });
 
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.svg': 'image/svg+xml' };
@@ -69,7 +72,7 @@ async function run(browser, base, protocol) {
   const logs = [];
   page.on('console', (m) => logs.push(`[${m.type()}] ${m.text()}`));
   page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
-  await page.addInitScript({ content: `${MOCK}\n;installMockSerial({ granted: ${GRANTED} });` });
+  await page.addInitScript({ content: `${FAKE_SRC}\n;RC1Fake.installWebSerial({ granted: ${GRANTED} });` });
   await page.goto(`${base}/SavvyCAN.html`);
   const started = await waitFor(page, () => document.querySelector('canvas, [role=application], .qt-window'), null, 60000);
   check(started, `${protocol}: app started`);
@@ -85,8 +88,9 @@ async function run(browser, base, protocol) {
     await click(page, 'radio', protocol === 'gvret' ? 'GVRET' : 'LAWICEL');
     if (!GRANTED) {
       await click(page, 'button', 'Choose device');
-      check(await waitFor(page, () => window.__mockSerial.serial.requests.length > 0), `${protocol}: requestPort called`);
-      const filters = await page.evaluate(() => window.__mockSerial.serial.requests[0].filters);
+      const asked = () => window.__rc1.events.filter((e) => e.type === 'requestPort');
+      check(await waitFor(page, `(${asked})().length > 0`), `${protocol}: requestPort called (from the click: Chrome's gesture rule)`);
+      const filters = await page.evaluate(`(${asked})()[0].filters`);
       check(JSON.stringify(filters) === JSON.stringify([{ usbVendorId: 0x1209, usbProductId: 1 }]),
         `${protocol}: chooser filtered to rc1 (${JSON.stringify(filters)})`);
     }
@@ -101,33 +105,40 @@ async function run(browser, base, protocol) {
     return logs;
   }
 
-  check(await waitFor(page, () => window.__mockSerial.port.openCount >= 1), `${protocol}: port opened`);
+  check(await waitFor(page, () => window.__rc1.stats().sessions >= 1), `${protocol}: port opened`);
   if (protocol === 'gvret') {
-    // ESP32 mode first: DTR/RTS low, 3 s, handshake; connected once the validation ticks run (every 250 ms).
-    check(await waitFor(page, () => window.__mockSerial.device.gvret, null, 10000), 'gvret: device switched to GVRET');
-    check(await waitFor(page, () => (window.__mockSerial.device.ops[9] || 0) >= 5, null, 15000),
-      'gvret: connected (comm validation running)');
-    const sig = await page.evaluate(() => window.__mockSerial.port.signals[0]);
+    // ESP32 mode first: DTR/RTS low, 3 s, handshake; once connected SavvyCAN polls every 250 ms.
+    check(await waitFor(page, () => window.__rc1.stats().mode === 'gvret', null, 10000), 'gvret: device switched to GVRET');
+    await page.waitForTimeout(6000);
+    const b0 = await page.evaluate(() => window.__rc1.stats().bytesFromHost);
+    await page.waitForTimeout(1500);
+    const b1 = await page.evaluate(() => window.__rc1.stats().bytesFromHost);
+    check(b1 - b0 >= 8, `gvret: connected (validation polls: ${b1 - b0} bytes in 1.5 s)`);
+    const sig = await page.evaluate(() => window.__rc1.ports[0]._signals);
     check(sig && !sig.dataTerminalReady && !sig.requestToSend, `gvret: DTR/RTS low (${JSON.stringify(sig)})`);
-  } else {
-    check(await waitFor(page, () => window.__mockSerial.device.log.includes('slcan O'), null, 10000),
-      `lawicel: bus opened (${await page.evaluate(() => window.__mockSerial.device.log.join(', '))})`);
+    // The bus: SavvyCAN's own bus settings in the connection window.
+    try {
+      await page.getByRole('checkbox', { name: 'Enable Bus', exact: false }).first().check({ force: true, timeout: 5000 });
+      await click(page, 'button', 'Save Bus Settings');
+    } catch (e) {
+      console.log(`note gvret: bus settings UI not reached (${e.message.split('\n')[0]})`);
+    }
   }
-  // Open the bus for GVRET as SavvyCAN would after "Save Bus Settings" (the mock's state), then traffic.
-  await page.evaluate(() => { window.__mockSerial.device.enabled = true; });
-  const sent = await page.evaluate(() => {
-    let n = 0;
-    for (let i = 0; i < 200; i++) n += window.__mockSerial.device.busFrame({ id: 0x100 + (i % 8), data: [i & 255, 1, 2, 3, 4, 5, 6, 7] }) ? 1 : 0;
-    return n;
-  });
-  check(sent === 200, `${protocol}: 200 frames on the bus`);
-  await page.waitForTimeout(1500);
-  await page.screenshot({ path: join(OUT, `${protocol}-3-traffic.png`) });
+  const open = await waitFor(page, () => window.__rc1.stats().channel.open, null, 10000);
+  check(open, `${protocol}: CAN channel open (${await page.evaluate(() => JSON.stringify(window.__rc1.requests()))})`);
+  if (open) {
+    await page.evaluate(() => window.__rc1.setTraffic('leaf', { seconds: 3 }));
+    await page.waitForTimeout(4000);
+    const st = await page.evaluate(() => window.__rc1.stats());
+    check(st.encoded > 1000 && st.lost === 0 && st.queuedBytes < 1024,
+      `${protocol}: Leaf traffic read (${st.encoded} frames sent to the app, ${st.lost} lost in rc1, ${st.queuedBytes} B unread)`);
+    await page.screenshot({ path: join(OUT, `${protocol}-3-traffic.png`) });
+  }
 
   // Unplug: SavvyCAN gets ResourceError and closes; replug: listed again.
-  await page.evaluate(() => window.__mockSerial.port.unplug());
+  await page.evaluate(() => window.__rc1.unplug());
   check(await waitFor(page, () => window.resolveWebSerial.sessions() === 0, null, 5000), `${protocol}: closed after unplug`);
-  await page.evaluate(() => window.__mockSerial.port.replug());
+  await page.evaluate(() => window.__rc1.replug());
   check(await waitFor(page, () => window.resolveWebSerial.ports().length === 1, null, 5000), `${protocol}: listed after replug`);
   await page.screenshot({ path: join(OUT, `${protocol}-4-unplugged.png`) });
   const errors = logs.filter((l) => l.startsWith('[pageerror]') || /Aborted|RuntimeError|unreachable/.test(l));
