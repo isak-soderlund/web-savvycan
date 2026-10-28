@@ -67,6 +67,20 @@
           </item>
          </layout>
         </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayoutTheme">
+          <item>
+           <widget class="QLabel" name="labelTheme">
+            <property name="text">
+             <string>Theme</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QComboBox" name="comboTheme"/>
+          </item>
+         </layout>
+        </item>
        </layout>
       </widget>
      </item>

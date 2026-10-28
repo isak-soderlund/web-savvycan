@@ -1,8 +1,8 @@
 // Smoke test of the wasm build: open dist/SavvyCAN.html in headless Chromium, wait for Qt to
 // start, check that the main window is drawn and nothing went to the console as an error.
 // Run through scripts/smoke-wasm.sh (it serves dist/). Exit 1 on a failure.
-// Also checks a modal QDialog::exec() (Asyncify/JSPI): File > Crop Log with no frames opens a
-// QMessageBox; it must appear, and close again with Enter.
+// Also checks a modal QDialog::exec() (Asyncify/JSPI): Help > About web-savvycan (a dialog run with
+// exec(); File > Crop Log is hidden in stage 1, enabledfeatures.h); it must appear, and close with Enter.
 // Usage: node scripts/smoke-wasm.cjs URL SCREENSHOT [WAIT_MS]
 const { chromium } = require('playwright');
 
@@ -56,12 +56,13 @@ const { chromium } = require('playwright');
   }, png.toString('base64'));
   if (loaded && colours < 20) problems.push(`main window not drawn (${colours} colours on screen)`);
 
-  // Modal dialog through exec(): File menu (top left), "Crop Log to Frame Range" (14th row).
+  // Modal dialog through exec(): Help menu (4th in the menu bar), its first item (About).
   if (loaded && colours >= 20) {
     const before = await page.screenshot();
-    await page.mouse.click(23, 11);
+    await page.mouse.click(226, 11);
     await page.waitForTimeout(800);
-    await page.mouse.click(135, 313);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
     await page.waitForTimeout(1500);
     const dialog = await page.screenshot({ path: shot.replace(/\.png$/, '-dialog.png') });
     await page.keyboard.press('Enter');
@@ -78,9 +79,9 @@ const { chromium } = require('playwright');
       const count = (x, y) => { let n = 0; for (let i = 0; i < x.length; i += 4) if (x[i] !== y[i] || x[i+1] !== y[i+1] || x[i+2] !== y[i+2]) n++; return n; };
       return { shown: count(da, db), left: count(da, dc) };
     }, [before.toString('base64'), dialog.toString('base64'), after.toString('base64')]);
-    if (diff.shown < 5000) problems.push(`exec(): the Crop Log message box did not appear (${diff.shown} pixels changed)`);
-    else if (diff.left > 2000) problems.push(`exec(): the message box did not close with Enter (${diff.left} pixels still differ)`);
-    else console.log(`exec(): message box shown (${diff.shown} px) and closed (${diff.left} px left)`);
+    if (diff.shown < 5000) problems.push(`exec(): the About dialog did not appear (${diff.shown} pixels changed)`);
+    else if (diff.left > 2000) problems.push(`exec(): the About dialog did not close with Enter (${diff.left} pixels still differ)`);
+    else console.log(`exec(): About dialog shown (${diff.shown} px) and closed (${diff.left} px left)`);
   }
 
   const mem = await page.evaluate(() => (performance.memory ? performance.memory.usedJSHeapSize : 0));

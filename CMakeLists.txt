@@ -278,3 +278,33 @@ if(BUILD_TESTS)
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
 endif()
+
+# web-savvycan: theme switch, stage-1 feature list, About, the trace's CAN FD data column
+target_sources(SavvyCAN PRIVATE
+    enabledfeatures.h
+    theme.cpp theme.h
+    aboutdialog.cpp aboutdialog.h
+    tracedatadelegate.cpp tracedatadelegate.h
+    testhook.cpp testhook.h
+)
+# The commit this build is made from, for Help > About (the GPL source link). Read at configure
+# time; "+dirty" when the tree had changes.
+find_package(Git QUIET)
+set(WEB_SAVVYCAN_GIT_COMMIT "unknown")
+if(GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short=12 HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE _wsc_commit OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE _wsc_rc)
+    if(_wsc_rc EQUAL 0 AND _wsc_commit)
+        set(WEB_SAVVYCAN_GIT_COMMIT "${_wsc_commit}")
+        execute_process(COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            OUTPUT_VARIABLE _wsc_dirty OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(_wsc_dirty)
+            string(APPEND WEB_SAVVYCAN_GIT_COMMIT "+dirty")
+        endif()
+    endif()
+endif()
+set_property(SOURCE aboutdialog.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+    WEB_SAVVYCAN_GIT_COMMIT="${WEB_SAVVYCAN_GIT_COMMIT}")
+message(STATUS "web-savvycan commit: ${WEB_SAVVYCAN_GIT_COMMIT}")

@@ -58,6 +58,7 @@ public:
     void setBusFilterState(unsigned int BusID, bool state);
     void setDirFilterState(int dir, bool state);
     void setLengthFilterState(int length, bool state);
+    void setTypeFilterState(int type, bool state);
     void setAllFilters(bool state);
     void setChangingOnly(bool state);
     bool getChangingOnly() const;
@@ -78,6 +79,13 @@ public:
     const QMap<int, bool> *getBusFiltersReference() const; //this neither
     const QMap<int, bool> *getDirFiltersReference() const;
     const QMap<int, bool> *getLengthFiltersReference() const;
+    const QMap<int, bool> *getTypeFiltersReference() const;
+
+    // web-savvycan: the trace's frame type filter (CAN FD versus classic).
+    enum TypeFilterKey { TypeClassic = 0, TypeFD = 1, TypeFDBRS = 2, TypeRemote = 3, TypeError = 4, TypeOther = 5 };
+    static int typeFilterKey(const CommFrame &frame);
+    static QString typeFilterLabel(int key);
+    static QString typeFilterToolTip(int key);
     bool passesFrameFilters(const CommFrame &frame);
 
 public slots:
@@ -96,6 +104,8 @@ private:
     bool any_busfilters_are_configured(void);
     bool any_dirfilters_are_configured(void);
     bool any_lengthfilters_are_configured(void);
+    bool any_typefilters_are_configured(void);
+    void registerFilterKeys(const CommFrame &frame, bool newOnesEnabled);
 
     QVector<CommFrame> frames;
     QVector<CommFrame> filteredFrames;
@@ -103,6 +113,7 @@ private:
     QMap<int, bool> busFilters;
     QMap<int, bool> dirFilters;
     QMap<int, bool> lengthFilters;
+    QMap<int, bool> typeFilters;
     DBCHandler *dbcHandler;
     QMutex mutex;
     bool interpretFrames; //should we use the dbcHandler?
