@@ -115,3 +115,9 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 | **Fork drift** | Upstream QT6WIP moves fast | Upstream changes taken in deliberately (merge from `upstream`), never automatically |
 | **GPL** | Hosting a build without its source | This public repo; each hosted build names its commit |
 | **Rig** | Heavy builds starve the rig's night tests | memcap + one build at a time (the lock above) |
+
+## After the MVP (owner 2026-10-28)
+
+A **"Karpathy-style" simplification review** of everything we added (Web Serial, frame store, logging, theme/UI, build
+scripts, tests): less code, fewer abstractions and layers, delete what stage 1 doesn't need, plain readable code over
+cleverness, one way to do each thing (e.g. one serial mock, one build path). Findings fixed on a branch, tests kept green.
