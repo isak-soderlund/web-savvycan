@@ -8,6 +8,8 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include "simplecrypt.h"
+#include "enabledfeatures.h"
+#include "theme.h"
 
 //using this simple encryption library to obfuscate stored password a bit. It's not super secure but better than
 //storing a password in straight plaintext. You have the source to this application anyway, whatever algorithm used,
@@ -59,6 +61,38 @@ MainSettingsDialog::MainSettingsDialog(QWidget *parent) :
     ui->setupUi(this);
 
     populateLanguageCombo();
+
+    // web-savvycan: light/dark theme. Applied at once; "Follow system" tracks the OS / browser.
+    ui->comboTheme->addItem(tr("Follow system"), Theme::modeToString(Theme::Mode::System));
+    ui->comboTheme->addItem(tr("Light"), Theme::modeToString(Theme::Mode::Light));
+    ui->comboTheme->addItem(tr("Dark"), Theme::modeToString(Theme::Mode::Dark));
+    ui->comboTheme->setCurrentIndex(ui->comboTheme->findData(Theme::modeToString(Theme::instance()->mode())));
+    connect(ui->comboTheme, &QComboBox::currentIndexChanged, this, [this](int) {
+        Theme::instance()->setMode(Theme::modeFromString(ui->comboTheme->currentData().toString()));
+    });
+    connect(Theme::instance(), &Theme::changed, this, [this](bool) {
+        const QSignalBlocker block(ui->comboTheme);
+        ui->comboTheme->setCurrentIndex(ui->comboTheme->findData(Theme::modeToString(Theme::instance()->mode())));
+    });
+    ui->labelTheme->setVisible(Features::on(Features::Feature::ThemeSwitch));
+    ui->comboTheme->setVisible(Features::on(Features::Feature::ThemeSwitch));
+
+    // web-savvycan: settings of windows that are not switched on yet (enabledfeatures.h) are hidden.
+    {
+        using Features::Feature;
+        ui->groupBox_3->setVisible(Features::on(Feature::FlowView));          // Flowview
+        ui->groupBox_4->setVisible(Features::on(Feature::Playback));          // Playback window
+        ui->groupBox_9->setVisible(Features::on(Feature::DBC));               // DBC
+        ui->groupBox_5->setVisible(Features::on(Feature::FrameInfo) || Features::on(Feature::FileComparator));
+        ui->groupBox_10->setVisible(Features::on(Feature::Sniffer));          // Sniffer data columns
+        ui->cbUseOpenGL->setVisible(Features::on(Feature::Graphs));
+        ui->cbUseFiltered->setVisible(Features::on(Feature::Graphs));         // "in sub-windows"
+        ui->cbShowSendPanel->setVisible(Features::on(Feature::FrameSender));
+        ui->cbCSVAbsTime->setVisible(Features::on(Feature::DBC));             // decoded CSV output
+#ifdef Q_OS_WASM
+        ui->groupBox_8->setVisible(false);                                    // MQTT: not in the browser
+#endif
+    }
 
     //TODO: This is still hard coded to support only two buses. Sometimes there is none, sometimes 1, sometimes much more than 2. Fix this.
     ui->comboSendingBus->addItem(tr("None"));
@@ -160,7 +194,7 @@ MainSettingsDialog::MainSettingsDialog(QWidget *parent) :
     }
 
     ui->spinMaximumFrames->setValue(settings.value("Main/MaximumFrames", maxFramesDefault).toInt());
-    ui->spinBytesPerLine->setValue(settings.value("Main/BytesPerLine", 8).toInt());
+    ui->spinBytesPerLine->setValue(settings.value("Main/BytesPerLine", 16).toInt());
 
     //just for simplicity they all call the same function and that function updates all settings at once
     connect(ui->comboLanguage, SIGNAL(currentIndexChanged(int)), this, SLOT(updateSettings()));

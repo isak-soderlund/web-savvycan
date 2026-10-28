@@ -1,4 +1,6 @@
 #include "mainwindow.h"
+#include "theme.h"
+#include "testhook.h"
 #include <QApplication>
 #include <QKeyEvent>
 #include <QTranslator>
@@ -64,7 +66,13 @@ int main(int argc, char *argv[])
     a.setApplicationName("SavvyCAN");
     a.setOrganizationDomain("evtv.me");
 
+#ifdef Q_OS_WASM
+    // web-savvycan: in the browser IniFormat is a temporary file that is gone on the next visit.
+    // WebLocalStorageFormat keeps the settings in the page's localStorage (keys "qt-<org>-<app>/...").
+    QSettings::setDefaultFormat(QSettings::WebLocalStorageFormat);
+#else
     QSettings::setDefaultFormat(QSettings::IniFormat);
+#endif
     QSettings settings;
 
     QString localeString = settings.value("Main/Language").toString();
@@ -86,7 +94,13 @@ int main(int argc, char *argv[])
 
     qInfo() << "Locale Value is:" << locale.name();
 
+    // web-savvycan: light/dark theme (Preferences, View > Dark Theme); before the first window.
+    Theme::instance()->init();
+
     a.mainWindow = new MainWindow();
+
+    // web-savvycan: window.webSavvyCAN for the browser tests (does nothing on the desktop)
+    TestHook::install(a.mainWindow->getCommFrameModel());
 
     int fontSize = settings.value("Main/FontSize", 9).toUInt();
     QFont sysFont = QFont(); //get default font

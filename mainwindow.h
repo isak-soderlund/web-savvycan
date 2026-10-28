@@ -133,6 +133,9 @@ private slots:
     void busFilterListItemChanged(QListWidgetItem *item);
     void dirFilterListItemChanged(QListWidgetItem *item);
     void lengthFilterListItemChanged(QListWidgetItem *item);
+    void typeFilterListItemChanged(QListWidgetItem *item);
+    void showAboutDialog();
+    void themeChanged(bool dark);
     void filterSetAll();
     void filterClearAll();
     void headerClicked (int logicalIndex);
@@ -246,6 +249,7 @@ private:
     void disableAutoRowExpansion();
     void createSenderRow();
     void processSenderCellChange(int line, int col);
+    void applyFeatures();
 };
 
 #endif // MAINWINDOW_H

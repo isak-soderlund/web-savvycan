@@ -9,8 +9,13 @@
 #include "helpwindow.h"
 #include "utility.h"
 #include "filterutility.h"
+#include "enabledfeatures.h"
+#include "theme.h"
+#include "aboutdialog.h"
+#include "tracedatadelegate.h"
 
 #include <QClipboard>
+#include <QActionGroup>
 #include <QTimer>
 /*
 Some notes on things I'd like to put into the program but haven't put on github (yet)
@@ -145,6 +150,20 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(ui->actionTemporal_Graph, &QAction::triggered, this, &MainWindow::showTemporalGraphWindow);
     connect(ui->actionCAN_Bridge, &QAction::triggered, this, &MainWindow::showCANBridgeWindow);
     connect(ui->actionFrame_Search, &QAction::triggered, this, &MainWindow::showSearchWindow);
+    connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
+    {
+        // View > Light Theme / Dark Theme / Follow System Theme (one of three, as Preferences > Theme)
+        QActionGroup *themeGroup = new QActionGroup(this);
+        themeGroup->setExclusive(true);
+        themeGroup->addAction(ui->actionLight_Theme);
+        themeGroup->addAction(ui->actionDark_Theme);
+        themeGroup->addAction(ui->actionSystem_Theme);
+        connect(ui->actionLight_Theme, &QAction::triggered, this, [] { Theme::instance()->setMode(Theme::Mode::Light); });
+        connect(ui->actionDark_Theme, &QAction::triggered, this, [] { Theme::instance()->setMode(Theme::Mode::Dark); });
+        connect(ui->actionSystem_Theme, &QAction::triggered, this, [] { Theme::instance()->setMode(Theme::Mode::System); });
+        connect(Theme::instance(), &Theme::changed, this, &MainWindow::themeChanged);
+        themeChanged(Theme::isDark());
+    }
 
     //handlers fror interactions with the main can frame view table
     connect(ui->canFramesView, &QAbstractItemView::clicked, this, &MainWindow::gridClicked);
@@ -171,6 +190,7 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(ui->listBusFilters, &QListWidget::itemChanged, this, &MainWindow::busFilterListItemChanged);
     connect(ui->listDirFilters, &QListWidget::itemChanged, this, &MainWindow::dirFilterListItemChanged);
     connect(ui->listLengthFilters, &QListWidget::itemChanged, this, &MainWindow::lengthFilterListItemChanged);
+    connect(ui->listTypeFilters, &QListWidget::itemChanged, this, &MainWindow::typeFilterListItemChanged);
 
     connect(ui->btnCaptureToggle, &QAbstractButton::clicked, this, &MainWindow::toggleCapture);
     connect(ui->btnClearFrames, &QAbstractButton::clicked, this, &MainWindow::clearFrames);
@@ -222,7 +242,13 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->listLengthFilters->setResizeMode(QListView::Adjust);
     ui->listBusFilters->installEventFilter(this);
     ui->listDirFilters->installEventFilter(this);
+    ui->listTypeFilters->setWrapping(true);
+    ui->listTypeFilters->setResizeMode(QListView::Adjust);
     ui->listLengthFilters->installEventFilter(this);
+    ui->listTypeFilters->installEventFilter(this);
+
+    // web-savvycan: CAN FD payloads in the Data column (a "+N B" badge for bytes out of sight)
+    ui->canFramesView->setItemDelegateForColumn((int)Column::Data, new TraceDataDelegate(ui->canFramesView));
 
     // Restore or default splitterLeft after the window has real geometry.
     // QTimer::singleShot(0) defers to first event loop tick.
@@ -304,7 +330,109 @@ MainWindow::MainWindow(QWidget *parent) :
     frameSender->initialize(); //creates the thread and sets things up
     frameSender->startSending(); //start the timer in the object so enabled things can send
 
+    applyFeatures();
+
     installEventFilter(this);
+}
+
+// web-savvycan: hide everything whose feature is off in enabledfeatures.h (menus, buttons, panels), on the
+// desktop and in the browser. Hidden actions are also disabled, so their shortcuts do nothing.
+void MainWindow::applyFeatures()
+{
+    using Features::Feature;
+    const QList<QPair<QAction *, Feature>> actions = {
+        // File
+        {ui->actionOpen_Log_File, Feature::LoadLog},
+        {ui->actionSave_Log_File, Feature::Logging},
+        {ui->actionSave_Filtered_Log_File, Feature::Logging},
+        {ui->actionSave_Continuous_Logfile, Feature::Logging},
+        {ui->actionSave_Continuous_Filtered_Logfile, Feature::Logging},
+        {ui->actionLoad_Filter_Definition, Feature::FilterFiles},
+        {ui->actionSave_Filter_Definition, Feature::FilterFiles},
+        {ui->actionDBC_File_Manager, Feature::DBC},
+        {ui->actionSave_Decoded_Frames, Feature::DBC},
+        {ui->actionSave_Decoded_Frames_CSV, Feature::DBC},
+        {ui->actionCrop_Log, Feature::CropLog},
+        {ui->actionPreferences, Feature::Preferences},
+        // View, Help
+        {ui->actionLight_Theme, Feature::ThemeSwitch},
+        {ui->actionDark_Theme, Feature::ThemeSwitch},
+        {ui->actionSystem_Theme, Feature::ThemeSwitch},
+        {ui->actionAbout, Feature::About},
+        // RE Tools
+        {ui->actionFlow_View, Feature::FlowView},
+        {ui->actionGraph_Dta, Feature::Graphs},
+        {ui->actionFrame_Data_Analysis, Feature::FrameInfo},
+        {ui->actionFile_Comparison, Feature::FileComparator},
+        {ui->actionDBC_Comparison, Feature::DBCComparator},
+        {ui->actionRange_State_2, Feature::RangeState},
+        {ui->actionSingle_Multi_State_2, Feature::DiscreteState},
+        {ui->actionISO_TP_Decoder, Feature::ISOTP},
+        {ui->actionSniffer, Feature::Sniffer},
+        {ui->actionCapture_Bisector, Feature::Bisector},
+        {ui->actionSignal_Viewer, Feature::SignalViewer},
+        {ui->actionTemporal_Graph, Feature::TemporalGraph},
+        {ui->actionFrame_Search, Feature::FrameSearch},
+        // Send Frames
+        {ui->action_Playback, Feature::Playback},
+        {ui->action_Custom, Feature::FrameSender},
+        {ui->actionScripting_INterface, Feature::Scripting},
+        {ui->actionFuzzing, Feature::Fuzzing},
+        {ui->actionUDS_Scanner, Feature::UDSScanner},
+        {ui->actionUDS_Firmware_Update, Feature::UDSFirmwareUpdate},
+        {ui->actionMotorControlConfig, Feature::MotorControlConfig},
+        {ui->actionCAN_Bridge, Feature::CANBridge},
+        // Connection
+        {ui->actionSetup, Feature::Connection},
+    };
+    for (const auto &entry : actions) {
+        const bool enabled = Features::on(entry.second);
+        entry.first->setVisible(enabled);
+        entry.first->setEnabled(enabled);
+    }
+    // Actions in the .ui that no menu shows (no handler or unfinished upstream): never reachable.
+    for (QAction *a : {ui->actionFuzzy_Scope, ui->actionLoad_DBC_File, ui->actionEdit_Messages_Signals,
+                       ui->actionSave_DBC_File, ui->actionFirmware_Uploader, ui->actionConnect,
+                       ui->actionFirmware_Update}) {
+        a->setVisible(false);
+        a->setEnabled(false);
+    }
+#ifdef Q_OS_WASM
+    // A web page can't quit; closing the tab is the way out.
+    ui->actionExit_Application->setVisible(false);
+    ui->actionExit_Application->setEnabled(false);
+#endif
+
+    // A menu with nothing left in it is hidden as a whole.
+    for (QMenu *menu : ui->menuBar->findChildren<QMenu *>(Qt::FindDirectChildrenOnly)) {
+        bool any = false;
+        for (QAction *a : menu->actions())
+            if (!a->isSeparator() && a->isVisible()) any = true;
+        menu->menuAction()->setVisible(any);
+    }
+
+    // The main window's own controls.
+    ui->cbInterpret->setVisible(Features::on(Feature::DBC));
+    if (!Features::on(Feature::FrameSender)) ui->tableSimpleSender->setVisible(false);
+}
+
+void MainWindow::showAboutDialog()
+{
+    if (!Features::on(Features::Feature::About)) return;
+    AboutDialog *about = new AboutDialog(this);
+    about->show();
+}
+
+void MainWindow::themeChanged(bool dark)
+{
+    Q_UNUSED(dark);
+    switch (Theme::instance()->mode()) {
+    case Theme::Mode::Light:  ui->actionLight_Theme->setChecked(true); break;
+    case Theme::Mode::Dark:   ui->actionDark_Theme->setChecked(true); break;
+    case Theme::Mode::System: ui->actionSystem_Theme->setChecked(true); break;
+    }
+    // Row colours come from the model (palette, per-ID colours): repaint with the new set.
+    ui->canFramesView->viewport()->update();
 }
 
 MainWindow::~MainWindow()
@@ -425,7 +553,7 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
         }
     }
     // Recalculate height of wrapping filter lists when they are resized (panel drag etc.)
-    if ((obj == ui->listBusFilters || obj == ui->listDirFilters || obj == ui->listLengthFilters)
+    if ((obj == ui->listBusFilters || obj == ui->listDirFilters || obj == ui->listLengthFilters || obj == ui->listTypeFilters)
         && event->type() == QEvent::Resize) {
         QListWidget *list = qobject_cast<QListWidget*>(obj);
         QTimer::singleShot(0, this, [this, list]() {
@@ -583,7 +711,7 @@ void MainWindow::readUpdateableSettings()
     model->setTimeFormat(settings.value("Main/TimeFormat", "MMM-dd HH:mm:ss.zzz").toString());
     ignoreDBCColors = settings.value("Main/IgnoreDBCColors", false).toBool();
     model->setIgnoreDBCColors(ignoreDBCColors);
-    int bpl = settings.value("Main/BytesPerLine", 8).toInt();
+    int bpl = settings.value("Main/BytesPerLine", 16).toInt();
     model->setBytesPerLine(bpl);
 
     CSVAbsTime = settings.value("Main/CSVAbsTime", false).toBool();
@@ -593,7 +721,8 @@ void MainWindow::readUpdateableSettings()
     else
         ui->listFilters->setMaximumWidth(175);
 
-    bool showSendPanel = settings.value("Main/ShowSendPanel", true).toBool();
+    bool showSendPanel = settings.value("Main/ShowSendPanel", true).toBool()
+                         && Features::on(Features::Feature::FrameSender);
     ui->tableSimpleSender->setVisible(showSendPanel);
 
     updateFilterList();    
@@ -935,7 +1064,7 @@ void MainWindow::gridContextMenuRequest(QPoint pos)
 
     menu->addAction(copyAct);
 
-    if (idx.column() == 8) //we're over the DATA column
+    if (idx.column() == 8 && Features::on(Features::Feature::Graphs)) //we're over the DATA column
     {
         contextMenuPosition = pos;
         menu->addSeparator();
@@ -1022,6 +1151,7 @@ uint32_t MainWindow::getMessageIDFromPosition(QPoint pos)
 
 void MainWindow::setupAddToNewGraph()
 {
+    if (!Features::on(Features::Feature::Graphs)) return; // web-savvycan: enabledfeatures.h
     showGraphingWindow(); //creates a new window and sets it as latest
     setupSendToLatestGraphWindow(); //then call the other function to finish
 }
@@ -1029,6 +1159,7 @@ void MainWindow::setupAddToNewGraph()
 
 void MainWindow::setupSendToLatestGraphWindow()
 {
+    if (!Features::on(Features::Feature::Graphs)) return; // web-savvycan: enabledfeatures.h
     if (!lastGraphingWindow) showGraphingWindow();
     GraphParams param;
     QString signalName = getSignalNameFromPosition(contextMenuPosition);
@@ -1152,6 +1283,7 @@ void MainWindow::updateFilterList()
     ui->listBusFilters->clear();
     ui->listDirFilters->clear();
     ui->listLengthFilters->clear();
+    ui->listTypeFilters->clear();
 
     if (filters->isEmpty()) return;
 
@@ -1193,6 +1325,20 @@ void MainWindow::updateFilterList()
         }
     }
 
+    // Frame type filters (classic CAN / CAN FD / FD with BRS ...)
+    const QMap<int, bool> *typeFilters = model->getTypeFiltersReference();
+    if (typeFilters && !typeFilters->isEmpty())
+    {
+        for (filterIter = typeFilters->begin(); filterIter != typeFilters->end(); ++filterIter)
+        {
+            QListWidgetItem *item = new QListWidgetItem(CommFrameModel::typeFilterLabel(filterIter.key()), ui->listTypeFilters);
+            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+            item->setCheckState(filterIter.value() ? Qt::Checked : Qt::Unchecked);
+            item->setData(Qt::UserRole, filterIter.key());
+            item->setToolTip(CommFrameModel::typeFilterToolTip(filterIter.key()));
+        }
+    }
+
     // Adjust height of the wrapping filter lists to fit their items (deferred so layout is done first)
     QTimer::singleShot(0, this, [this]() {
         auto fitH = [](QListWidget *list) {
@@ -1204,6 +1350,7 @@ void MainWindow::updateFilterList()
         fitH(ui->listBusFilters);
         fitH(ui->listDirFilters);
         fitH(ui->listLengthFilters);
+        fitH(ui->listTypeFilters);
     });
 
     inhibitFilterUpdate = false;
@@ -1247,6 +1394,18 @@ void MainWindow::dirFilterListItemChanged(QListWidgetItem *item)
     bool isSet = (item->checkState() == Qt::Checked);
 
     model->setDirFilterState(dir, isSet);
+
+    manageRowExpansion();
+}
+
+void MainWindow::typeFilterListItemChanged(QListWidgetItem *item)
+{
+    if (inhibitFilterUpdate) return;
+
+    int type = item->data(Qt::UserRole).toInt();
+    bool isSet = (item->checkState() == Qt::Checked);
+
+    model->setTypeFilterState(type, isSet);
 
     manageRowExpansion();
 }
@@ -1424,6 +1583,7 @@ void MainWindow::normalizeTiming()
 
 void MainWindow::handleCropLog()
 {
+    if (!Features::on(Features::Feature::CropLog)) return; // web-savvycan: enabledfeatures.h
     const QVector<CommFrame> *src = model->getListReference();
     if (src->isEmpty())
     {
@@ -1449,6 +1609,7 @@ void MainWindow::handleCropLog()
 
 void MainWindow::handleLoadFile()
 {
+    if (!Features::on(Features::Feature::LoadLog)) return; // web-savvycan: enabledfeatures.h
     QString filename;
     QVector<CommFrame> tempFrames;
 
@@ -1486,6 +1647,7 @@ void MainWindow::handleLoadFile()
 
 void MainWindow::handleDroppedFile(const QString &filename)
 {
+    if (!Features::on(Features::Feature::LoadLog)) return; // web-savvycan: enabledfeatures.h
     QProgressDialog progress(qApp->activeWindow());
     progress.setWindowModality(Qt::WindowModal);
     progress.setLabelText("Loading file...");
@@ -1613,6 +1775,7 @@ void MainWindow::handleSaveFilteredFile()
 
 void MainWindow::handleSaveFilters()
 {
+    if (!Features::on(Features::Feature::FilterFiles)) return; // web-savvycan: enabledfeatures.h
     QString filename;
     QFileDialog dialog(this);
     QSettings settings;
@@ -1637,6 +1800,7 @@ void MainWindow::handleSaveFilters()
 
 void MainWindow::handleLoadFilters()
 {
+    if (!Features::on(Features::Feature::FilterFiles)) return; // web-savvycan: enabledfeatures.h
     QString filename;
     QFileDialog dialog(this);
     QSettings settings;
@@ -1660,11 +1824,13 @@ void MainWindow::handleLoadFilters()
 
 void MainWindow::handleSaveDecoded()
 {
+    if (!Features::on(Features::Feature::DBC)) return; // web-savvycan: enabledfeatures.h
     handleSaveDecodedMethod(false);
 }
 
 void MainWindow::handleSaveDecodedCsv()
 {
+    if (!Features::on(Features::Feature::DBC)) return; // web-savvycan: enabledfeatures.h
     handleSaveDecodedMethod(true);
 }
 
@@ -2009,6 +2175,7 @@ void MainWindow::showSettingsDialog()
 //now always creates a new window. This allows for multiple independent graphing windows
 void MainWindow::showGraphingWindow()
 {
+    if (!Features::on(Features::Feature::Graphs)) return; // web-savvycan: enabledfeatures.h
 /* could only allow the latest window to have these centering signals.
    if (lastGraphingWindow)
     {
@@ -2043,6 +2210,7 @@ void MainWindow::showGraphingWindow()
 
 void MainWindow::showTemporalGraphWindow()
 {
+    if (!Features::on(Features::Feature::TemporalGraph)) return; // web-savvycan: enabledfeatures.h
     //only create an instance of the object if we dont have one. Otherwise just display the existing one.
     if (!temporalGraphWindow)
     {
@@ -2071,6 +2239,7 @@ void MainWindow::showTemporalGraphWindow()
 
 void MainWindow::showFrameDataAnalysis()
 {
+    if (!Features::on(Features::Feature::FrameInfo)) return; // web-savvycan: enabledfeatures.h
     //only create an instance of the object if we dont have one. Otherwise just display the existing one.
     if (!frameInfoWindow)
     {
@@ -2084,6 +2253,7 @@ void MainWindow::showFrameDataAnalysis()
 
 void MainWindow::showISOInterpreterWindow()
 {
+    if (!Features::on(Features::Feature::ISOTP)) return; // web-savvycan: enabledfeatures.h
     if (!isoWindow)
     {
         if (!useFiltered)
@@ -2096,6 +2266,7 @@ void MainWindow::showISOInterpreterWindow()
 
 void MainWindow::showSnifferWindow()
 {
+    if (!Features::on(Features::Feature::Sniffer)) return; // web-savvycan: enabledfeatures.h
     if (!snifferWindow)
         snifferWindow = new SnifferWindow(this);
     snifferWindow->show();
@@ -2103,6 +2274,7 @@ void MainWindow::showSnifferWindow()
 
 void MainWindow::showBisectWindow()
 {
+    if (!Features::on(Features::Feature::Bisector)) return; // web-savvycan: enabledfeatures.h
     if (!bisectWindow)
     {
         bisectWindow = new BisectWindow(model->getListReference());
@@ -2112,6 +2284,7 @@ void MainWindow::showBisectWindow()
 
 void MainWindow::showCANBridgeWindow()
 {
+    if (!Features::on(Features::Feature::CANBridge)) return; // web-savvycan: enabledfeatures.h
     if (!canBridgeWindow)
     {
         canBridgeWindow = new CANBridgeWindow(model->getListReference());
@@ -2121,6 +2294,7 @@ void MainWindow::showCANBridgeWindow()
 
 void MainWindow::showSearchWindow()
 {
+    if (!Features::on(Features::Feature::FrameSearch)) return; // web-savvycan: enabledfeatures.h
     if (!searchWindow)
     {
         searchWindow = new SearchWindow(model->getFilteredListReference(), dbcHandler);
@@ -2154,6 +2328,7 @@ void MainWindow::jumpToSearchFrame(int frameIndex)
 
 void MainWindow::showFrameSenderWindow()
 {
+    if (!Features::on(Features::Feature::FrameSender)) return; // web-savvycan: enabledfeatures.h
     if (!frameSenderWindow)
     {
         if (!useFiltered)
@@ -2166,6 +2341,7 @@ void MainWindow::showFrameSenderWindow()
 
 void MainWindow::showPlaybackWindow()
 {
+    if (!Features::on(Features::Feature::Playback)) return; // web-savvycan: enabledfeatures.h
     if (!playbackWindow)
     {
         if (!useFiltered)
@@ -2178,6 +2354,7 @@ void MainWindow::showPlaybackWindow()
 
 void MainWindow::showUDSFirmwareUploaderWindow()
 {
+    if (!Features::on(Features::Feature::UDSFirmwareUpdate)) return; // web-savvycan: enabledfeatures.h
     if (!udsFirmwareUploaderWindow)
     {
         udsFirmwareUploaderWindow = new UDSFirmwareUploaderWindow(model->getListReference());
@@ -2187,6 +2364,7 @@ void MainWindow::showUDSFirmwareUploaderWindow()
 
 void MainWindow::showComparisonWindow()
 {
+    if (!Features::on(Features::Feature::FileComparator)) return; // web-savvycan: enabledfeatures.h
     if (!comparatorWindow)
     {
         comparatorWindow = new FileComparatorWindow();
@@ -2196,6 +2374,7 @@ void MainWindow::showComparisonWindow()
 
 void MainWindow::showDBCComparisonWindow()
 {
+    if (!Features::on(Features::Feature::DBCComparator)) return; // web-savvycan: enabledfeatures.h
     if (!dbcComparatorWindow)
     {
         dbcComparatorWindow = new DBCComparatorWindow();
@@ -2205,6 +2384,7 @@ void MainWindow::showDBCComparisonWindow()
 
 void MainWindow::showSingleMultiWindow()
 {
+    if (!Features::on(Features::Feature::DiscreteState)) return; // web-savvycan: enabledfeatures.h
     if (!discreteStateWindow)
     {
         discreteStateWindow = new DiscreteStateWindow(model->getListReference());
@@ -2214,6 +2394,7 @@ void MainWindow::showSingleMultiWindow()
 
 void MainWindow::showFuzzingWindow()
 {
+    if (!Features::on(Features::Feature::Fuzzing)) return; // web-savvycan: enabledfeatures.h
     if (!fuzzingWindow)
     {
         fuzzingWindow = new FuzzingWindow(model->getListReference());
@@ -2223,6 +2404,7 @@ void MainWindow::showFuzzingWindow()
 
 void MainWindow::showMCConfigWindow()
 {
+    if (!Features::on(Features::Feature::MotorControlConfig)) return; // web-savvycan: enabledfeatures.h
     if (!motorctrlConfigWindow)
     {
         motorctrlConfigWindow = new MotorControllerConfigWindow(model->getListReference());
@@ -2234,6 +2416,7 @@ void MainWindow::showMCConfigWindow()
 
 void MainWindow::showUDSScanWindow()
 {
+    if (!Features::on(Features::Feature::UDSScanner)) return; // web-savvycan: enabledfeatures.h
     if (!udsScanWindow)
     {
         udsScanWindow = new UDSScanWindow(model->getListReference());
@@ -2243,6 +2426,7 @@ void MainWindow::showUDSScanWindow()
 
 void MainWindow::showScriptingWindow()
 {
+    if (!Features::on(Features::Feature::Scripting)) return; // web-savvycan: enabledfeatures.h
     if (!scriptingWindow)
     {
         scriptingWindow = new ScriptingWindow(model->getListReference());
@@ -2252,6 +2436,7 @@ void MainWindow::showScriptingWindow()
 
 void MainWindow::showRangeWindow()
 {
+    if (!Features::on(Features::Feature::RangeState)) return; // web-savvycan: enabledfeatures.h
     if (!rangeWindow)
     {
         rangeWindow = new RangeStateWindow(model->getListReference());
@@ -2266,6 +2451,7 @@ void MainWindow::showFuzzyScopeWindow()
 
 void MainWindow::showFlowViewWindow()
 {
+    if (!Features::on(Features::Feature::FlowView)) return; // web-savvycan: enabledfeatures.h
     if (!flowViewWindow)
     {
         if (!useFiltered)
@@ -2294,6 +2480,7 @@ void MainWindow::DBCSettingsUpdated()
 
 void MainWindow::showDBCFileWindow()
 {
+    if (!Features::on(Features::Feature::DBC)) return; // web-savvycan: enabledfeatures.h
     if (!dbcFileWindow)
     {
         dbcFileWindow = new DBCLoadSaveWindow(model->getListReference());
@@ -2304,6 +2491,7 @@ void MainWindow::showDBCFileWindow()
 
 void MainWindow::showSignalViewer()
 {
+    if (!Features::on(Features::Feature::SignalViewer)) return; // web-savvycan: enabledfeatures.h
     if (!signalViewerWindow)
     {
         if (!useFiltered)

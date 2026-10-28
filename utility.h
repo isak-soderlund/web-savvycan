@@ -13,6 +13,7 @@
 #include <QColor>
 #include <QString>
 #include <array>
+#include "theme.h"
 //#include <QDesktopWidget>
 
 enum TimeStyle
@@ -60,6 +61,16 @@ static constexpr std::array<QRgb, 32> kRowPalette = {{
     0xFF263238,  // 30  Blue Grey 900
     0xFF5D4037,  // 31  Brown 700
 }};
+
+// web-savvycan: the dark theme's set — the same hues as kRowPalette, light (Material 200-400)
+// so that a faint tint of them reads well on the dark theme's near-black rows with light text.
+static constexpr std::array<QRgb, 32> kRowPaletteDark = {{
+    0xFFE57373, 0xFFEF9A9A, 0xFFFF8A65, 0xFFFFB74D, 0xFFFFD54F, 0xFF81C784, 0xFF66BB6A, 0xFF4DB6AC,
+    0xFF4DD0E1, 0xFF4FC3F7, 0xFF64B5F6, 0xFF7986CB, 0xFF9575CD, 0xFFBA68C8, 0xFFF06292, 0xFFF48FB1,
+    0xFF90A4AE, 0xFFA1887F, 0xFFDCE775, 0xFFA5D6A7, 0xFF80DEEA, 0xFF81D4FA, 0xFF90CAF9, 0xFFB39DDB,
+    0xFFCE93D8, 0xFFEF5350, 0xFFFFAB91, 0xFFFFA726, 0xFFAED581, 0xFF80CBC4, 0xFFB0BEC5, 0xFFBCAAA4,
+}};
+static_assert(kRowPaletteDark.size() == kRowPalette.size(), "one dark colour per light one");
 
 class Utility
 {
@@ -430,6 +441,11 @@ public:
     {
         const quint32 idx = hashString(s) % static_cast<quint32>(kRowPalette.size());
         // Use a light tint (alpha ~18%) as the row background so text stays readable.
+        if (Theme::isDark()) {
+            QColor base(kRowPaletteDark[idx]);
+            base.setAlpha(56); // ~22% of a light hue over the dark rows: tinted, text stays readable
+            return base;
+        }
         QColor base(kRowPalette[idx]);
         base.setAlpha(46); // ~18% — comfortable on white, still clearly tinted
         return base;
@@ -439,7 +455,7 @@ public:
     static QColor solidColorForString(const QString &s)
     {
         const quint32 idx = hashString(s) % static_cast<quint32>(kRowPalette.size());
-        return QColor(kRowPalette[idx]);
+        return QColor(Theme::isDark() ? kRowPaletteDark[idx] : kRowPalette[idx]);
     }
 };
 
