@@ -51,12 +51,10 @@ prints the sizes. To try it by hand: `python3 -m http.server -d dist 8000`, then
 
 What the wasm build changes (all in `wasm/` and behind `EMSCRIPTEN` / `Q_OS_WASM`):
 
-- **Qt Serial Port / Serial Bus** do not exist for wasm. `QSerialPort`/`QSerialPortInfo` come from
-  `wasm/webserial/` (a `QIODevice` with Qt's API backed by Web Serial: `webserialport.*`, the bridge
-  `webserial.js` linked with `--pre-js`, tests in `wasm/webserial/tests`); `wasm/include/` has the
-  `QCanBus*` stand-ins (empty plugin list, `QCanBusFrame`'s enum). The QtSerialBus connection
-  (`serialbusconnection.cpp`) is not compiled. In the browser the connection window offers GVRET and
-  LAWICEL only, with "Choose device..." for the browser's port chooser.
+- **Qt Serial Port / Serial Bus** do not exist for wasm. Qt Serial Port is replaced by the Web Serial
+  stand-in in `wasm/webserial/` (`QSerialPort`/`QSerialPortInfo` with Qt's API, and the JS bridge);
+  `wasm/include/` has `QCanBus*` stand-ins (empty plugin list, `QCanBusFrame`'s enum). The
+  QtSerialBus connection (`serialbusconnection.cpp`) is not compiled.
 - **No threads:** connections, the frame sender and playback run on the main thread
   (`canconnection.cpp`, `framesenderobject.cpp`, `frameplaybackobject.cpp`).
 - **No TLS:** MQTT over TLS is left out (`QT_NO_SSL`).
