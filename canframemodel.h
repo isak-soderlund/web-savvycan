@@ -75,7 +75,7 @@ public:
     void insertFrames(const QVector<CommFrame> &newFrames);
     void sortByColumn(int column);
     int getIndexFromTimeID(unsigned int ID, double timestamp);
-    //web-savvycan: read-only, thread-safe views (FrameListView: count(), at(i), mid(), tail(), toVector(), iteration).
+    //web-savvycan: read-only, thread-safe views (FrameListView: count(), at(i), mid(), tail(), toVector()).
     //getListReference() = every stored frame (a ring: the oldest go once MaximumFrames is reached),
     //getFilteredListReference() = the rows of the main trace (an index list into the same frames, or the
     //one-row-per-ID list in overwrite mode).

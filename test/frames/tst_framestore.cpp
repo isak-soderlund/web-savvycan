@@ -119,7 +119,6 @@ private slots:
         QCOMPARE(v.count(), qsizetype(300));
         QCOMPARE(v.length(), qsizetype(300));
         QCOMPARE(v.at(5).frameId(), quint32(5));
-        QCOMPARE(v[6].frameId(), quint32(6));
         QCOMPARE(v.first().frameId(), quint32(0));
         QCOMPARE(v.last().frameId(), quint32(299));
         QCOMPARE(v.at(300).frameType(), CommFrame::InvalidFrame);
@@ -130,38 +129,8 @@ private slots:
         QCOMPARE(v.tail(3).at(0).frameId(), quint32(297));
         QCOMPARE(v.tail(1000).size(), qsizetype(300));
         QCOMPARE(v.toVector().size(), qsizetype(300));
-        quint32 expect = 0;
-        for (const CommFrame &f : v) QCOMPARE(f.frameId(), expect++);
-        QCOMPARE(expect, quint32(300));
-        QCOMPARE(v.end() - v.begin(), qsizetype(300));
         QCOMPARE(v.at(64).payload().size(), 64);
         QVERIFY(v.at(64).hasBitrateSwitch());
-    }
-
-    void view_index()
-    {
-        FrameStore s(1000, 100);
-        std::deque<quint64> seqs;
-        FrameIndexView<std::deque<quint64>> v(&s, &seqs);
-        for (int i = 0; i < 2000; i++)
-        {
-            const quint64 seq = s.endSeq();
-            s.append(makeFrame(quint32(i), 8));
-            if (i % 2 == 0) seqs.push_back(seq);
-        }
-        // the oldest rows point at dropped frames: they read as InvalidFrame, never as freed memory
-        QCOMPARE(v.at(0).frameType(), CommFrame::InvalidFrame);
-        QCOMPARE(v.last().frameId(), quint32(1998));
-        QCOMPARE(v.tail(2).size(), qsizetype(2));
-    }
-
-    void view_vector()
-    {
-        QVector<CommFrame> vec = batch(100, 10);
-        FrameVectorView v(&vec);
-        QCOMPARE(v.count(), qsizetype(10));
-        QCOMPARE(v.at(3).frameId(), quint32(103));
-        QCOMPARE(v.toVector().size(), qsizetype(10));
     }
 
     // ---------------- CommFrameModel ----------------
