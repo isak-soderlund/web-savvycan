@@ -51,6 +51,16 @@ test.describe('connect', () => {
       expect(tail.slice(-sent.length).map(norm)).toEqual(sent.map(norm));
     });
   }
+
+  test('the New Connection dialog offers only GVRET and LAWICEL (no other type, not even hidden)', async ({ app, page }) => {
+    await app.open();
+    await app.menu('Connection', 'Open Connection Window');
+    await app.click('button', 'Add New Device Connection');
+    await expect(app.role('radio', 'Serial Connection (GVRET)')).toBeVisible();
+    const radios = await page.getByRole('radio', { includeHidden: true }).evaluateAll(
+      (els) => els.map((e) => e.getAttribute('aria-label') || e.textContent.trim()));
+    expect(radios.sort()).toEqual(['LAWICEL / SLCAN Serial', 'Serial Connection (GVRET)'].sort());
+  });
 });
 
 test.describe('connect: a returning visitor', () => {
@@ -81,25 +91,5 @@ test.describe('connect: rc1 refuses (gs_usb has the CAN channel)', () => {
     const s = await fake.stats(page);
     expect(s.channel.open).toBe(false);
     expect((await fake.appStats(page)).framesReceived).toBe(0);
-  });
-  test('the New Connection dialog offers only GVRET and LAWICEL (no other type, not even hidden)', async ({ app, page }) => {
-    await app.open();
-    await app.menu('Connection', 'Open Connection Window');
-    await app.click('button', 'Add New Device Connection');
-    await expect(app.role('radio', 'Serial Connection (GVRET)')).toBeVisible();
-    const radios = await page.getByRole('radio', { includeHidden: true }).evaluateAll(
-      (els) => els.map((e) => e.getAttribute('aria-label') || e.textContent.trim()));
-    expect(radios.sort()).toEqual(['LAWICEL / SLCAN Serial', 'Serial Connection (GVRET)'].sort());
-  });
-
-  test('Enter in the connection window does not disconnect', async ({ app, page }) => {
-    await app.open();
-    await app.connect({ protocol: 'gvret', bitrate: 500000, fd: false });
-    await expect.poll(async () => (await fake.stats(page)).channel.open).toBe(true);
-    await app.menu('Connection', 'Open Connection Window');
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(1000);
-    expect((await fake.appStats(page)).connected).toBe(true);
-    expect((await fake.stats(page)).channel.open).toBe(true);
   });
 });

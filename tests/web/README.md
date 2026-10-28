@@ -106,8 +106,7 @@ window.webSavvyCAN = {
   Logging**, View > **Light Theme** / **Dark Theme** / **Follow System Theme**. A widget that isn't there skips the
   test with its name.
 - Combo boxes are mirrored without a usable box: the driver gives a neighbouring checkbox the focus with two real
-  clicks, tabs to the combo box and types the value (QComboBox's keyboard search). Not through the popup: Enter there
-  also presses the connection window's default button, Disconnect Selected Device.
+  clicks, tabs to the combo box and types the value (QComboBox's keyboard search). Not through the popup.
 - Bus Details' checkboxes are all named "Bus Details:" (their labels aren't buddies): Listen Only, Enable Bus, Enable
   CAN FD in that order. They fill in from the device once the GVRET connection is up, so they are set after that.
 - After connecting the driver closes the connection window (Escape): while it is open the main window's menus don't
@@ -120,7 +119,7 @@ window.webSavvyCAN = {
 
 | Spec | Checks |
 | --- | --- |
-| connect | chooser filtered to rc1 from a gesture; GVRET FD / classic and slcan FD set up rc1 as asked; every FD length, BRS, 29-bit, classic and remote frame arrives exactly (`traceTail`); returning visitor (granted port, no chooser); chooser cancelled; channel refused |
+| connect | chooser filtered to rc1 from a gesture; GVRET FD / classic and slcan FD set up rc1 as asked; every FD length, BRS, 29-bit, classic and remote frame arrives exactly (`traceTail`); returning visitor (granted port, no chooser); chooser cancelled; channel refused; the New Connection dialog offers only GVRET and LAWICEL (also in the accessibility tree) |
 | traffic | Leaf bus 5 s: every frame counted; garbled stream resyncs; slcan error lines not counted as frames; overload (5x rc1's rate): received = trace + evicted + dropped; unplug mid-stream and reconnect |
 | logging | File > Start Continuous Logging / Cease: one download named `SavvyCAN_<start time>.csv`, SavvyCAN's native GVRET CSV, its rows equal to what the fake sent (FD rows, BRS), loaded by SavvyCAN's parser (when `nativecsv_tool` is built); an empty log is the header; Choose the Log's Name When Logging Stops: Keep Logging goes on, the typed name is the download's |
 | theme | light first, dark visibly darker (screenshot luminance), remembered after reload; a dark system: followed on a first visit, overridden and followed again |

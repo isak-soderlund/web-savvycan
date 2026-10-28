@@ -88,8 +88,7 @@ export class AppDriver {
    * Picks `value` in the combo box just before (tab = 'Shift+Tab') or after (tab = 'Tab') the checkbox `anchor` in the
    * tab order: two real clicks on the checkbox give it the keyboard focus (and leave it as it was), Tab moves to the
    * combo box and the typed value selects the item (QComboBox's keyboard search on the closed box). Not through the
-   * popup: Enter there also presses the window's default button ("Disconnect Selected Device", README "Known app
-   * issues").
+   * popup (Qt's popup isn't reachable by role).
    */
   async pickCombo(anchor, tab, value) {
     const b = await anchor.boundingBox();

@@ -114,6 +114,8 @@ its push buttons are auto-default, so Enter (also in an open drop-down list) pre
 Up/Down, Add New Device Connection, the console's Send/Clear). *Kept:* `NewConnectionDialog`: Enter presses Create New
 Connection, its only OK button: a dialog's normal default.
 
+(The browser suite couldn't press Enter inside the window headless: the old build stayed connected too, so D1 has no browser test.)
+
 D2. **Hidden connection types are still in the dialog's accessibility tree** (wasm): `NewConnectionDialog` only
 hides the SocketCAN/Remote/Kayak/MQTT/CANserver/Canlogserver radio buttons; a screen reader (and Playwright's
 role locators) still finds them, and a restored connection of such a type can still check one. **Change:** take
