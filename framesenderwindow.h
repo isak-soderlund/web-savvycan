@@ -2,6 +2,7 @@
 #define FRAMESENDERWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QTime>
@@ -38,7 +39,7 @@ class FrameSenderWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit FrameSenderWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit FrameSenderWindow(const FrameListView *frames, QWidget *parent = 0);
     ~FrameSenderWindow();
 
 private slots:
@@ -56,7 +57,7 @@ private:
     Ui::FrameSenderWindow *ui;
     QList<FrameSendData> sendingData;
     QHash<int, CommFrame> frameCache; //hash with frame ID as the key and the most recent frame as the value
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     QTimer *intervalTimer;
     QElapsedTimer elapsedTimer;
     bool inhibitChanged = false;

@@ -8,7 +8,7 @@
 #include <QDebug>
 #include <algorithm>
 
-BisectWindow::BisectWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+BisectWindow::BisectWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::BisectWindow)
 {

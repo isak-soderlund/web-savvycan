@@ -24,7 +24,7 @@ static QVector<QString> SCANTYPE_NAMES = {
     QString("Custom UDS"),
 };
 
-UDSScanWindow::UDSScanWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+UDSScanWindow::UDSScanWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::UDSScanWindow)
 {

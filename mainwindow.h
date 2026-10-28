@@ -243,6 +243,9 @@ private:
     //various private storage
     QLabel lbStatusConnected;
     QLabel lbStatusFilename;
+    QLabel lbStatusDropped;     //web-savvycan: frames the connections had to discard
+    quint64 lastShownDropped = ~0ull;
+    void updateDroppedStatus();
     QLabel lbStatusDatabase;
     QLabel lbHelp;
     int normalRowHeight;

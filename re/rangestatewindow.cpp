@@ -5,7 +5,7 @@
 #include "helpwindow.h"
 #include "filterutility.h"
 
-RangeStateWindow::RangeStateWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+RangeStateWindow::RangeStateWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::RangeStateWindow)
 {

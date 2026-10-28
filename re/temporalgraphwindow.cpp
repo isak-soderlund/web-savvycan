@@ -13,7 +13,7 @@ QString HexTicker::getTickLabel (double tick, const QLocale& locale, QChar forma
     return "0x" + QString::number(valu, 16).toUpper().rightJustified(3,'0');
 }
 
-TemporalGraphWindow::TemporalGraphWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+TemporalGraphWindow::TemporalGraphWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::TemporalGraphWindow)
 {

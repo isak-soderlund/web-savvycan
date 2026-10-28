@@ -30,6 +30,15 @@ public:
     void resetTimeBasis();
 
     int getNumBuses();
+
+    /**
+     * @brief web-savvycan: frames the connections had to discard (queue to the GUI full) since the last
+     * resetDroppedFrames(), including connections removed since.
+     */
+    quint64 getDroppedFrames() const;
+    void resetDroppedFrames();
+    // frames waiting in the connections' queues for the GUI thread
+    quint64 getQueuedFrames();
     int getBusBase(CANConnection *);
 
     /**
@@ -91,6 +100,7 @@ private:
     QHash<CANConnection*, int>  mConnFrameCount;  // frames received in current 5-s window
     QHash<CANConnection*, bool> mConnHadFrames;   // true once a frame was seen since last connect
     int                         mAutoReconnectTick = 0;
+    quint64                     mDroppedRemoved = 0; // dropped by connections no longer in mConns
 };
 
 #endif // CANCONNECTIONMODEL_H

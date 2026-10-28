@@ -46,10 +46,8 @@ QJsonArray traceTail(int n)
 {
     QJsonArray rows;
     if (!g_model || n <= 0) return rows;
-    const QVector<CommFrame> *list = g_model->getFilteredListReference();
-    const int count = list->count();
-    for (int i = qMax(0, count - n); i < count; ++i) {
-        const CommFrame &f = list->at(i);
+    const QVector<CommFrame> tail = g_model->getFilteredListReference()->tail(n); // one locked snapshot
+    for (const CommFrame &f : tail) {
         QJsonArray data;
         const QByteArray payload = f.payload();
         for (char c : payload) data.append(int(static_cast<unsigned char>(c)));
@@ -105,8 +103,25 @@ void install(CommFrameModel *model)
     }
     if (!registry().contains("framesInTrace")) {
         registerStat("framesInTrace", [] {
-            return QJsonValue(g_model ? g_model->getFilteredListReference()->count() : 0);
+            return QJsonValue(g_model ? double(g_model->getFilteredListReference()->count()) : 0.0);
         });
+    }
+    // the frame store and the receive path (web-savvycan framestore)
+    if (!registry().contains("framesReceived")) {
+        // frames the trace took in since the last Clear (kept, or since evicted by the ring)
+        registerStat("framesReceived", [] { return QJsonValue(g_model ? double(g_model->framesIngested()) : 0.0); });
+    }
+    if (!registry().contains("framesEvicted")) {
+        // the oldest frames dropped by the ring (MaximumFrames) to make room, since the last Clear
+        registerStat("framesEvicted", [] { return QJsonValue(g_model ? double(g_model->framesWrapped()) : 0.0); });
+    }
+    if (!registry().contains("framesDropped")) {
+        // frames the connections had to discard (queue to the GUI full): the status bar's "Dropped"
+        registerStat("framesDropped", [] { return QJsonValue(double(CANConManager::getInstance()->getDroppedFrames())); });
+    }
+    if (!registry().contains("queued")) {
+        // frames received by the connections, not yet in the trace
+        registerStat("queued", [] { return QJsonValue(double(CANConManager::getInstance()->getQueuedFrames())); });
     }
 #ifdef Q_OS_WASM
     wsc_install_hook();

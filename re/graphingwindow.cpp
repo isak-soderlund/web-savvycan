@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <limits>
 
-GraphingWindow::GraphingWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+GraphingWindow::GraphingWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::GraphingWindow)
 {

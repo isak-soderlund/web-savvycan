@@ -2,6 +2,7 @@
 #define GRAPHINGWINDOW_H
 
 #include "qcustomplot.h"
+#include "framestore.h"
 #include "can_structs.h"
 #include "dbc/dbchandler.h"
 
@@ -55,7 +56,7 @@ class GraphingWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit GraphingWindow(const QVector<CommFrame> *, QWidget *parent = 0);
+    explicit GraphingWindow(const FrameListView *, QWidget *parent = 0);
     ~GraphingWindow();
     void showEvent(QShowEvent*);
 
@@ -99,7 +100,7 @@ private:
     Ui::GraphingWindow *ui;
     DBCHandler *dbcHandler;
     QList<CommFrame> frameCache;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     QList<GraphParams> graphParams;
     QPen selectedPen;
     QCPSelectionDecorator *selDecorator;

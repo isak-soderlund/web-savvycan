@@ -9,7 +9,7 @@ const QColor FlowViewWindow::graphColors[8] = {Qt::blue, Qt::green, Qt::black, Q
                                                Qt::gray, Qt::darkYellow, Qt::cyan, Qt::darkMagenta}; //4 5 6 7
 
 
-FlowViewWindow::FlowViewWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+FlowViewWindow::FlowViewWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::FlowViewWindow)
 {
@@ -545,7 +545,8 @@ void FlowViewWindow::updatedFrames(int numFrames)
         bool needRefresh = false;
         for (int i = modelFrames->count() - numFrames; i < modelFrames->count(); i++)
         {
-            thisFrame = &modelFrames->at(i);
+            const CommFrame frameCopy = modelFrames->at(i); //the view returns copies
+            thisFrame = &frameCopy;
             data = reinterpret_cast<const unsigned char *>(thisFrame->payload().constData());
             dataLen = thisFrame->payload().length();
 

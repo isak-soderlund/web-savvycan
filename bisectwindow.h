@@ -2,6 +2,7 @@
 #define BISECTWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include "can_structs.h"
 
 namespace Ui {
@@ -13,7 +14,7 @@ class BisectWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit BisectWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit BisectWindow(const FrameListView *frames, QWidget *parent = 0);
     ~BisectWindow();
     void showEvent(QShowEvent*);
 
@@ -34,7 +35,7 @@ private slots:
 
 private:
     Ui::BisectWindow *ui;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     QVector<CommFrame> splitFrames;
     QList<int> foundID;
 

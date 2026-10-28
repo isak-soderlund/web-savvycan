@@ -7,36 +7,36 @@
 #include <QBrush>
 #include <QDateTime>
 #include <QSettings>
+#include <QReadLocker>
+#include <QWriteLocker>
+#include <algorithm>
 #include "utility.h"
+
+/*
+ * web-savvycan: frames live in a FrameStore (chunked ring, see framestore.h). The trace's rows are
+ * filteredSeqs (normal mode: seqs into the store) or overwriteFrames (overwrite mode: one copy per
+ * ID and bus). Incoming frames are added without telling the views; publishRows() (from
+ * sendBulkRefresh(), on the GUI tick) announces the new rows with one beginInsertRows/endInsertRows,
+ * and rows lost when the ring wraps are announced with beginRemoveRows/endRemoveRows. No model
+ * reset per tick (M9), no trim by copying (M3), no second copy of every frame (M4), and the views
+ * handed to other windows and to the frame sender's thread are locked (M5).
+ */
 
 CommFrameModel::~CommFrameModel()
 {
-    frames.clear();
-    filteredFrames.clear();
     filters.clear();
     busFilters.clear();
 }
 
 int CommFrameModel::rowCount(const QModelIndex &parent) const
 {
-    Q_UNUSED(parent);
-    if (filteredFrames.data())
-    {
-        int rows = filteredFrames.count();
-        return rows;
-    }
-
-     //just in case somehow data is invalid which I have seen before.
-    //But, this should not happen so issue a debugging message too
-    qDebug() << "Invalid data for filteredFrames. Returning 0.";
-    return 0;
+    if (parent.isValid()) return 0;
+    return int(publishedRows);
 }
 
 int CommFrameModel::totalFrameCount()
 {
-    int count;
-    count = frames.count();
-    return count;
+    return int(store.size());
 }
 
 int CommFrameModel::columnCount(const QModelIndex &index) const
@@ -50,7 +50,10 @@ int CommFrameModel::columnCount(const QModelIndex &index) const
 }
 
 CommFrameModel::CommFrameModel(QObject *parent)
-    : QAbstractTableModel(parent)
+    : QAbstractTableModel(parent),
+      store(),
+      allView(&store),
+      filteredView(this)
 {
     int maxFramesDefault;
     if (QSysInfo::WordSize > 32)
@@ -66,16 +69,11 @@ CommFrameModel::CommFrameModel(QObject *parent)
 
     QSettings settings;
     preallocSize = settings.value("Main/MaximumFrames", maxFramesDefault).toInt();
+    if (preallocSize < 1000) preallocSize = 1000;
 
-    //Each CommFrame object takes up 56 bytes and we're allocating two arrays here so take the
-    //# of pre-alloc frames and multiply by 112 to get the RAM usage. This is around 1GiB for the default.
-
-    //the goal is to prevent a reallocation from ever happening
-    frames.reserve(preallocSize);
-    //this is pretty wasteful. We're storing all frames twice. It may be better for filteredFrames to be a list of pointers.
-    //Pointers take up 8 bytes instead of 56 so this is quite a savings for RAM usage. But, then filteredFrames would
-    //work differently from frames above so the two could not be used interchangeably. Still think about what can be done.
-    filteredFrames.reserve(preallocSize);
+    //web-savvycan: the frame store is a ring of MaximumFrames frames, allocated chunk by chunk as frames
+    //arrive (nothing is reserved up front). When it is full the oldest chunk is dropped.
+    store.setCapacity(preallocSize);
 
     dbcHandler = DBCHandler::getReference();
     interpretFrames = false;
@@ -88,10 +86,53 @@ CommFrameModel::CommFrameModel(QObject *parent)
     timeStyle = TS_MICROS;
     timeOffset = 0;
     needFilterRefresh = false;
+    ignoreDBCColors = false;
     lastUpdateNumFrames = 0;
     timeFormat =  "MMM-dd HH:mm:ss.zzz";
     sortDirAsc = false;
     bytesPerLine = 16; // web-savvycan: 16 (was 8), a 64-byte CAN FD payload is 4 lines
+}
+
+qsizetype CommFrameModel::FilteredView::sizeLocked() const
+{
+    if (mModel->overwriteDups) return mModel->overwriteFrames.size();
+    return qsizetype(mModel->filteredSeqs.size());
+}
+
+bool CommFrameModel::FilteredView::frameLocked(qsizetype i, CommFrame &out) const
+{
+    if (i < 0) return false;
+    if (mModel->overwriteDups)
+    {
+        if (i >= mModel->overwriteFrames.size()) return false;
+        out = mModel->overwriteFrames.at(i);
+        return true;
+    }
+    if (i >= qsizetype(mModel->filteredSeqs.size())) return false;
+    const quint64 seq = mModel->filteredSeqs[size_t(i)];
+    if (!mModel->store.contains(seq)) return false;
+    out = mModel->store.bySeq(seq);
+    return true;
+}
+
+const CommFrame *CommFrameModel::frameForRow(int row) const
+{
+    if (row < 0 || row >= publishedRows) return nullptr;
+    if (overwriteDups)
+    {
+        if (row >= overwriteFrames.size()) return nullptr;
+        return &overwriteFrames.at(row);
+    }
+    if (size_t(row) >= filteredSeqs.size()) return nullptr;
+    const quint64 seq = filteredSeqs[size_t(row)];
+    if (!store.contains(seq)) return nullptr;
+    return &store.bySeq(seq);
+}
+
+quint64 CommFrameModel::overwriteKey(const CommFrame &frame)
+{
+    //id in lower 29 bits, bus number shifted up 29 bits (as SavvyCAN's overwrite mode always did)
+    return quint64(frame.frameId()) + (quint64(frame.getBus()) << 29);
 }
 
 void CommFrameModel::setBytesPerLine(int bpl)
@@ -181,45 +222,62 @@ void CommFrameModel::setIgnoreDBCColors(bool mode)
 */
 void CommFrameModel::normalizeTiming()
 {
-    mutex.lock();
-    if (frames.count() == 0) 
-    {
-        mutex.unlock();
-        return;
-    }
-    timeOffset = frames[0].timeStamp().microSeconds();
-    qint64 prevStamp = 0;
+    if (store.isEmpty()) return;
 
-    //find the absolute lowest timestamp in the whole time. Needed because maybe timestamp was reset in the middle.
-    for (int j = 0; j < frames.count(); j++)
+    beginResetModel();
     {
-        if (frames[j].timeStamp().microSeconds() < timeOffset) timeOffset = frames[j].timeStamp().microSeconds();
-    }
+        QWriteLocker lk(&store.lock());
+        timeOffset = store.bySeq(store.firstSeq()).timeStamp().microSeconds();
+        qint64 prevStamp = 0;
 
-    for (int i = 0; i < frames.count(); i++)
-    {
-        qint64 thisStamp = frames[i].timeStamp().microSeconds() - timeOffset;
-        if (thisStamp <= prevStamp)
+        //find the absolute lowest timestamp in the whole time. Needed because maybe timestamp was reset in the middle.
+        for (quint64 s = store.firstSeq(); s < store.endSeq(); s++)
         {
-            timeOffset -= prevStamp;
+            if (store.bySeq(s).timeStamp().microSeconds() < timeOffset) timeOffset = store.bySeq(s).timeStamp().microSeconds();
         }
-        frames[i].setTimeStamp(CommFrame::TimeStamp(0, thisStamp));
-    }
 
-    this->beginResetModel();
-    for (int i = 0; i < filteredFrames.count(); i++)
-    {
-        filteredFrames[i].setTimeStamp(CommFrame::TimeStamp(0, filteredFrames[i].timeStamp().microSeconds() - timeOffset));
-    }
-    this->endResetModel();
+        for (quint64 s = store.firstSeq(); s < store.endSeq(); s++)
+        {
+            CommFrame &f = store.bySeqMutable(s);
+            qint64 thisStamp = f.timeStamp().microSeconds() - timeOffset;
+            if (thisStamp <= prevStamp)
+            {
+                timeOffset -= prevStamp;
+            }
+            f.setTimeStamp(CommFrame::TimeStamp(0, thisStamp));
+        }
 
-    mutex.unlock();
+        //the filtered rows of normal mode are the same frames; overwrite mode keeps its own copies
+        for (int i = 0; i < overwriteFrames.count(); i++)
+        {
+            overwriteFrames[i].setTimeStamp(CommFrame::TimeStamp(0, overwriteFrames[i].timeStamp().microSeconds() - timeOffset));
+        }
+    }
+    endResetModel();
 }
 
 void CommFrameModel::setOverwriteMode(bool mode)
 {
-    overwriteDups = mode;
-    recalcOverwrite();
+    if (overwriteDups == mode) return;
+    if (mode)
+    {
+        //recalcOverwrite() fills overwriteFrames and resets the model
+        {
+            QWriteLocker lk(&store.lock());
+            overwriteDups = true;
+        }
+        recalcOverwrite();
+    }
+    else
+    {
+        {
+            QWriteLocker lk(&store.lock());
+            overwriteDups = false;
+            overwriteFrames.clear();
+            overwriteRow.clear();
+        }
+        sendRefresh();
+    }
 }
 
 void CommFrameModel::setClearMode(bool mode)
@@ -276,15 +334,11 @@ void CommFrameModel::setSearchFilter(const QString &text)
 }
 
 /*
- * There is probably a more correct way to have done this but below are several functions that collectively implement
- * quicksort on the columns and interpret the columns numerically. But, correct or not, this implementation is quite fast
- * and sorts the columns properly.
+ * Sorting: the rows (index list, or the overwrite list) are sorted by a numeric key per column.
 */
-uint64_t CommFrameModel::getCommFrameVal(QVector<CommFrame> *frames, int row, Column col)
+uint64_t CommFrameModel::getCommFrameVal(const CommFrame &frame, Column col) const
 {
     uint64_t temp = 0;
-    if (row >= frames->count()) return 0;
-    CommFrame frame = frames->at(row);
     switch (col)
     {
     case Column::TimeStamp:
@@ -295,7 +349,7 @@ uint64_t CommFrameModel::getCommFrameVal(QVector<CommFrame> *frames, int row, Co
     case Column::Type:
         if (frame.hasExtendedFrameFormat())  temp |= 1;
         temp = temp | ((int)frame.frameType() * 2);
-        return 0;
+        return temp;
     case Column::FrameCount:
         if (overwriteDups) return frame.getFrameCount();
         return 0;
@@ -309,87 +363,48 @@ uint64_t CommFrameModel::getCommFrameVal(QVector<CommFrame> *frames, int row, Co
     case Column::ASCII: //sort both the same for now
     case Column::Data:
         for (int i = 0; i < std::min(static_cast<int>(frame.payload().length()), 8); i++)
-            temp += (static_cast<uint64_t>(frame.payload()[i]) << (56 - (8 * i)));
-        //qDebug() << temp;
+            temp += (static_cast<uint64_t>(static_cast<unsigned char>(frame.payload()[i])) << (56 - (8 * i)));
         return temp;
+    case Column::DataDec:
     case Column::NUM_COLUMN:
         return 0;
     }
     return 0;
 }
 
-void CommFrameModel::qSortCommFrameAsc(QVector<CommFrame> *frames, Column column, int lowerBound, int upperBound)
-{
-    int p, i, j;
-    qDebug() << "Lower " << lowerBound << " Upper" << upperBound;
-    if (lowerBound < upperBound)
-    {
-        uint64_t piv = getCommFrameVal(frames, lowerBound + (upperBound - lowerBound) / 2, column);
-        i = lowerBound - 1;
-        j = upperBound + 1;
-        for (;;){
-            do {
-                i++;
-            } while ((i < upperBound) && getCommFrameVal(frames, i, column) < piv);
-
-            do
-            {
-                j--;
-            } while ((j > lowerBound) && getCommFrameVal(frames, j, column) > piv);
-            if (i < j) {
-                CommFrame temp = frames->at(i);
-                frames->replace(i, frames->at(j));
-                frames->replace(j, temp);
-            }
-            else {p = j; break;}
-        }
-
-        qSortCommFrameAsc(frames, column, lowerBound, p);
-        qSortCommFrameAsc(frames, column, p+1, upperBound);
-    }
-}
-
-void CommFrameModel::qSortCommFrameDesc(QVector<CommFrame> *frames, Column column, int lowerBound, int upperBound)
-{
-    int p, i, j;
-    qDebug() << "Lower " << lowerBound << " Upper" << upperBound;
-    if (lowerBound < upperBound)
-    {
-        uint64_t piv = getCommFrameVal(frames, lowerBound + (upperBound - lowerBound) / 2, column);
-        i = lowerBound - 1;
-        j = upperBound + 1;
-        for (;;){
-            do {
-                i++;
-            } while ((i < upperBound) && getCommFrameVal(frames, i, column) > piv);
-
-            do
-            {
-                j--;
-            } while ((j > lowerBound) && getCommFrameVal(frames, j, column) < piv);
-            if (i < j) {
-                CommFrame temp = frames->at(i);
-                frames->replace(i, frames->at(j));
-                frames->replace(j, temp);
-            }
-            else {p = j; break;}
-        }
-
-        qSortCommFrameDesc(frames, column, lowerBound, p);
-        qSortCommFrameDesc(frames, column, p+1, upperBound);
-    }
-}
-
 void CommFrameModel::sortByColumn(int column)
 {
     sortDirAsc = !sortDirAsc;
-    if (sortDirAsc) qSortCommFrameAsc(&filteredFrames, Column(column), 0, filteredFrames.count()-1);
-    else qSortCommFrameDesc(&filteredFrames, Column(column), 0, filteredFrames.count()-1);
+    const Column col = Column(column);
+    const bool asc = sortDirAsc;
+    pruneTrimmed();
 
-    mutex.lock();
     beginResetModel();
+    {
+        QWriteLocker lk(&store.lock());
+        if (overwriteDups)
+        {
+            std::stable_sort(overwriteFrames.begin(), overwriteFrames.end(),
+                             [&](const CommFrame &a, const CommFrame &b) {
+                                 const uint64_t ka = getCommFrameVal(a, col), kb = getCommFrameVal(b, col);
+                                 return asc ? ka < kb : ka > kb;
+                             });
+            overwriteRow.clear();
+            for (int i = 0; i < overwriteFrames.count(); i++) overwriteRow.insert(overwriteKey(overwriteFrames[i]), i);
+            publishedRows = overwriteFrames.count();
+        }
+        else
+        {
+            std::stable_sort(filteredSeqs.begin(), filteredSeqs.end(),
+                             [&](quint64 a, quint64 b) {
+                                 const uint64_t ka = getCommFrameVal(store.bySeq(a), col), kb = getCommFrameVal(store.bySeq(b), col);
+                                 return asc ? ka < kb : ka > kb;
+                             });
+            filteredSorted = true;
+            publishedRows = qsizetype(filteredSeqs.size());
+        }
+    }
     endResetModel();
-    mutex.unlock();
 }
 
 //End of custom sorting code
@@ -400,65 +415,61 @@ void CommFrameModel::recalcOverwrite()
 
     qDebug() << "recalcOverwrite called in model";
 
-    mutex.lock();
-    beginResetModel();
-
     //Look at the current list of frames and turn it into just a list of unique IDs
-    QHash<uint64_t, CommFrame> overWriteFrames;
-    uint64_t idAugmented; //id in lower 29 bits, bus number shifted up 29 bits
-    foreach(CommFrame frame, frames)
+    QHash<quint64, int> rows;
+    QVector<CommFrame> uniq;
+    for (quint64 s = store.firstSeq(); s < store.endSeq(); s++)
     {
+        CommFrame frame = store.bySeq(s);
         if (!frame.isDataFrame()) continue; //CAN and CAN FD data frames
+        if (!passesFrameFilters(frame)) continue;
 
-        idAugmented = frame.frameId();
-        idAugmented = idAugmented + (frame.getBus() << 29ull);
-        if (passesFrameFilters(frame))
+        const quint64 key = overwriteKey(frame);
+        auto it = rows.constFind(key);
+        if (it == rows.constEnd())
         {
-            if (!overWriteFrames.contains(idAugmented))
-            {
-                frame.setTimeDelta(0);
-                frame.setFrameCount(1);
-                overWriteFrames.insert(idAugmented, frame);
-            }
-            else
-            {
-                frame.setTimeDelta(frame.timeStamp().microSeconds() - overWriteFrames[idAugmented].timeStamp().microSeconds());
-                frame.setFrameCount(overWriteFrames[idAugmented].getFrameCount() + 1);
-                overWriteFrames[idAugmented] = frame;
-            }
+            frame.setTimeDelta(0);
+            frame.setFrameCount(1);
+            rows.insert(key, uniq.count());
+            uniq.append(frame);
+        }
+        else
+        {
+            CommFrame &prev = uniq[it.value()];
+            frame.setTimeDelta(frame.timeStamp().microSeconds() - prev.timeStamp().microSeconds());
+            frame.setFrameCount(prev.getFrameCount() + 1);
+            prev = frame;
         }
     }
-    //Then replace the old list of frames with just the unique list
-
-    filteredFrames.clear();
-    filteredFrames.append(overWriteFrames.values());
-    filteredFrames.reserve(preallocSize);
 
     if (changingOnly)
     {
         QVector<CommFrame> changingFiltered;
         QHash<quint64, QByteArray> newSeen;
-        for (const CommFrame &f : filteredFrames)
+        for (const CommFrame &f : std::as_const(uniq))
         {
             quint64 ckey = changingKey(f);
             if (!lastSeenData.contains(ckey) || lastSeenData[ckey] != f.payload())
                 changingFiltered.append(f);
             newSeen[ckey] = f.payload();
         }
-        filteredFrames = changingFiltered;
+        uniq = changingFiltered;
         lastSeenData = newSeen;
+        rows.clear();
+        for (int i = 0; i < uniq.count(); i++) rows.insert(overwriteKey(uniq[i]), i);
     }
 
-    /*for (int i = 0; i < frames.count(); i++)
+    beginResetModel();
     {
-        if (filters[frames[i].frameId()] && busFilters[frames[i].bus])
-        {
-            filteredFrames.append(frames[i]);
-        }
-    }*/
-
+        QWriteLocker lk(&store.lock());
+        overwriteFrames = uniq;
+        overwriteRow = rows;
+        filteredSeqs.clear();
+        filteredSorted = false;
+        pendingPrune = false;
+        publishedRows = overwriteFrames.count();
+    }
     endResetModel();
-    mutex.unlock();
 }
 
 QVariant CommFrameModel::data(const QModelIndex &index, int role) const
@@ -470,10 +481,11 @@ QVariant CommFrameModel::data(const QModelIndex &index, int role) const
     if (!index.isValid())
         return QVariant();
 
-    if (index.row() >= (filteredFrames.count()))
+    const CommFrame *rowFrame = frameForRow(index.row());
+    if (!rowFrame) //out of range, or the ring dropped this row a moment ago (its removal is on its way)
         return QVariant();
 
-    thisFrame = filteredFrames.at(index.row());
+    thisFrame = *rowFrame;
 
     const unsigned char *data = reinterpret_cast<const unsigned char *>(thisFrame.payload().constData());
     int dataLen = thisFrame.payload().length();
@@ -969,17 +981,8 @@ const QMap<int, bool> *CommFrameModel::getLengthFiltersReference() const
 }
 
 
-void CommFrameModel::addFrame(const CommFrame& frame, bool autoRefresh = false)
+void CommFrameModel::registerFilters(const CommFrame &tempFrame)
 {
-    /*TODO: remove mutex */
-    mutex.lock();
-    CommFrame tempFrame;
-    tempFrame = frame;
-
-    tempFrame.setTimeStamp(CommFrame::TimeStamp(0, tempFrame.timeStamp().microSeconds() - timeOffset));
-
-    lastUpdateNumFrames++;
-
     //if this ID isn't found in the filters list then add it and show it enabled by default
     if (!filters.contains(tempFrame.frameId()))
     {
@@ -1017,143 +1020,168 @@ void CommFrameModel::addFrame(const CommFrame& frame, bool autoRefresh = false)
             needFilterRefresh = true;
         }
     }
+}
 
-    // Register frame type (classic / FD / FD+BRS ...) in typeFilters
-    registerFilterKeys(tempFrame, true);
+//One frame into the store and the trace's rows. The store's write lock is held; no signals here.
+void CommFrameModel::ingestLocked(const CommFrame &frame, bool applyOffset)
+{
+    CommFrame tempFrame = frame;
+    if (applyOffset)
+        tempFrame.setTimeStamp(CommFrame::TimeStamp(0, tempFrame.timeStamp().microSeconds() - timeOffset));
+
+    lastUpdateNumFrames++;
+    mIngested++;
+    registerFilters(tempFrame);
+
+    // Register frame type (classic / FD / FD+BRS ...) in typeFilters (a loaded file: always shown)
+    registerFilterKeys(tempFrame, applyOffset);
 
     if (!overwriteDups)
     {
-        try
+        bool show = false;
+        if (passesFrameFilters(tempFrame))
         {
-            frames.append(tempFrame);
-
-            if (passesFrameFilters(tempFrame))
+            show = true;
+            if (changingOnly)
             {
-                bool show = true;
-                if (changingOnly)
-                {
-                    quint64 ckey = changingKey(tempFrame);
-                    if (lastSeenData.contains(ckey) && lastSeenData[ckey] == tempFrame.payload())
-                        show = false;
-                    else
-                        lastSeenData[ckey] = tempFrame.payload();
-                }
-                if (show)
-                {
-                    if (autoRefresh) beginInsertRows(QModelIndex(), filteredFrames.count(), filteredFrames.count());
-                    tempFrame.setFrameCount(1);
-                    filteredFrames.append(tempFrame);
-                    if (autoRefresh) endInsertRows();
-                }
+                quint64 ckey = changingKey(tempFrame);
+                auto it = lastSeenData.find(ckey);
+                if (it != lastSeenData.end() && it.value() == tempFrame.payload())
+                    show = false;
+                else
+                    lastSeenData.insert(ckey, tempFrame.payload());
             }
         }
-        catch (const std::exception& ex)
-        {
-            qDebug() << "addFrame failed to append. App is probably going to crash. frames.length(): " << frames.length() << " Exception: " << ex.what();
-        }
+        tempFrame.setFrameCount(1);
+        const quint64 seq = store.endSeq();
+        if (store.append(tempFrame) > 0) pendingPrune = true;
+        if (show) filteredSeqs.push_back(seq);
     }
     else //yes, overwrite dups
     {
-        bool found = false;
-        bool dataChanged = true;
-//        for (int i = 0; i < frames.count(); i++)
-//        {
-//            if ( (frames[i].frameId() == tempFrame.frameId()) && (frames[i].bus == tempFrame.bus) )
-//            {
-//                tempFrame.frameCount = frames[i].frameCount + 1;
-//                tempFrame.timedelta = tempFrame.timeStamp().microSeconds() - frames[i].timeStamp().microSeconds();
-//                frames.replace(i, tempFrame);
-//                found = true;
-//                break;
-//            }
-//        }
-        for (int i = 0; i < filteredFrames.count(); i++)
+        const quint64 key = overwriteKey(tempFrame);
+        const int row = overwriteRow.value(key, -1);
+        if (row >= 0)
         {
-            if ( (filteredFrames[i].frameId() == tempFrame.frameId()) && (filteredFrames[i].getBus() == tempFrame.getBus()) )
+            const CommFrame &prev = overwriteFrames.at(row);
+            bool dataChanged = true;
+            tempFrame.setFrameCount(prev.getFrameCount() + 1);
+            tempFrame.setTimeDelta(tempFrame.timeStamp().microSeconds() - prev.timeStamp().microSeconds());
+            if (changingOnly)
             {
-                tempFrame.setFrameCount(filteredFrames[i].getFrameCount() + 1);
-                tempFrame.setTimeDelta(tempFrame.timeStamp().microSeconds() - filteredFrames[i].timeStamp().microSeconds());
-                if (changingOnly)
-                {
-                    quint64 ckey = changingKey(tempFrame);
-                    if (lastSeenData.contains(ckey) && lastSeenData[ckey] == tempFrame.payload())
-                        dataChanged = false;
-                    else
-                        lastSeenData[ckey] = tempFrame.payload();
-                }
-                if (dataChanged)
-                    filteredFrames.replace(i, tempFrame);
-                found = true;
-                break;
+                quint64 ckey = changingKey(tempFrame);
+                auto it = lastSeenData.find(ckey);
+                if (it != lastSeenData.end() && it.value() == tempFrame.payload())
+                    dataChanged = false;
+                else
+                    lastSeenData.insert(ckey, tempFrame.payload());
             }
+            if (dataChanged) overwriteFrames[row] = tempFrame;
+            store.append(tempFrame);
         }
-        frames.append(tempFrame);
-        if (!found)
+        else
         {
-            //frames.append(tempFrame);
+            store.append(tempFrame);
             if (passesFrameFilters(tempFrame))
             {
                 if (changingOnly)
                     lastSeenData[changingKey(tempFrame)] = tempFrame.payload();
-                if (autoRefresh) beginInsertRows(QModelIndex(), filteredFrames.count(), filteredFrames.count());
                 tempFrame.setFrameCount(1);
                 tempFrame.setTimeDelta(0);
-                filteredFrames.append(tempFrame);
-                if (autoRefresh) endInsertRows();
-            }
-        }
-        else if (dataChanged)
-        {
-            for (int j = 0; j < filteredFrames.count(); j++)
-            {
-                if ( (filteredFrames[j].frameId() == tempFrame.frameId()) && (filteredFrames[j].getBus() == tempFrame.getBus()) )
-                {
-                    if (autoRefresh) beginResetModel();
-                    filteredFrames.replace(j, tempFrame);
-                    if (autoRefresh) endResetModel();
-                }
+                overwriteRow.insert(key, overwriteFrames.count());
+                overwriteFrames.append(tempFrame);
             }
         }
     }
-
-    mutex.unlock();
 }
 
-
-void CommFrameModel::addFrames(const CANConnection*, const QVector<CommFrame>& pFrames)
+//Rows whose frames the ring has dropped: remove them from the index list and tell the views.
+void CommFrameModel::pruneTrimmed()
 {
-    if(frames.length() > frames.capacity() * 0.99)
-    {
-        mutex.lock();
-        qDebug() << "Frames count: " << frames.length() << " of " << frames.capacity() << " capacity, removing first " << (int)(frames.capacity() * 0.05) << " frames";
-        frames.remove(0, (int)(frames.capacity() * 0.05));
-        qDebug() << "Frames removed, new count: " << frames.length();
-        mutex.unlock();
-    }
+    if (!pendingPrune) return;
+    pendingPrune = false;
+    if (overwriteDups) return; //overwrite rows are copies; they don't point into the store
 
-    if(filteredFrames.length() > filteredFrames.capacity() * 0.99)
+    if (!filteredSorted)
     {
-        mutex.lock();
-        qDebug() << "filteredFrames count: " << filteredFrames.length() << " of " << filteredFrames.capacity() << " capacity, removing first " << (int)(filteredFrames.capacity() * 0.05) << " frames";
-        filteredFrames.remove(0, (int)(filteredFrames.capacity() * 0.05));
-        qDebug() << "filteredFrames removed, new count: " << filteredFrames.length();
-        mutex.unlock();
+        //seqs are in arrival order, so the dropped ones are a prefix
+        const quint64 first = store.firstSeq();
+        qsizetype r = 0;
+        const qsizetype n = qsizetype(filteredSeqs.size());
+        while (r < n && filteredSeqs[size_t(r)] < first) r++;
+        if (r == 0) return;
+        const qsizetype rp = std::min(r, publishedRows);
+        if (rp > 0) beginRemoveRows(QModelIndex(), 0, int(rp - 1));
+        {
+            QWriteLocker lk(&store.lock());
+            filteredSeqs.erase(filteredSeqs.begin(), filteredSeqs.begin() + r);
+            publishedRows -= rp;
+        }
+        if (rp > 0)
+        {
+            endRemoveRows();
+            emit framesTrimmed(int(rp));
+        }
     }
-
-    foreach(const CommFrame& frame, pFrames)
-    {
-        addFrame(frame);
-    }
-    if (overwriteDups) //if in overwrite mode we'll update every time frames come in
+    else
     {
         beginResetModel();
+        qsizetype removed;
+        {
+            QWriteLocker lk(&store.lock());
+            const quint64 first = store.firstSeq();
+            const qsizetype before = qsizetype(filteredSeqs.size());
+            filteredSeqs.erase(std::remove_if(filteredSeqs.begin(), filteredSeqs.end(),
+                                              [first](quint64 s) { return s < first; }),
+                               filteredSeqs.end());
+            removed = before - qsizetype(filteredSeqs.size());
+            publishedRows = qsizetype(filteredSeqs.size());
+        }
         endResetModel();
+        if (removed > 0) emit framesTrimmed(int(removed));
     }
+}
+
+//Announce rows added since the last call: one insert per call (and in overwrite mode one dataChanged).
+void CommFrameModel::publishRows()
+{
+    pruneTrimmed();
+    const qsizetype total = overwriteDups ? overwriteFrames.count() : qsizetype(filteredSeqs.size());
+    if (total > publishedRows)
+    {
+        beginInsertRows(QModelIndex(), int(publishedRows), int(total - 1));
+        publishedRows = total; //plain qsizetype read by the UI thread only; the views' size() uses the lists
+        endInsertRows();
+    }
+    if (overwriteDups && publishedRows > 0)
+        emit dataChanged(index(0, 0), index(int(publishedRows - 1), columnCount(QModelIndex()) - 1));
+}
+
+void CommFrameModel::addFrame(const CommFrame& frame, bool autoRefresh = false)
+{
+    {
+        QWriteLocker lk(&store.lock());
+        ingestLocked(frame, true);
+    }
+    if (autoRefresh) publishRows();
+    else pruneTrimmed();
+}
+
+//A batch of frames from a connection (CANConManager's 20 ms drain of its queue, on the GUI thread).
+//The frames are stored at once; the views hear about them on the next GUI tick (sendBulkRefresh).
+void CommFrameModel::addFrames(const CANConnection*, const QVector<CommFrame>& pFrames)
+{
+    {
+        QWriteLocker lk(&store.lock());
+        for (const CommFrame &frame : pFrames)
+            ingestLocked(frame, true);
+    }
+    pruneTrimmed();
 }
 
 void CommFrameModel::sendRefresh()
 {
-    qDebug() << "Sending mass refresh";    
+    qDebug() << "Sending mass refresh";
 
     if(overwriteDups)
     {
@@ -1161,78 +1189,77 @@ void CommFrameModel::sendRefresh()
     }
     else
     {
-        QVector<CommFrame> tempContainer;
-        int count = frames.count();
-        for (int i = 0; i < count; i++)
+        std::deque<quint64> seqs;
+        for (quint64 s = store.firstSeq(); s < store.endSeq(); s++)
         {
-            if (passesFrameFilters(frames[i]))
-            {
-                tempContainer.append(frames[i]);
-            }
+            if (passesFrameFilters(store.bySeq(s))) seqs.push_back(s);
         }
 
         if (changingOnly)
         {
-            QVector<CommFrame> changingFiltered;
+            std::deque<quint64> changingFiltered;
             QHash<quint64, QByteArray> newSeen;
-            for (const CommFrame &f : tempContainer)
+            for (quint64 s : seqs)
             {
+                const CommFrame &f = store.bySeq(s);
                 quint64 ckey = changingKey(f);
-                if (!newSeen.contains(ckey) || newSeen[ckey] != f.payload())
+                auto it = newSeen.find(ckey);
+                if (it == newSeen.end() || it.value() != f.payload())
                 {
-                    newSeen[ckey] = f.payload();
-                    changingFiltered.append(f);
+                    newSeen.insert(ckey, f.payload());
+                    changingFiltered.push_back(s);
                 }
             }
-            tempContainer = changingFiltered;
+            seqs.swap(changingFiltered);
             lastSeenData = newSeen;
         }
 
-        mutex.lock();
         beginResetModel();
-        filteredFrames.clear();
-        filteredFrames.append(tempContainer);
-        filteredFrames.reserve(preallocSize);
+        {
+            QWriteLocker lk(&store.lock());
+            filteredSeqs.swap(seqs);
+            filteredSorted = false;
+            pendingPrune = false;
+            publishedRows = qsizetype(filteredSeqs.size());
+        }
         lastUpdateNumFrames = 0;
         endResetModel();
-        mutex.unlock();
     }
 }
 
 void CommFrameModel::sendRefresh(int pos)
 {
-    beginInsertRows(QModelIndex(), pos, pos);
-    endInsertRows();
+    Q_UNUSED(pos);
+    publishRows();
 }
 
-//issue a refresh for the last num entries in the model.
-//used by the serial worker to do batch updates so it doesn't
-//have to send thousands of messages per second
+//issue a refresh for the entries added since the last call (GUI tick, every 250 ms).
+//Returns the number of frames that came in, as before.
 int CommFrameModel::sendBulkRefresh()
 {
-    //int num = filteredFrames.count() - lastUpdateNumFrames;
+    publishRows();
     if (lastUpdateNumFrames <= 0) return 0;
-
-    if (lastUpdateNumFrames == 0 && !overwriteDups) return 0;
-    //if (filteredFrames.count() == 0) return 0;
-
-    //qDebug() << "Bulk refresh of " << lastUpdateNumFrames;
-
-    beginResetModel();
-    endResetModel();
-
     int num = lastUpdateNumFrames;
     lastUpdateNumFrames = 0;
-
     return num;
 }
 
 void CommFrameModel::clearFrames()
 {
-    mutex.lock();
     this->beginResetModel();
-    frames.clear();
-    filteredFrames.clear();
+    {
+        QWriteLocker lk(&store.lock());
+        store.clear();
+        store.setCapacity(preallocSize); //a file load may have grown it
+        mWrappedBase = store.totalWrapped();
+        mIngested = 0;
+        filteredSeqs.clear();
+        filteredSorted = false;
+        overwriteFrames.clear();
+        overwriteRow.clear();
+        pendingPrune = false;
+        publishedRows = 0;
+    }
     if(filtersPersistDuringClear == false)
     {
         filters.clear();
@@ -1242,11 +1269,8 @@ void CommFrameModel::clearFrames()
         typeFilters.clear();
     }
     lastSeenData.clear();
-    frames.reserve(preallocSize);
-    filteredFrames.reserve(preallocSize);
-    this->endResetModel();
     lastUpdateNumFrames = 0;
-    mutex.unlock();
+    this->endResetModel();
 
     emit updatedFiltersList();
 }
@@ -1258,55 +1282,31 @@ void CommFrameModel::clearFrames()
  */
 void CommFrameModel::insertFrames(const QVector<CommFrame> &newFrames)
 {
-    //not resetting the model here because the serial worker automatically does a bulk refresh every 1/4 second
-    //and that refresh will cause the view to update. If you do both it usually ends up thinking you have
-    //double the number of frames.
-    //beginResetModel();
-    mutex.lock();
-    // int insertedFiltered = 0;
-    for (int i = 0; i < newFrames.count(); i++)
     {
-        frames.append(newFrames[i]);
-        if (!filters.contains(newFrames[i].frameId()))
-        {
-            filters.insert(newFrames[i].frameId(), true);
-            needFilterRefresh = true;
-        }
-        if (filters[newFrames[i].frameId()])
-        {
-            busFilters.insert(newFrames[i].getBus(), true);
-            needFilterRefresh = true;
-        }
-        {
-            int dir = newFrames[i].isReceived() ? 1 : 0;
-            if (!dirFilters.contains(dir)) { dirFilters.insert(dir, true); needFilterRefresh = true; }
-            int len = newFrames[i].payload().length();
-            if (!lengthFilters.contains(len)) { lengthFilters.insert(len, true); needFilterRefresh = true; }
-            registerFilterKeys(newFrames[i], false);
-        }
-        if (passesFrameFilters(newFrames[i]))
-        {
-            // insertedFiltered++;
-            filteredFrames.append(newFrames[i]);
-        }
+        QWriteLocker lk(&store.lock());
+        //a loaded file is kept whole: grow the ring if the file is bigger than MaximumFrames
+        //(clearFrames() puts the capacity back)
+        const qsizetype need = store.size() + newFrames.count();
+        if (need > store.capacity()) store.setCapacity(need + store.chunkFrames());
+        for (const CommFrame &f : newFrames)
+            ingestLocked(f, false);
     }
     lastUpdateNumFrames = newFrames.count();
-    mutex.unlock();
-    //endResetModel();
-    //beginInsertRows(QModelIndex(), filteredFrames.count() + 1, filteredFrames.count() + insertedFiltered);
-    //endInsertRows();
+    publishRows();
     if (needFilterRefresh) emit updatedFiltersList();
 }
 
 int CommFrameModel::getIndexFromTimeID(unsigned int ID, double timestamp)
 {
+    //returns a row of the trace (the caller selects it in the view)
     int bestIndex = -1;
     int64_t intTimeStamp = static_cast<int64_t> (timestamp * 1000000l);
-    for (int i = 0; i < frames.count(); i++)
+    for (int i = 0; i < publishedRows; i++)
     {
-        if ((frames[i].frameId() == ID))
+        const CommFrame *f = frameForRow(i);
+        if (f && f->frameId() == ID)
         {
-            if (frames[i].timeStamp().microSeconds() <= intTimeStamp) bestIndex = i;
+            if (f->timeStamp().microSeconds() <= intTimeStamp) bestIndex = i;
             else break; //drop out of loop as soon as we pass the proper timestamp
         }
     }
@@ -1398,20 +1398,27 @@ bool CommFrameModel::needsFilterRefresh()
 }
 
 /*
- *This used to not be const correct but it is now. So, there's little harm in
- * allowing external code to peek at our frames. There's just no touching.
- * This ability to get a direct read-only reference speeds up a variety of
- * external code that needs to access frames directly and doesn't care about
- * this model's normal output mechanism.
+ * Read-only views for other windows. They lock the store for every access and return copies, so
+ * they may be used from another thread (the frame sender). See framestore.h.
  */
-const QVector<CommFrame>* CommFrameModel::getListReference() const
+const FrameListView* CommFrameModel::getListReference() const
 {
-    return &frames;
+    return &allView;
 }
 
-const QVector<CommFrame>* CommFrameModel::getFilteredListReference() const
+const FrameListView* CommFrameModel::getFilteredListReference() const
 {
-    return &filteredFrames;
+    return &filteredView;
+}
+
+quint64 CommFrameModel::framesWrapped() const
+{
+    return store.totalWrapped() - mWrappedBase;
+}
+
+qsizetype CommFrameModel::storeCapacity() const
+{
+    return store.capacity();
 }
 
 const QMap<int, bool>* CommFrameModel::getFiltersReference() const

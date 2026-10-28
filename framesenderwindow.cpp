@@ -25,7 +25,7 @@ static const QList<int> fileColumnOrder = {
  * Also, rows default to enabled which is odd because the button state does not reflect that.
 */
 
-FrameSenderWindow::FrameSenderWindow(const QVector<CommFrame> *frames, QWidget *parent) :
+FrameSenderWindow::FrameSenderWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::FrameSenderWindow)
 {

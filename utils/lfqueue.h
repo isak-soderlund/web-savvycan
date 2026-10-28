@@ -37,6 +37,12 @@ public:
         return true;
     }
 
+    // web-savvycan: frames waiting (approximate while the other side is running)
+    int count() const {
+        if (mSize <= 0) return 0;
+        return (mWIdx.loadAcquire() - mRIdx.loadAcquire() + mSize) % mSize;
+    }
+
     void flush() {
         mRIdx.storeRelease(0);
         mWIdx.storeRelease(0);

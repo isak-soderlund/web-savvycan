@@ -2,6 +2,7 @@
 #define FRAMEINFOWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include <QFile>
 #include <QListWidget>
 #include <QTreeWidget>
@@ -21,7 +22,7 @@ class FrameInfoWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit FrameInfoWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit FrameInfoWindow(const FrameListView *frames, QWidget *parent = 0);
     ~FrameInfoWindow();
     void showEvent(QShowEvent*);
 
@@ -41,7 +42,7 @@ private:
 
     QList<int> foundID;
     QList<CommFrame> frameCache;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     bool useOpenGL;
     bool useHexTicker;
     static const QColor byteGraphColors[64];

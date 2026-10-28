@@ -64,3 +64,6 @@ dist/
 dist-exp/
 scripts/node_modules/
 aqtinstall.log
+
+# web-savvycan: local build trees
+build-*/

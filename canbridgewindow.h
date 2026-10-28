@@ -2,6 +2,7 @@
 #define CANBRIDGEWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include "connections/canconmanager.h"
 
 namespace Ui {
@@ -13,7 +14,7 @@ class CANBridgeWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit CANBridgeWindow(const QVector<CommFrame> *frames, QWidget *parent = nullptr);
+    explicit CANBridgeWindow(const FrameListView *frames, QWidget *parent = nullptr);
     ~CANBridgeWindow();
     void showEvent(QShowEvent*);
 
@@ -24,7 +25,7 @@ private slots:
 
 private:
     Ui::CANBridgeWindow *ui;
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     QMap<int, bool> foundIDSide1;
     QMap<int, bool> foundIDSide2;
     int side1BusNum;

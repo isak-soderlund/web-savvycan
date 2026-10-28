@@ -2,6 +2,7 @@
 #define FRAMESENDEROBJECT_H
 
 #include <QElapsedTimer>
+#include "framestore.h"
 #include <QTimer>
 #include <QHash>
 #include <QThread>
@@ -17,7 +18,7 @@ class FrameSenderObject : public QObject
     Q_OBJECT
 
 public:
-    FrameSenderObject(const QVector<CommFrame> *frames);
+    FrameSenderObject(const FrameListView *frames);
     ~FrameSenderObject();
 
 public slots:
@@ -56,7 +57,7 @@ private:
     QList<FrameSendData> sendingData;
     QThread*            mThread_p;    
     QHash<int, CommFrame> frameCache; //hash with frame ID as the key and the most recent frame as the value
-    const QVector<CommFrame> *modelFrames;
+    const FrameListView *modelFrames;
     bool inhibitChanged = false;
     QMutex mutex;
     DBCHandler *dbcHandler;

@@ -2,6 +2,7 @@
 #define ISOTP_INTERPRETERWINDOW_H
 
 #include <QDialog>
+#include "framestore.h"
 #include <QListWidgetItem>
 #include "bus_protocols/isotp_handler.h"
 #include "bus_protocols/uds_handler.h"
@@ -59,7 +60,7 @@ class ISOTP_InterpreterWindow : public QDialog
     Q_OBJECT
 
 public:
-    explicit ISOTP_InterpreterWindow(const QVector<CommFrame> *frames, QWidget *parent = 0);
+    explicit ISOTP_InterpreterWindow(const FrameListView *frames, QWidget *parent = 0);
     ~ISOTP_InterpreterWindow();
     void showEvent(QShowEvent*);
 
@@ -82,7 +83,7 @@ private:
     UDS_HANDLER *udsDecoder;
 
     ISOTP_InterpreterModel msgModel;
-    const QVector<CommFrame> *rawFrames;
+    const FrameListView *rawFrames;
     QHash<int, bool> idFilters;
 
     void closeEvent(QCloseEvent *event);
