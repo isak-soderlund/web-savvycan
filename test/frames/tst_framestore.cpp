@@ -25,7 +25,10 @@ private:
     }
     static quint32 rowId(const CommFrameModel &m, int row)
     {
-        return m.data(m.index(row, int(Column::FrameId)), Qt::DisplayRole).toString().toUInt(nullptr, 16);
+        // the row's frame as the windows see it (the ID column shows 11-bit IDs masked); the display
+        // path itself must give a value for every row
+        if (!m.data(m.index(row, int(Column::FrameId)), Qt::DisplayRole).isValid()) return 0xFFFFFFFFu;
+        return m.getFilteredListReference()->at(row).frameId();
     }
 
 private slots:
@@ -92,6 +95,7 @@ private slots:
         QCOMPARE(big.chunkFrames(), FrameStore::DefaultChunkFrames);
         for (int i = 0; i < 5000; i++) small.append(makeFrame(quint32(i), 8));
         QVERIFY(small.size() <= 1000 && small.size() > 1000 - 256);
+        QCOMPARE(small.totalWrapped() + quint64(small.size()), quint64(5000));
     }
 
     void store_shrinkCapacity()

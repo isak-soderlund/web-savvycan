@@ -11,11 +11,6 @@ FrameStore::FrameStore(qsizetype capacityFrames, qsizetype chunkFrames)
     if (mAutoChunk) setCapacity(capacityFrames);
 }
 
-qsizetype FrameStore::maxChunks() const
-{
-    return std::max<qsizetype>(2, mCapacity / mChunk);
-}
-
 void FrameStore::setCapacity(qsizetype capacityFrames)
 {
     mCapacity = capacityFrames;
@@ -24,31 +19,33 @@ void FrameStore::setCapacity(qsizetype capacityFrames)
         //while empty, size the chunks to the window: a wrap drops 1/16 of it (at most 64k frames)
         mChunk = std::clamp<qsizetype>(capacityFrames / 16, 256, DefaultChunkFrames);
     }
-    // shrink now if needed (whole chunks from the front, never the chunk being filled)
-    while (qsizetype(mChunks.size()) > maxChunks())
-    {
-        const quint64 n = std::min<quint64>(quint64(mChunks.front().size()), mEndSeq - mFirstSeq);
-        mChunks.pop_front();
-        mFirstSeq += quint64(mChunk);
-        mTotalWrapped += n;
-    }
+    //shrink now if needed: whole chunks from the front (the front chunk is full when there are two or more)
+    while (size() > mCapacity && mChunks.size() >= 2)
+        dropFrontChunk();
+}
+
+void FrameStore::dropFrontChunk()
+{
+    const quint64 n = quint64(mChunks.front().size());
+    mChunks.pop_front();
+    mFirstSeq += n;
+    mTotalWrapped += n;
 }
 
 qsizetype FrameStore::append(const CommFrame &frame)
 {
     qsizetype dropped = 0;
+    //full: drop the oldest chunk, so the store holds between capacity - chunk and capacity frames.
+    //(Only with two chunks or more: a capacity below two chunks is exceeded rather than emptied.)
+    if (size() >= mCapacity && mChunks.size() >= 2)
+    {
+        dropped = qsizetype(mChunks.front().size());
+        dropFrontChunk();
+    }
     if (mChunks.empty() || qsizetype(mChunks.back().size()) == mChunk)
     {
-        if (qsizetype(mChunks.size()) >= maxChunks())
-        {
-            dropped = qsizetype(mChunks.front().size());
-            mChunks.pop_front();
-            mFirstSeq += quint64(mChunk);
-            mTotalWrapped += quint64(dropped);
-        }
         mChunks.emplace_back();
         mChunks.back().reserve(size_t(mChunk)); // never reallocated after this: frames don't move
-        if (mChunks.size() == 1) mFirstSeq = mEndSeq; // first chunk after construction or clear()
     }
     mChunks.back().push_back(frame);
     ++mEndSeq;

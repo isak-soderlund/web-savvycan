@@ -42,8 +42,8 @@ public:
 
     // ---- writer side (caller holds lock() for writing when other threads may read) ----
 
-    // Maximum number of frames kept. The store holds between capacity - chunk and capacity frames
-    // once it has wrapped. At least two chunks are kept.
+    // Maximum number of frames kept. Once it has wrapped the store holds between capacity - chunk
+    // and capacity frames (a capacity below two chunks is exceeded up to two chunks).
     void setCapacity(qsizetype capacityFrames);
     qsizetype capacity() const { return mCapacity; }
     qsizetype chunkFrames() const { return mChunk; }
@@ -75,7 +75,7 @@ public:
 
 private:
     using Chunk = std::vector<CommFrame>;
-    qsizetype maxChunks() const;
+    void dropFrontChunk();
 
     std::deque<Chunk> mChunks;
     quint64 mFirstSeq = 0;       // seq of mChunks.front()[0] (chunk aligned)

@@ -1550,7 +1550,8 @@ void MainWindow::handleSaveFile()
 {
     QString filename;
 
-    if (FrameFileIO::saveFrameFile(filename, model->getListReference()))
+    const QVector<CommFrame> snapshot = model->getListReference()->toVector();
+    if (FrameFileIO::saveFrameFile(filename, &snapshot))
     {
         loadedFileName = filename;
         updateFileStatus();
