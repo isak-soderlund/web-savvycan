@@ -74,11 +74,17 @@ async function run(browser, base, protocol) {
   page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
   await page.addInitScript({ content: `${FAKE_SRC}\n;RC1Fake.installWebSerial({ granted: ${GRANTED} });` });
   await page.goto(`${base}/SavvyCAN.html`);
-  const started = await waitFor(page, () => document.querySelector('canvas, [role=application], .qt-window'), null, 60000);
+  // Qt 6.12 puts its windows in a shadow root (#qt-shadow-container): document.querySelector can't see them.
+  // Its accessibility tree starts empty but for a visually hidden "Enable Screen Reader" button, which only reacts to a
+  // DOM click (Playwright's click on it does nothing); after that, menus and widgets are reachable by role.
+  const shadowButton = () => {
+    const r = document.querySelector('#qt-shadow-container');
+    return r && r.shadowRoot && r.shadowRoot.querySelector('button.hidden-visually-read-by-screen-reader');
+  };
+  const started = await waitFor(page, `!!(${shadowButton})()`, null, 60000);
   check(started, `${protocol}: app started`);
-  await page.waitForTimeout(1500);
-  const a11y = page.getByRole('button', { name: /enable screen reader/i });
-  if (await a11y.count()) await a11y.first().click({ force: true });
+  await page.waitForTimeout(1000);
+  await page.evaluate(`(${shadowButton})().click()`);
 
   try {
     await click(page, 'menuitem', 'Connection');
@@ -118,10 +124,17 @@ async function run(browser, base, protocol) {
     check(sig && !sig.dataTerminalReady && !sig.requestToSend, `gvret: DTR/RTS low (${JSON.stringify(sig)})`);
     // The bus: SavvyCAN's own bus settings in the connection window.
     try {
-      await page.getByRole('checkbox', { name: 'Enable Bus', exact: false }).first().check({ force: true, timeout: 5000 });
+      // Its checkboxes have no names of their own (their labels aren't buddies): all read "Bus Details:", in the .ui's
+      // order Listen only, Enable, CAN FD.
+      let enable = page.getByRole('checkbox', { name: 'Enable Bus', exact: false });
+      if (!(await enable.count())) enable = page.getByRole('checkbox', { name: 'Bus Details:' }).nth(1);
+      await enable.first().click({ force: true, timeout: 5000 });
       await click(page, 'button', 'Save Bus Settings');
     } catch (e) {
-      console.log(`note gvret: bus settings UI not reached (${e.message.split('\n')[0]})`);
+      const snap = await page.accessibility.snapshot().catch(() => null);
+      const flat = (n) => (n ? [`${n.role} "${n.name}"`].concat(...(n.children || []).map(flat)) : []);
+      const names = flat(snap).filter((l) => /^(checkbox|button|combobox|spinbutton|row|cell)/.test(l));
+      console.log(`note gvret: bus settings UI not reached (${e.message.split('\n')[0]}); controls: ${names.slice(0, 60).join(', ')}`);
     }
   }
   const open = await waitFor(page, () => window.__rc1.stats().channel.open, null, 10000);

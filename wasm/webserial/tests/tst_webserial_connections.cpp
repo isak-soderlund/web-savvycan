@@ -102,8 +102,11 @@ private slots:
         QVERIFY(!sig.isEmpty());
         QVERIFY(!sig[0].dtr && !sig[0].rts);
 
-        // Bus setup through GVRET's own commands: 500 kbit/s, CAN FD at 2 Mbit/s, on.
+        // Bus setup through GVRET's own commands: 500 kbit/s, CAN FD at 2 Mbit/s, on. Starting from the bus as the
+        // device reported it (FD capable, from its GET_FD reply), as the connection window does.
         CANBus bus;
+        QVERIFY(c->getBusSettings(0, bus));
+        QVERIFY(bus.isCanFDCapable());
         bus.setSpeed(500000);
         bus.setActive(true);
         bus.setListenOnly(false);
@@ -137,6 +140,8 @@ private slots:
         tx.setBus(0);
         QVERIFY(c->sendFrame(tx));
         QVERIFY(waitLog(QStringLiteral("tx 321 deadbeef")));
+        QTest::qWait(100);
+        drain(c); // SavvyCAN queues its own transmitted frame for the trace
 
         // Many frames at once: one batch, nothing lost.
         for (int i = 0; i < 2000; ++i) rc1->busFrame(0x100 + (i % 16), QByteArray(8, char(i)));
