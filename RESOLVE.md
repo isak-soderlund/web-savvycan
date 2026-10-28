@@ -99,7 +99,7 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 - Work on branches, merge into `main` here. Commit messages end with the repo's Co-Authored-By line.
 - **Don't test on the real rc1** (the rig runs scheduled tests); use the fake GVRET device and the browser mock.
 - **Heavy jobs** (Qt/WebAssembly and desktop builds, sanitizer runs, Lighthouse) only through
-  `~/.local/share/web-savvycan/heavy.sh <cmd>`: one at a time, in web-savvycan's own memory slice (`wscjobs.slice`,
+  `scripts/heavy.sh <cmd>` (`~/.local/share/web-savvycan/heavy.sh` links to it): one at a time, in web-savvycan's own memory slice (`wscjobs.slice`,
   3G), separate from resolve-can's `rcanjobs.slice` where the rig's Windows VM runs (on 2026-10-28 a build in that
   shared slice got the VM killed). `-j$WSC_JOBS`; exit 137 = lower `-j`, never raise the cap.
 
@@ -117,3 +117,16 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 | **Fork drift** | Upstream QT6WIP moves fast | Upstream changes taken in deliberately (merge from `upstream`), never automatically |
 | **GPL** | Hosting a build without its source | This public repo; each hosted build names its commit |
 | **Rig** | Heavy builds starve the rig's night tests | memcap + one build at a time (the lock above) |
+
+## After the MVP (owner 2026-10-28)
+
+A **"Karpathy-style" simplification review** of everything we added (Web Serial, frame store, logging, theme/UI, build
+scripts, tests): less code, fewer abstractions and layers, delete what stage 1 doesn't need, plain readable code over
+cleverness, one way to do each thing (e.g. one serial mock, one build path). Findings fixed on a branch, tests kept green.
+
+## Decisions on the build (2026-10-28)
+
+- Stage 1's web build leaves the scripting window (Qt Qml) out (`WEB_SAVVYCAN_SCRIPTING=OFF` for wasm): 5.7 MB less;
+  scripting returns with its stage.
+- Ship with `--gzip-loader` (the page fetches `SavvyCAN.wasm.gz` and unpacks it; every file under Oxygen's 20 MB).
+  Building Qt from source for JSPI (smaller still) is deferred.
