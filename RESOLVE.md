@@ -43,6 +43,13 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 - **Logging:** `test/web` (Playwright; `run-disklog-tests.sh`): the download's bytes equal SavvyCAN's own rows and load in the
   desktop SavvyCAN (`test/nativecsv`), Chromium and Firefox; the app with the fake rc1 (every frame sent is in the
   download); a multi-GB log (`--project=chromium-large`, through `heavy.sh`). Crash test only with `LOG_TO_DISK_LIVE`.
+  Measured 2026-10-28 (headless, rows copied out of a fixed "wasm heap" buffer, 3G `heavy.sh` slice): page JS heap
+  1 MB and wasm heap flat throughout; collecting at ~520-590 MB/s.
+  - **Chromium:** 2, 3, 4, 6 and 8 GB logs downloaded byte-exact (SHA-256); its blob storage holds ~2 GB in RAM
+    (browser PSS peak 2.2-2.6 GB) and pages the rest into the profile's `blob_storage` on disk; 8 GB downloaded in
+    53 s. One of three 4 GB runs ended with the download "canceled" (not seen again in 7 later runs up to 8 GB).
+  - **Firefox:** the log stays in RAM (~1.1x its size while logging) and the download roughly doubles it: 0.5 GB
+    fine (peak 1.4 GB); 1 GB was killed by the 3G slice at the download. Firefox's limit is the PC's free RAM / 2.
 - **Sanitizers:** AddressSanitizer and ThreadSanitizer runs of the desktop build of the same tree.
 
 ## Stages switched on: `enabledfeatures.h`
