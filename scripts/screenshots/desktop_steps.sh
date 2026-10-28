@@ -20,7 +20,8 @@ xdotool key Escape
 xdotool mousemove 178 10 click 1            # Help > About web-savvycan
 sleep 0.5; xdotool key Down Return
 pic about
-xdotool search --name "About web-savvycan" windowclose 2>/dev/null || xdotool key Escape
+xdotool key Return                           # Close (default button; About runs with exec())
+sleep 1
 sleep 0.5
 xdotool mousemove 20 10 click 1             # File > Preferences (second from the bottom)
 sleep 0.5; xdotool key Up Up Return
