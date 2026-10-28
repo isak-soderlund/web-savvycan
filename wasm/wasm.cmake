@@ -22,3 +22,6 @@ else()
     target_link_options(SavvyCAN PRIVATE "-sASYNCIFY")
 endif()
 target_link_options(SavvyCAN PRIVATE ${WEB_SAVVYCAN_WASM_LINK_OPT})
+# No eval()/new Function() in the generated JS, so the page runs under a CSP without 'unsafe-eval'
+# (only 'wasm-unsafe-eval'); the shop's /resolve-can/savvycan route (website PR #76) needs this.
+target_link_options(SavvyCAN PRIVATE "-sDYNAMIC_EXECUTION=0")

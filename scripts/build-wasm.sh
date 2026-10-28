@@ -7,6 +7,8 @@
 #   --opt       optimisation level for our code and the link (default -Oz)
 #   --wasm-opt  an extra `wasm-opt -Oz` pass over the linked .wasm before it goes to dist/
 #   --dist      output directory (default dist/)
+#   Defaults (2026-10-28): --gzip-loader on (--no-gzip-loader for the raw .wasm), scripting window off
+#               (--scripting to build it; stage 1 doesn't use it, 5.7 MB less).
 #   --gzip-loader  ship the wasm only as SavvyCAN.wasm.gz: the page fetches it and decompresses it
 #               with DecompressionStream('gzip') (Chrome 80+, Firefox 113+, Safari 16.4+), so no file
 #               is over a static host's 20 MB limit (Shopify Oxygen). The raw .wasm is left out.
@@ -29,7 +31,7 @@ fi
 [ -n "${QT_WASM:-}" ] && [ -n "${QT_DESKTOP:-}" ] || { echo "QT_WASM/QT_DESKTOP not set (run scripts/setup-toolchain.sh)" >&2; exit 1; }
 command -v emcc >/dev/null || { echo "emcc not on PATH (source $ENV_FILE)" >&2; exit 1; }
 
-CLEAN=0 JSPI=OFF OPT=-Oz WASMOPT=0 GZLOADER=0 DIST="$ROOT/dist" JOBS="${WSC_JOBS:-2}" EXTRA=()
+CLEAN=0 JSPI=OFF OPT=-Oz WASMOPT=0 GZLOADER=1 SCRIPTING=OFF DIST="$ROOT/dist" JOBS="${WSC_JOBS:-2}" EXTRA=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --clean) CLEAN=1 ;;
@@ -37,6 +39,8 @@ while [ $# -gt 0 ]; do
         --opt) OPT="$2"; shift ;;
         --wasm-opt) WASMOPT=1 ;;
         --gzip-loader) GZLOADER=1 ;;
+        --no-gzip-loader) GZLOADER=0 ;;
+        --scripting) SCRIPTING=ON ;;
         --dist) DIST="$(realpath -m "$2")"; shift ;;
         -j) JOBS="$2"; shift ;;
         --) shift; EXTRA=("$@"); break ;;
@@ -55,7 +59,7 @@ command -v ccache >/dev/null && LAUNCHER=(-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -
 echo "== wasm ($OPT, JSPI=$JSPI) -> $B"
 "$QT_WASM/bin/qt-cmake" -S "$ROOT" -B "$B" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DQT_HOST_PATH="$QT_DESKTOP" \
-    -DWEB_SAVVYCAN_JSPI="$JSPI" -DWEB_SAVVYCAN_WASM_LINK_OPT="$OPT" \
+    -DWEB_SAVVYCAN_JSPI="$JSPI" -DWEB_SAVVYCAN_WASM_LINK_OPT="$OPT" -DWEB_SAVVYCAN_SCRIPTING="$SCRIPTING" \
     "${LAUNCHER[@]}" "${EXTRA[@]}"
 cmake --build "$B" -j "$JOBS"
 
