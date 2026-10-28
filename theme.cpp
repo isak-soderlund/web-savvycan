@@ -47,9 +47,6 @@ Theme::Mode Theme::modeFromString(const QString &s)
 
 void Theme::init()
 {
-    if (m_initialised) return;
-    m_initialised = true;
-
     m_lightStyleName = QApplication::style()->name();
 
     QSettings settings;
@@ -80,12 +77,7 @@ void Theme::init()
 
 void Theme::setMode(Mode mode)
 {
-    QSettings settings;
-    settings.setValue("Main/Theme", modeToString(mode));
-    if (mode == m_mode && m_initialised) {
-        apply();
-        return;
-    }
+    QSettings().setValue("Main/Theme", modeToString(mode));
     m_mode = mode;
     apply();
 }
@@ -207,30 +199,16 @@ bool Theme::eventFilter(QObject *obj, QEvent *event)
     return QObject::eventFilter(obj, event);
 }
 
-QColor Theme::plotBackground()
-{
-    return s_dark ? QColor(0x1e, 0x1e, 0x1e) : QColor(Qt::white);
-}
-
-QColor Theme::plotForeground()
-{
-    return s_dark ? QColor(0xd0, 0xd0, 0xd0) : QColor(Qt::black);
-}
-
-QColor Theme::plotGrid()
-{
-    return s_dark ? QColor(0x4a, 0x4a, 0x4a) : QColor(200, 200, 200);
-}
-
 void Theme::applyToPlot(QCustomPlot *plot)
 {
     if (!plot) return;
 
-    const QColor fg = plotForeground();
-    const QColor grid = plotGrid();
+    const QColor background = s_dark ? QColor(0x1e, 0x1e, 0x1e) : QColor(Qt::white);
+    const QColor fg = s_dark ? QColor(0xd0, 0xd0, 0xd0) : QColor(Qt::black);
+    const QColor grid = s_dark ? QColor(0x4a, 0x4a, 0x4a) : QColor(200, 200, 200);
     const QColor subGrid = s_dark ? QColor(0x36, 0x36, 0x36) : QColor(220, 220, 220);
 
-    plot->setBackground(QBrush(plotBackground()));
+    plot->setBackground(QBrush(background));
 
     const QList<QCPAxisRect *> rects = plot->axisRects();
     for (QCPAxisRect *rect : rects) {
@@ -251,7 +229,7 @@ void Theme::applyToPlot(QCustomPlot *plot)
     }
 
     if (plot->legend) {
-        plot->legend->setBrush(QBrush(plotBackground()));
+        plot->legend->setBrush(QBrush(background));
         plot->legend->setBorderPen(QPen(fg));
         plot->legend->setTextColor(fg);
         plot->legend->setSelectedTextColor(QColor(0x50, 0x90, 0xff));

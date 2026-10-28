@@ -13,7 +13,6 @@ public:
     explicit AboutDialog(QWidget *parent = nullptr);
 
     static QString gitCommit();     // the commit this build was made from ("+dirty" if changed)
-    static QString sourceUrl();     // https://github.com/isak-soderlund/web-savvycan[/tree/<commit>]
 };
 
 #endif // ABOUTDIALOG_H
