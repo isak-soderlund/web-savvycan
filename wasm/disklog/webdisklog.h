@@ -19,7 +19,8 @@ public:
     enum class Mode {
         PromptForName,   // the browser's save dialog names the file
         StartTimeName,   // created in the remembered log folder, named by the start time
-        Download         // streaming download (browsers without the File System Access API)
+        Download,        // streaming download (browsers without the File System Access API)
+        BlobDownload     // collected in the page, one normal download on stop (the MVP, every browser)
     };
     Q_ENUM(Mode)
 
@@ -29,9 +30,11 @@ public:
     QString backend() const;
 
     // splitBytes (StartTimeName only): continue in <name>_part002.csv, ... once a file has this size
-    void start(Mode mode, const QByteArray &header, qint64 splitBytes = 0);
-    bool write(const QByteArray &rows);   // false when no log is open
-    void stop();
+    // suggestedName: the file's name (BlobDownload, Download, PromptForName); empty: by the start time
+    void start(Mode mode, const QByteArray &header, qint64 splitBytes = 0, const QString &suggestedName = QString());
+    bool write(const QByteArray &rows, int frames = 0);   // false when no log is open
+    // downloadName (BlobDownload): the name the download gets; empty: the one it started with
+    void stop(const QString &downloadName = QString());
 
     bool isActive() const { return m_active; }
     bool isStarting() const { return m_starting; }
@@ -41,6 +44,8 @@ public:
     qint64 committedBytes() const { return m_committedBytes; }
     qint64 lastCommitMSecsSinceEpoch() const { return m_lastCommit; }
     int part() const { return m_part; }
+    qint64 bytesWritten() const { return m_bytesWritten; }   // header + rows handed over so far
+    qint64 framesWritten() const { return m_framesWritten; }
 
     // The remembered log folder: answered by directoryInfo()
     void queryDirectory();
@@ -70,6 +75,8 @@ private:
     qint64 m_committedBytes = 0;
     qint64 m_lastCommit = 0;
     int m_part = 1;
+    qint64 m_bytesWritten = 0;
+    qint64 m_framesWritten = 0;
 };
 
 #endif // WEBDISKLOG_H

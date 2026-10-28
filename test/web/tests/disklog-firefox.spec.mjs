@@ -1,15 +1,15 @@
-// SavvyDiskLog in Firefox: no File System Access API, so the streaming download (disklog-sw.js).
+// SavvyDiskLog in Firefox, live logging (LOG_TO_DISK_LIVE, off in the MVP): no File System Access API, so the streaming download (disklog-sw.js).
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execSync } from 'node:child_process';
-import { HARNESS, HEADER, loadRows, bytesFor, savvycanCheck, OUT, note } from './common.mjs';
+import { HARNESS, HEADER, loadRows, bytesFor, savvycanCheck, OUT, note, BASE } from './common.mjs';
 
 test('support: Firefox falls back to the streaming download', async ({ page }) => {
   await page.goto(HARNESS);
   const s = await page.evaluate(() => SavvyDiskLog.support());
-  expect(s).toMatchObject({ fsa: false, download: true, backend: 'download' });
+  expect(s).toMatchObject({ blob: true, fsa: false, download: true, backend: 'download' });
 });
 
 test('download: rows streamed while logging, finished on stop; loads in SavvyCAN', async ({ page }) => {
@@ -17,7 +17,7 @@ test('download: rows streamed while logging, finished on stop; loads in SavvyCAN
   await loadRows(page);
   const dl = page.waitForEvent('download');
   const r = await page.evaluate(async (header) => {
-    const s = await SavvyDiskLog.start({ header });   // default mode here: download
+    const s = await SavvyDiskLog.start({ mode: 'download', header });   // the live streaming download (LOG_TO_DISK_LIVE)
     // in pieces over a few seconds, as a log runs (and past one keep-alive ping)
     for (let i = 1; i <= 20; i++) { feedBatches(i * 1000); await new Promise((r) => setTimeout(r, 600)); }
     await SavvyDiskLog.stop();
@@ -40,7 +40,7 @@ test('download: the tab closed mid-log -> what the download holds', async ({ pag
   await loadRows(page);
   const dl = page.waitForEvent('download');
   await page.evaluate(async (header) => {
-    await SavvyDiskLog.start({ header });
+    await SavvyDiskLog.start({ mode: 'download', header });
     feedBatches(5000);
     await new Promise((r) => setTimeout(r, 500));
   }, HEADER);
@@ -69,12 +69,12 @@ test('download: Firefox killed (SIGKILL) mid-log -> what is left on disk', async
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'disklog-ff-dl-'));
   const server = await firefox.launchServer({ downloadsPath: dir });
   const browser = await firefox.connect(server.wsEndpoint());
-  const page = await browser.newPage({ acceptDownloads: true, baseURL: 'http://localhost:8765' });
+  const page = await browser.newPage({ acceptDownloads: true, baseURL: BASE });
   await page.goto(HARNESS);
   await loadRows(page);
   const dl = page.waitForEvent('download');
   await page.evaluate(async (header) => {
-    await SavvyDiskLog.start({ header });
+    await SavvyDiskLog.start({ mode: 'download', header });
     feedBatches(5000);
     await new Promise((r) => setTimeout(r, 1500));
   }, HEADER);

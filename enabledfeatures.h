@@ -98,6 +98,15 @@ constexpr bool enabledFeature(Feature f)
     return false;
 }
 
+// Browser logging (WebAssembly build only).
+//   false (the MVP, owner 2026-10-28): the log is collected in the page and one normal download of the
+//         CSV starts when logging stops, in every browser. A tab crash loses that log (accepted).
+//   true: written to disk while it runs (File System Access in Chrome/Edge, committed every 3 s, a
+//         start-time-named file in a remembered folder or the save dialog; Firefox: a streaming download
+//         through a service worker), with the start dialog (wasm/disklog/weblogstartdialog). Kept in the
+//         tree, tested on the disklog branch; the owner may want it later.
+constexpr bool LOG_TO_DISK_LIVE = false;
+
 // Same as enabledFeature(); the short name used at the call sites.
 constexpr bool on(Feature f) { return enabledFeature(f); }
 

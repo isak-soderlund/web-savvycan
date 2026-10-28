@@ -3,7 +3,8 @@ target_sources(SavvyCAN PRIVATE
     wasm/disklog/webdisklog.cpp wasm/disklog/webdisklog.h
     wasm/disklog/weblogstartdialog.cpp wasm/disklog/weblogstartdialog.h
 )
-# The JS module goes into SavvyCAN.js itself (no change to the HTML page); the download fallback's
+# The JS module goes into SavvyCAN.js itself (no change to the HTML page, nothing extra in dist/ for the MVP's
+# download logging). Only LOG_TO_DISK_LIVE (enabledfeatures.h, off) needs the Firefox fallback's
 # service worker must be its own file next to the page.
 set(WEB_SAVVYCAN_DISKLOG_JS ${CMAKE_CURRENT_SOURCE_DIR}/wasm/disklog/disklog.js)
 target_link_options(SavvyCAN PRIVATE "--pre-js=${WEB_SAVVYCAN_DISKLOG_JS}" "-lembind")

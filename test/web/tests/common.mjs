@@ -56,3 +56,6 @@ export function note(description) {
   test.info().annotations.push({ type: 'result', description });
   console.log(`  -> ${test.info().title}: ${description}`);
 }
+
+// the test server (playwright.config.mjs, WSC_TEST_PORT)
+export const BASE = `http://localhost:${Number(process.env.WSC_TEST_PORT || 8765)}`;

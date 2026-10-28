@@ -15,6 +15,7 @@
 #include "tracedatadelegate.h"
 #ifdef Q_OS_WASM
 #include <QMessageBox>
+#include <QInputDialog>
 #include "wasm/disklog/webdisklog.h"
 #include "wasm/disklog/weblogstartdialog.h"
 #endif
@@ -1520,6 +1521,11 @@ void MainWindow::tickGUIUpdate()
             continuousLogFlushCounter++;
             if ((continuousLogFlushCounter % 3) == 0)
             {
+#ifdef Q_OS_WASM
+                webLogBlinkOn = !webLogBlinkOn;
+                ui->lblContMsg->setText(webLogLabelText(webLogBlinkOn));
+                updateWebLogTooltip();
+#else
                 if (ui->lblContMsg->text().length() > 2)
                 {
                     ui->lblContMsg->setText("");
@@ -1528,6 +1534,7 @@ void MainWindow::tickGUIUpdate()
                 {
                     ui->lblContMsg->setText("LOGGING");
                 }
+#endif
             }
             if (continuousLogFlushCounter > 8)
             {
@@ -1806,6 +1813,24 @@ static QString byteSize(qint64 bytes)
 void MainWindow::setupWebDiskLog()
 {
     WebDiskLog *log = WebDiskLog::instance();
+    if (!Features::LOG_TO_DISK_LIVE && Features::on(Features::Feature::Logging))
+    {
+        //MVP: the download is named by the start time; this asks for a name first, when logging stops
+        QSettings settings;
+        webLogAskNameAction = new QAction(tr("Choose the Log's Name When Logging Stops..."), this);
+        webLogAskNameAction->setObjectName("actionWebLogAskName");
+        webLogAskNameAction->setCheckable(true);
+        webLogAskNameAction->setChecked(settings.value("WebLog/AskName", false).toBool());
+        webLogAskNameAction->setToolTip(tr("Off: the download is named by the start time, e.g. %1")
+                                        .arg(QStringLiteral("SavvyCAN_2026-10-28_14-03-22.csv")));
+        connect(webLogAskNameAction, &QAction::toggled, this, [](bool on) {
+            QSettings().setValue("WebLog/AskName", on);
+        });
+        const QList<QAction *> fileActions = ui->menuFile->actions();
+        const int at = fileActions.indexOf(ui->actionSave_Continuous_Filtered_Logfile);
+        ui->menuFile->insertAction(at >= 0 && at + 1 < fileActions.size() ? fileActions.at(at + 1) : nullptr,
+                                   webLogAskNameAction);
+    }
     connect(log, &WebDiskLog::started, this, [this](const QString &, const QString &, bool) {
         continuousLoggingUseFilter = webLogPendingFiltered;
         continuousLogging = true;
@@ -1813,6 +1838,7 @@ void MainWindow::setupWebDiskLog()
             ui->actionSave_Continuous_Filtered_Logfile->setText(tr("Cease Continuous Logging (Filtered)"));
         else
             ui->actionSave_Continuous_Logfile->setText(tr("Cease Continuous Logging"));
+        ui->lblContMsg->setText(webLogLabelText(true));
         updateWebLogTooltip();
     });
     connect(log, &WebDiskLog::startFailed, this, [this](const QString &code, const QString &message) {
@@ -1823,14 +1849,19 @@ void MainWindow::setupWebDiskLog()
     connect(log, &WebDiskLog::committed, this, [this](qint64) { updateWebLogTooltip(); });
     connect(log, &WebDiskLog::fileChanged, this, [this](const QString &, int) { updateWebLogTooltip(); });
     connect(log, &WebDiskLog::stopped, this, [this](const QString &name, qint64 bytes) {
-        ui->lblContMsg->setToolTip(tr("Last log: %1 (%2)").arg(name, byteSize(bytes)));
+        if (WebDiskLog::instance()->activeBackend() == QLatin1String("blob"))
+            ui->lblContMsg->setToolTip(tr("Last log: %1 (%2), handed to the browser's downloads").arg(name, byteSize(bytes)));
+        else
+            ui->lblContMsg->setToolTip(tr("Last log: %1 (%2)").arg(name, byteSize(bytes)));
     });
     connect(log, &WebDiskLog::failed, this, [this](const QString &, const QString &message, qint64 bytes) {
         const bool wasLogging = continuousLogging;
         resetContinuousLoggingUi();
         WebDiskLog *l = WebDiskLog::instance();
         QString text = tr("Continuous logging stopped: %1").arg(message);
-        if (l->crashSafe())
+        if (l->activeBackend() == QLatin1String("blob"))
+            text += QLatin1String("\n\n") + tr("The log \"%1\" was not downloaded.").arg(l->fileName());
+        else if (l->crashSafe())
             text += QLatin1String("\n\n") + tr("The file \"%1\" keeps what was saved up to then (%2).")
                                          .arg(l->fileName(), byteSize(bytes));
         else
@@ -1849,11 +1880,31 @@ void MainWindow::resetContinuousLoggingUi()
     ui->lblContMsg->setText("");
 }
 
+//The LOGGING label (it blinks, as on the desktop). Collected in the page (the MVP): the size and frame count so
+//far, and that nothing is saved before logging stops.
+QString MainWindow::webLogLabelText(bool on) const
+{
+    WebDiskLog *l = WebDiskLog::instance();
+    if (l->activeBackend() != QLatin1String("blob")) return on ? QStringLiteral("LOGGING") : QString();
+    return (on ? QStringLiteral("LOGGING") : QStringLiteral(" ")) + QLatin1Char('\n')
+           + tr("%1, %2 frames").arg(byteSize(l->bytesWritten())).arg(l->framesWritten()) + QLatin1Char('\n')
+           + tr("Not saved yet: downloaded on stop,\nlost if the tab crashes");
+}
+
 void MainWindow::updateWebLogTooltip()
 {
     WebDiskLog *l = WebDiskLog::instance();
     if (!l->isActive()) return;
-    QString tip = tr("Logging to %1").arg(l->fileName());
+    QString tip;
+    if (l->activeBackend() == QLatin1String("blob"))
+    {
+        tip = tr("Collecting the log in the browser: %1, %2 frames.").arg(byteSize(l->bytesWritten())).arg(l->framesWritten())
+            + QLatin1String("\n") + tr("Cease Continuous Logging downloads it as %1.").arg(l->fileName())
+            + QLatin1String("\n") + tr("Nothing is saved before that: if the tab crashes or is closed, this log is lost.");
+        ui->lblContMsg->setToolTip(tip);
+        return;
+    }
+    tip = tr("Logging to %1").arg(l->fileName());
     if (l->part() > 1) tip += QLatin1Char(' ') + tr("(part %1)").arg(l->part());
     if (l->crashSafe())
         tip += QLatin1String("\n") + tr("Saved up to %1: %2")
@@ -1864,23 +1915,63 @@ void MainWindow::updateWebLogTooltip()
     ui->lblContMsg->setToolTip(tip);
 }
 
+//Stop: the rest is written and the file closed (live) or the download starts (MVP). With "Choose the Log's
+//Name" on, a name is asked first; Cancel keeps logging.
+void MainWindow::webStopLogging(bool askName, std::function<void()> then)
+{
+    WebDiskLog *log = WebDiskLog::instance();
+    if (!askName || log->activeBackend() != QLatin1String("blob"))
+    {
+        FrameFileIO::closeContinuousNative(); //WebDiskLog::stop()
+        resetContinuousLoggingUi();
+        if (then) then();
+        return;
+    }
+    if (webLogNameDialog) { webLogNameDialog->raise(); return; }
+    auto *dialog = new QInputDialog(this);
+    webLogNameDialog = dialog;
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Cease Continuous Logging"));
+    dialog->setLabelText(tr("Name of the log file to download:"));
+    dialog->setTextValue(log->fileName());
+    dialog->setOkButtonText(tr("Download"));
+    dialog->setCancelButtonText(tr("Keep Logging"));
+    connect(dialog, &QInputDialog::textValueSelected, this, [this, then](const QString &name) {
+        if (!WebDiskLog::instance()->isActive()) return;
+        WebDiskLog::instance()->stop(name.trimmed());
+        resetContinuousLoggingUi();
+        if (then) then();
+    });
+    dialog->open(); //no exec() in the browser
+}
+
 void MainWindow::webContinuousLogging(bool filtered)
 {
     WebDiskLog *log = WebDiskLog::instance();
     if (log->isStarting()) return;
+    auto startNew = [this, filtered]() {
+        webLogPendingFiltered = filtered;
+        if (!Features::LOG_TO_DISK_LIVE)
+        {
+            //MVP: starts at once, collected in the page, one download on stop
+            WebDiskLog::instance()->start(WebDiskLog::Mode::BlobDownload, FrameFileIO::nativeCSVHeader());
+            return;
+        }
+        auto *dialog = new WebLogStartDialog(filtered, this);
+        connect(dialog, &WebLogStartDialog::chosen, this, [](WebDiskLog::Mode mode, qint64 splitBytes) {
+            WebDiskLog::instance()->start(mode, FrameFileIO::nativeCSVHeader(), splitBytes);
+        });
+        dialog->open();
+    };
     if (continuousLogging)
     {
         const bool same = (continuousLoggingUseFilter == filtered);
-        FrameFileIO::closeContinuousNative(); //WebDiskLog::stop(): the rest is written, the file closed
-        resetContinuousLoggingUi();
-        if (same) return;
+        const bool askName = webLogAskNameAction && webLogAskNameAction->isChecked();
+        if (same) webStopLogging(askName, nullptr);
+        else webStopLogging(askName, startNew); //the other kind: this log ends, a new one starts
+        return;
     }
-    auto *dialog = new WebLogStartDialog(filtered, this);
-    connect(dialog, &WebLogStartDialog::chosen, this, [this, filtered](WebDiskLog::Mode mode, qint64 splitBytes) {
-        webLogPendingFiltered = filtered;
-        WebDiskLog::instance()->start(mode, FrameFileIO::nativeCSVHeader(), splitBytes);
-    });
-    dialog->open();
+    startNew();
 }
 #endif
 

@@ -1,6 +1,10 @@
 #!/bin/bash
-# web-savvycan: the disk-log tests (wasm/disklog) in the browser, and the desktop's native CSV checks.
+# web-savvycan: the browser logging tests (wasm/disklog) and the desktop's native CSV checks.
 #   test/web/run-disklog-tests.sh            all that this machine can run
+# The MVP (LOG_TO_DISK_LIVE false): tests/download*.spec.mjs (blob logging, one download on stop; the app
+# with a fake rc1 when dist/ and the fake are there). The live-to-disk tests (disklog*.spec.mjs) still run
+# against the module. The multi-GB log is separate (memory-heavy), through the heavy-job wrapper:
+#   WSC_LARGE_GB=2,4,8 ~/.local/share/web-savvycan/heavy.sh npx playwright test --project=chromium-large
 # Needs: the toolchain (toolchain.env), Node + npm; Firefox tests: Playwright's Firefox
 # (npx playwright install firefox); real pickers: xvfb-run and xdotool.
 set -euo pipefail

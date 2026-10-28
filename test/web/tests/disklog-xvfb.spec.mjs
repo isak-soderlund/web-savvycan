@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { HARNESS, HEADER, loadRows, bytesFor, savvycanCheck, note } from './common.mjs';
+import { HARNESS, HEADER, loadRows, bytesFor, savvycanCheck, note, BASE } from './common.mjs';
 
 // on the real disk (/tmp is a RAM disk on the rig)
 const BASE = path.join(os.homedir(), '.cache/web-savvycan-disklog-xvfb');
@@ -67,7 +67,7 @@ async function allowAfterRestart(settled) {
   return settled();
 }
 
-const launch = () => chromium.launchPersistentContext(PROFILE, { headless: false, baseURL: 'http://localhost:8765' });
+const launch = () => chromium.launchPersistentContext(PROFILE, { headless: false, baseURL: BASE });
 
 test.beforeAll(() => {
   fs.rmSync(BASE, { recursive: true, force: true });

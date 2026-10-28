@@ -29,7 +29,7 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 | 4 | **Single-threaded GVRET** | No `QThread` in the wasm build (the spike's three changes); incoming bytes parsed in batches from the JS read loop; no per-byte debug string (fix M-series) |
 | 5 | **Bus setup** | Nominal bit rate, CAN FD on/off, data bit rate, listen-only, through GVRET's own commands (rc1 firmware 0.1.3 implements them, classic + FD verified with desktop SavvyCAN on 2026-10-28) |
 | 6 | **Main window trace** | Live frame list with CAN FD (64-byte data, BRS/ESI columns), frame counter, **dropped-frames counter**; ring-buffer frame store and an index list for the filtered view (fixes M-series), so it never stalls on a full list |
-| 7 | **Logging to disk** | File System Access API: name the file in a prompt, or create it directly with the start time as its name; frames written as they arrive, committed every few seconds (close and reopen in append mode), so a crash loses at most the last seconds. Format: SavvyCAN's native GVRET CSV, FD rows included. Firefox: streaming-download fallback |
+| 7 | **Logging (download)** | Owner's MVP choice 2026-10-28: File > Start Continuous Logging starts at once; the rows are collected in the page as Blobs, outside the wasm heap (the browser keeps them; Chrome pages big totals to disk); Cease Continuous Logging starts **one normal download** of the CSV, named by the start time (`SavvyCAN_YYYY-MM-DD_HH-MM-SS.csv`), or by a name asked at stop (File > Choose the Log's Name When Logging Stops...). The LOGGING label shows size and frames and that a crash loses the log (accepted); closing the tab while logging asks first. Same in every browser. Format: SavvyCAN's native GVRET CSV, FD rows included. Writing to disk while logging (File System Access, commits every 3 s, a remembered folder; Firefox streaming download through a service worker) stays in the tree, off: `enabledfeatures.h` `LOG_TO_DISK_LIVE` |
 | 8 | **Theme switch** | Light (SavvyCAN's normal) / dark, remembered between visits |
 | 9 | **Only stage-1 windows** | Every menu and window not in stage 1 hidden (not broken); they come back stage by stage |
 | 10 | **Settings kept** | Connection, theme and log settings remembered in the browser (whether `QSettings` persists in wasm: to check) |
@@ -40,7 +40,9 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
   Web Serial stand-in and the parsers.
 - **On the rig:** rc1 with the Kvaser as the peer, classic and CAN FD. Every frame the Kvaser sends must appear in
   the trace and in the log file.
-- **Crash test:** close the tab mid-log; the file must hold everything up to the last commit.
+- **Logging:** `test/web` (Playwright; `run-disklog-tests.sh`): the download's bytes equal SavvyCAN's own rows and load in the
+  desktop SavvyCAN (`test/nativecsv`), Chromium and Firefox; the app with the fake rc1 (every frame sent is in the
+  download); a multi-GB log (`--project=chromium-large`, through `heavy.sh`). Crash test only with `LOG_TO_DISK_LIVE`.
 - **Sanitizers:** AddressSanitizer and ThreadSanitizer runs of the desktop build of the same tree.
 
 ## Stages switched on: `enabledfeatures.h`
@@ -109,7 +111,7 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 | **Shop security** | Allowing WebAssembly (`'wasm-unsafe-eval'`) site-wide weakens the shop's CSP | Added for the tool's route only |
 | **File size on Oxygen** | Oxygen's static files are ≤ 20 MB each; the full SavvyCAN wasm was 38.7 MB | Stage-1 build trimmed and measured; if over, `tools.resolve-ev.com` (static container next to the forum) or a Cloudflare Worker + R2 on the same path |
 | **Browser support** | Web Serial is Chromium-only (and Firefox 151+); no iPhone | Stated on the page; desktop build for others |
-| **Data loss while logging** | Tab crash or close | Log written to disk as it runs, committed every few seconds |
+| **Data loss while logging** | Tab crash or close | MVP: accepted by the owner (the log is lost); the label says so, closing the tab asks first. Later: `LOG_TO_DISK_LIVE` (written to disk as it runs) |
 | **Frame loss in the browser** | Single-threaded wasm stalls on a busy bus | Ring buffer, batched parsing, visible dropped-frames counter; a full-load replay test |
 | **Memory cap** | wasm32's 4 GB limits the in-memory window | A bounded window (scrolls), everything on disk |
 | **Fork drift** | Upstream QT6WIP moves fast | Upstream changes taken in deliberately (merge from `upstream`), never automatically |

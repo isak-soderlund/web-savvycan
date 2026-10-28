@@ -9,6 +9,9 @@ import { REPO, HEADER, note, saveBytes } from './common.mjs';
 
 const DIST = path.join(REPO, 'dist/SavvyCAN.html');
 test.skip(!fs.existsSync(DIST), 'no wasm build in dist/ (scripts/build-wasm.sh)');
+// Live logging is off in the MVP (enabledfeatures.h LOG_TO_DISK_LIVE false): the app downloads instead
+// (download-app.spec.mjs). Set WSC_LIVE_BUILD=1 for a dist/ built with it on.
+test.skip(!process.env.WSC_LIVE_BUILD, 'dist/ built with LOG_TO_DISK_LIVE false (the MVP)');
 test.use({ viewport: { width: 1280, height: 800 } });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { HARNESS, HEADER, ROWS_COUNT, loadRows, bytesFor, saveBytes, savvycanCheck, OUT, note } from './common.mjs';
+import { HARNESS, HEADER, ROWS_COUNT, loadRows, bytesFor, saveBytes, savvycanCheck, OUT, note, BASE } from './common.mjs';
 
 async function freshHarness(page) {
   await page.goto(HARNESS);
@@ -227,7 +227,7 @@ test('crash: the renderer crashes mid-log -> the file holds everything up to the
 
 test('crash: the whole browser is killed (SIGKILL) mid-log -> the file holds everything up to the last commit', async ({}, testInfo) => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'disklog-profile-'));
-  const launch = () => chromium.launchPersistentContext(profile, { headless: true, baseURL: 'http://localhost:8765' });
+  const launch = () => chromium.launchPersistentContext(profile, { headless: true, baseURL: BASE });
   let ctx = await launch();
   let page = ctx.pages()[0] || await ctx.newPage();
   await freshHarness(page);
@@ -256,7 +256,7 @@ test('commit cost: commit time vs file size (OPFS), and the stretched commit int
   // a profile on the real disk (Playwright's default is in /tmp, a RAM disk here, with a 900 MB quota)
   const profile = path.join(os.homedir(), '.cache/web-savvycan-disklog-profile');
   fs.rmSync(profile, { recursive: true, force: true });
-  const ctx = await chromium.launchPersistentContext(profile, { headless: true, baseURL: 'http://localhost:8765' });
+  const ctx = await chromium.launchPersistentContext(profile, { headless: true, baseURL: BASE });
   const page = ctx.pages()[0] || await ctx.newPage();
   await freshHarness(page);
   const r = await page.evaluate(async () => {

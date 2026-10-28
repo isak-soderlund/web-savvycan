@@ -6,6 +6,11 @@
  * GVRET CSV, made by FrameFileIO::nativeCSVRow); this module only gets them onto disk.
  *
  * Backends
+ *   "blob"     The MVP's way (owner 2026-10-28), every browser: the rows are collected in the page as
+ *              Blobs, outside the wasm heap (small batches folded into a Blob every few MB and on every
+ *              commit tick, so Chrome's blob storage holds them and can page them to disk), and on stop
+ *              one normal download (<a download>) of the whole CSV starts. A crash or a closed tab loses
+ *              the log (accepted). No folder permission, no service worker.
  *   "fsa"      File System Access API (Chrome, Edge, Opera desktop). The file is written while
  *              logging runs and committed every few seconds: the writable stream is closed (the
  *              browser moves its swap file onto the real file) and opened again with
@@ -19,19 +24,19 @@
  *              is finished on stop; a crash leaves it unfinished (the browser discards it).
  *
  * API (globalThis.SavvyDiskLog):
- *   support()                     -> {fsa, download, opfs, backend}
+ *   support()                     -> {blob, fsa, download, opfs, backend}  (backend: the live-to-disk one)
  *   configure({swUrl, commitIntervalMs, filePrefix})
  *   start({mode, suggestedName, header, commitIntervalMs, splitBytes, directory}) -> Promise<{name, backend}>
  *                                    splitBytes (mode "direct"): continue in a new file (<name>_part002.csv,
  *                                    ..., each with the header) once a file has this size, since a commit
  *                                    copies the whole file (Chrome's swap file): bounded commit time
- *                                    mode: "prompt" | "direct" | "download"; rejects with an
+ *                                    mode: "blob" | "prompt" | "direct" | "download"; rejects with an
  *                                    Error whose .code is "cancelled", "permission", "unsupported",
  *                                    "busy", "notfound", "quota" or "error"
  *   write(Uint8Array | string)    -> bool (false when no log is open)
  *   writeCopy(Uint8Array)         -> bool (copies first; for views into the wasm heap)
  *   commit()                      -> Promise (commit now)
- *   stop()                        -> Promise<{name, bytes}>
+ *   stop({name})                  -> Promise<{name, bytes}> (name: "blob" mode, the download's name)
  *   status()                      -> plain object (state, name, backend, bytes written/committed, ...)
  *   setListener(fn)               fn(event): {type: "started"|"committed"|"rotated"|"error"|"stopped", ...}
  *   rememberedDirectory()         -> Promise<{name, permission} | null>
@@ -55,6 +60,8 @@
         filePrefix: 'SavvyCAN',
         pingMs: 10000,               // keeps the download service worker alive
         downloadStartTimeoutMs: 15000,
+        foldBytes: 4 << 20,          // "blob" mode: small batches become one Blob at this size
+        revokeAfterMs: 60000,        // "blob" mode: the download's object URL is released after this
     };
 
     let listener = null;
@@ -97,7 +104,17 @@
         const download = !!(global.navigator && 'serviceWorker' in global.navigator)
             && !!global.isSecureContext && typeof global.ReadableStream === 'function';
         const opfs = !!(global.navigator && global.navigator.storage && global.navigator.storage.getDirectory);
-        return { fsa, download, opfs, backend: fsa ? 'fsa' : (download ? 'download' : 'none') };
+        const blob = typeof global.Blob === 'function' && !!(global.URL && global.URL.createObjectURL)
+            && !!global.document;
+        return { blob, fsa, download, opfs, backend: fsa ? 'fsa' : (download ? 'download' : 'none') };
+    }
+
+    // A download name: no path separators or characters Windows refuses; ".csv" added when missing.
+    function safeName(name) {
+        let n = String(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim();
+        if (!n || n === '.' || n === '..') n = startTimeName(new Date());
+        if (!/\.csv$/i.test(n)) n += '.csv';
+        return n;
     }
 
     function pad(n, w) { return String(n).padStart(w || 2, '0'); }
@@ -341,6 +358,61 @@
         }
     }
 
+    // Collected in the page, one normal download on stop ("blob" mode). Rows come in small batches;
+    // they are folded into a Blob every foldBytes and on every commit tick, so the JS heap holds at
+    // most a few MB and the rest sits in the browser's blob storage (Chrome keeps big blob totals
+    // on disk). The Blobs themselves are only references: combining them copies nothing.
+    class BlobSink {
+        constructor(name) {
+            this.name = name;
+            this.backend = 'blob';
+            this.size = 0;
+            this.crashSafe = false;
+            this.small = [];
+            this.smallBytes = 0;
+            this.blobs = [];
+        }
+        async open() { }
+        fold() {
+            if (!this.small.length) return;
+            this.blobs.push(new Blob(this.small));
+            this.small = [];
+            this.smallBytes = 0;
+            // keep the list short: every 256 parts become one Blob
+            if (this.blobs.length >= 256) this.blobs = [new Blob(this.blobs)];
+        }
+        async write(bytes) {
+            this.small.push(bytes);
+            this.smallBytes += bytes.byteLength;
+            this.size += bytes.byteLength;
+            if (this.smallBytes >= config.foldBytes) this.fold();
+        }
+        async commit() { this.fold(); }
+        // The whole log as one Blob (also for tests).
+        blob() {
+            this.fold();
+            return new Blob(this.blobs, { type: 'text/csv' });
+        }
+        async close() {
+            const blob = this.blob();
+            this.blobs = [];
+            const url = global.URL.createObjectURL(blob);
+            const a = global.document.createElement('a');
+            a.href = url;
+            a.download = this.name;
+            a.style.display = 'none';
+            global.document.body.appendChild(a);
+            a.click();
+            a.remove();
+            lastDownload = { name: this.name, bytes: blob.size, url };
+            // the browser has taken the Blob once the download has started; the URL can go later
+            setTimeout(() => global.URL.revokeObjectURL(url), config.revokeAfterMs);
+        }
+        async abort() { this.small = []; this.blobs = []; }
+    }
+
+    let lastDownload = null;
+
     // ---- Session: batching, periodic commit, stop -----------------------------------------------
 
     class Session {
@@ -492,8 +564,9 @@
             return p;
         }
 
-        stop() {
+        stop(opts) {
             if (this.state !== 'open') return Promise.resolve(this.result());
+            if (opts && opts.name && this.sink instanceof BlobSink) this.sink.name = safeName(opts.name);
             this.stopRequested = true;
             const p = this.waitFor('stopped');
             this.kick();
@@ -548,8 +621,8 @@
         starting = true;
         try {
             const sup = support();
-            let mode = opts.mode || (sup.fsa ? 'prompt' : 'download');
-            const name = opts.suggestedName || startTimeName(new Date());
+            let mode = opts.mode || 'blob';
+            const name = opts.suggestedName ? safeName(opts.suggestedName) : startTimeName(new Date());
             let sink, nextSink = null;
             if (mode === 'prompt' || mode === 'direct') {
                 if (!sup.fsa && !opts.directory) {
@@ -580,6 +653,9 @@
                     }
                 }
                 sink = new FsaSink(handle);
+            } else if (mode === 'blob') {
+                if (!sup.blob) throw makeError('unsupported', 'This browser cannot collect the log for a download.');
+                sink = new BlobSink(name);
             } else if (mode === 'download') {
                 if (!sup.download) throw makeError('unsupported', 'This browser cannot stream a download (needs https).');
                 sink = new DownloadSink(name);
@@ -618,8 +694,8 @@
         return session ? session.commit() : Promise.resolve(null);
     }
 
-    function stop() {
-        return session ? session.stop() : Promise.resolve(null);
+    function stop(opts) {
+        return session ? session.stop(opts) : Promise.resolve(null);
     }
 
     function status() {
@@ -648,6 +724,10 @@
         chooseDirectory,
         forgetDirectory,
         startTimeName,
+        safeName,
+        // "blob" mode: the running log as one Blob (tests), the last download started
+        _blob() { return session && session.sink instanceof BlobSink ? session.sink.blob() : null; },
+        lastDownload() { return lastDownload ? { name: lastDownload.name, bytes: lastDownload.bytes } : null; },
         // tests: remember a folder without the picker (e.g. an origin-private one)
         _rememberDirectory: storeDirectory,
         // For the C++ side (webdisklog.cpp): fire and forget, every outcome comes as an event,
@@ -656,7 +736,7 @@
             start(opts) {
                 start(opts).catch((e) => emit({ type: 'startfailed', code: e.code || 'error', message: e.message }));
             },
-            stop() { stop().catch(() => { /* reported as an "error" event */ }); },
+            stop(opts) { stop(opts).catch(() => { /* reported as an "error" event */ }); },
             queryDirectory() {
                 rememberedDirectory().then(
                     (d) => emit({ type: 'directory', name: d ? d.name : '', permission: d ? d.permission : '' }),

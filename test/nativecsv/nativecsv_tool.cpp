@@ -1,7 +1,8 @@
 // web-savvycan: SavvyCAN's native GVRET CSV (FD rows included), checked with SavvyCAN's own code.
 //
 //   nativecsv_tool gen <rows.csv> <count>          reference rows (no header), made by FrameFileIO::nativeCSVRow
-//   nativecsv_tool check <log.csv> [--exact N | --min N] [--max N] [--first I]
+//   nativecsv_tool check <log.csv> [--exact N | --min N] [--max N] [--first I]  (--first -1: any frames, not
+//                                                  compared with the reference rows)
 //                                                  load the file as SavvyCAN does (autoDetectLoadFile) and compare
 //                                                  frame i with reference frame I+i; fails on any difference
 //   nativecsv_tool continuous <log.csv> <count>    desktop continuous logging (open, write in batches, flush,
@@ -93,8 +94,9 @@ static int check(const QString &file, long exact, long min, long max, long first
     int bad = 0, fd = 0;
     for (int i = 0; i < frames.count(); i++)
     {
-        const CommFrame ref = referenceFrame(int(first) + i);
         if (frames[i].hasFlexibleDataRateFormat()) fd++;
+        if (first < 0) continue;   //not the reference rows (e.g. a real log): loaded and counted only
+        const CommFrame ref = referenceFrame(int(first) + i);
         if (!same(frames[i], ref))
         {
             if (bad < 5)

@@ -2474,7 +2474,7 @@ bool FrameFileIO::writeContinuousNative(const QVector<CommFrame>* frames, int be
     QByteArray rows;
     rows.reserve((frames->count() - beginningFrame) * 64);
     for (int c = beginningFrame; c < frames->count(); c++) rows.append(nativeCSVRow(frames->at(c)));
-    return WebDiskLog::instance()->write(rows);
+    return WebDiskLog::instance()->write(rows, frames->count() - beginningFrame);
 #else
     if (!continuousFile.isOpen()) return false;
     for (int c = beginningFrame; c < frames->count(); c++)

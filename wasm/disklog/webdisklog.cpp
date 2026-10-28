@@ -71,7 +71,7 @@ QString WebDiskLog::backend() const
     return str(api().call<val>("support"), "backend");
 }
 
-void WebDiskLog::start(Mode mode, const QByteArray &header, qint64 splitBytes)
+void WebDiskLog::start(Mode mode, const QByteArray &header, qint64 splitBytes, const QString &suggestedName)
 {
     if (m_active || m_starting) return;
     if (!apiPresent())
@@ -86,29 +86,37 @@ void WebDiskLog::start(Mode mode, const QByteArray &header, qint64 splitBytes)
     case Mode::PromptForName: opts.set("mode", val("prompt")); break;
     case Mode::StartTimeName: opts.set("mode", val("direct")); break;
     case Mode::Download:      opts.set("mode", val("download")); break;
+    case Mode::BlobDownload:  opts.set("mode", val("blob")); break;
     }
     opts.set("header", val(header.toStdString()));
+    if (!suggestedName.isEmpty()) opts.set("suggestedName", val(suggestedName.toStdString()));
+    m_bytesWritten = header.size();
+    m_framesWritten = 0;
     if (mode == Mode::StartTimeName && splitBytes > 0) opts.set("splitBytes", val(double(splitBytes)));
     // Success arrives as the "started" event; a refusal or failure as "startfailed".
     api()["bridge"].call<void>("start", opts);
 }
 
-bool WebDiskLog::write(const QByteArray &rows)
+bool WebDiskLog::write(const QByteArray &rows, int frames)
 {
     if (!m_active) return false;
     if (rows.isEmpty()) return true;
+    m_bytesWritten += rows.size();
+    m_framesWritten += frames;
     // A view into the wasm heap; writeCopy copies it before returning.
     val view(emscripten::typed_memory_view(static_cast<size_t>(rows.size()),
                                            reinterpret_cast<const unsigned char *>(rows.constData())));
     return api().call<bool>("writeCopy", view);
 }
 
-void WebDiskLog::stop()
+void WebDiskLog::stop(const QString &downloadName)
 {
     if (!m_active) return;
     // "stopped" (or "error") follows; isActive() is false from now on, so no more rows are taken.
     m_active = false;
-    api()["bridge"].call<void>("stop");
+    val opts = val::object();
+    if (!downloadName.isEmpty()) opts.set("name", val(downloadName.toStdString()));
+    api()["bridge"].call<void>("stop", opts);
 }
 
 void WebDiskLog::queryDirectory()
