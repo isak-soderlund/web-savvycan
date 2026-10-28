@@ -14,6 +14,12 @@ using namespace CANCon;
 
 CANConnection* CanConFactory::create(type pType, QString pPortName, QString pDriverName, int pSerialSpeed, int pBusSpeed, bool pCanFd, int pDataRate, bool pListenOnly, bool pActive)
 {
+#ifdef Q_OS_WASM
+    // web-savvycan: the browser has GVRET and LAWICEL on a Web Serial port only; another type (in settings an
+    // earlier build saved) falls back to GVRET on that port.
+    if (pType == LAWICEL) return new LAWICELSerial(pPortName, pSerialSpeed, pBusSpeed, pCanFd, pDataRate);
+    return new GVRetSerial(pPortName, false);
+#endif
     switch(pType) {
 #ifndef Q_OS_WASM
     case SERIALBUS:

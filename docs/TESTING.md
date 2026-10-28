@@ -44,7 +44,6 @@ second line `dirty` means uncommitted changes were in it).
    - **Bus Details**: Speed **500000**, tick **Enable Bus**, **Enable CAN FD** as your bus is (with CAN FD:
      **CAN FD Data Rate**, e.g. 2000000), then **Save Bus Settings**.
    - Close the connection window (its close button, or Escape); the connection stays up.
-   - Don't press **Enter** inside the connection window: it presses Disconnect Selected Device (known issue below).
 3. **Frames.** With the peer sending: frames appear in the trace, *Total Frames Captured* and *Frames Per Second*
    count up; *Dropped: 0* at the bottom right stays 0 (it counts frames the app had to drop on an overloaded bus). Check a few IDs and data bytes against what the peer sends (and with CAN FD: lengths over 8, BRS).
    Tick **Auto Scroll Window** to follow the newest.
@@ -92,7 +91,5 @@ checked by it, so checked only by this test:
 
 ## Known issues (2026-10-28, branch `integration`)
 
-- Pressing **Enter** in the connection window presses *Disconnect Selected Device* (also when Enter picks an item in
-  an open drop-down list): the window's default button. Use the mouse in the drop-downs.
 - With a **screen reader** (Qt's accessibility layer switched on), unplugging rc1 makes Qt 6.12 throw an error in its
   accessibility code and the window stops drawing; reload the page. Without a screen reader unplugging is fine.

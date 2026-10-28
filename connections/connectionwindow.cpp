@@ -25,6 +25,9 @@ ConnectionWindow::ConnectionWindow(QWidget *parent) :
 #else
     setWindowFlags(Qt::Window);
 #endif
+    // web-savvycan: no default button. As a QDialog every push button was auto-default, so Enter (also in an open
+    // drop-down list) pressed the first one: Disconnect Selected Device.
+    for (QPushButton *button : findChildren<QPushButton *>()) button->setAutoDefault(false);
 
     QSettings settings;
 
