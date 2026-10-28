@@ -2,6 +2,13 @@
 #include "newconnectiondialog.h"
 #include "ui_newconnectiondialog.h"
 
+#ifdef Q_OS_WASM
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPushButton>
+#include "webserialhub.h"
+#endif
+
 NewConnectionDialog::NewConnectionDialog(QVector<QString>* gvretips, QVector<QString>* kayakhosts, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::NewConnectionDialog),
@@ -43,6 +50,10 @@ NewConnectionDialog::NewConnectionDialog(QVector<QString>* gvretips, QVector<QSt
     ui->cbCanFd->setHidden(true);
     ui->cbDataRate->setHidden(true);
     ui->lblDataRate->setHidden(true);
+
+#ifdef Q_OS_WASM
+    setupWebSerial();
+#endif
 
     selectSerial();
 
@@ -97,11 +108,7 @@ void NewConnectionDialog::selectLawicel()
     ui->cbDataRate->setHidden(false);
     ui->lblDataRate->setHidden(false);
 
-    ui->cbPort->clear();
-    ports = QSerialPortInfo::availablePorts();
-
-    for (int i = 0; i < ports.count(); i++)
-        ui->cbPort->addItem(ports[i].portName());
+    fillSerialPorts();
 
     fillBusSpeedLists();
     if (ui->cbSerialSpeed->count() == 0)
@@ -131,12 +138,88 @@ void NewConnectionDialog::selectSerial()
     ui->cbDataRate->setHidden(true);
     ui->lblDataRate->setHidden(true);
 
+    fillSerialPorts();
+}
+
+void NewConnectionDialog::fillSerialPorts()
+{
+    const QString current = ui->cbPort->currentText();
     ui->cbPort->clear();
     ports = QSerialPortInfo::availablePorts();
 
     for (int i = 0; i < ports.count(); i++)
+    {
         ui->cbPort->addItem(ports[i].portName());
+        if (!ports[i].description().isEmpty())
+            ui->cbPort->setItemData(i, ports[i].description(), Qt::ToolTipRole);
+    }
+    int idx = ui->cbPort->findText(current);
+    if (idx >= 0) ui->cbPort->setCurrentIndex(idx);
+#ifdef Q_OS_WASM
+    if (lblWebSerial)
+    {
+        if (!WebSerialHub::isSupported())
+            lblWebSerial->setText(tr("This browser has no Web Serial: use Chrome, Edge or Opera on a computer."));
+        else if (ports.isEmpty())
+            lblWebSerial->setText(tr("No device yet: plug resolve-can in and click \"Choose device...\"."));
+        else
+            lblWebSerial->clear();
+    }
+#endif
 }
+
+#ifdef Q_OS_WASM
+// web-savvycan: only GVRET and LAWICEL (slcan) on a Web Serial port in the browser. The browser lists a port only
+// after the user picked it in its own chooser (once per device: it is remembered for later visits).
+void NewConnectionDialog::setupWebSerial()
+{
+    for (QWidget *w : {static_cast<QWidget *>(ui->rbSocketCAN), static_cast<QWidget *>(ui->rbRemote),
+                       static_cast<QWidget *>(ui->rbKayak), static_cast<QWidget *>(ui->rbMQTT),
+                       static_cast<QWidget *>(ui->rbCANserver), static_cast<QWidget *>(ui->rbCanlogserver)})
+        w->setHidden(true);
+    ui->rbGVRET->setChecked(true);
+
+    btnChooseDevice = new QPushButton(tr("Choose device..."), this);
+    btnChooseDevice->setToolTip(tr("Pick resolve-can in the browser's list of serial devices"));
+    btnChooseAny = new QPushButton(tr("Other serial port..."), this);
+    btnChooseAny->setToolTip(tr("Pick any serial device (another GVRET or LAWICEL adapter)"));
+    lblWebSerial = new QLabel(this);
+    lblWebSerial->setWordWrap(true);
+    auto *row = new QHBoxLayout();
+    row->addWidget(btnChooseDevice);
+    row->addWidget(btnChooseAny);
+    row->addStretch();
+    auto *layout = qobject_cast<QBoxLayout *>(this->layout());
+    const int at = layout ? layout->indexOf(ui->cbPort) : -1;
+    if (layout && at >= 0)
+    {
+        layout->insertLayout(at + 1, row);
+        layout->insertWidget(at + 2, lblWebSerial);
+    }
+    ui->cbPort->setEditable(false); // only ports the browser granted can be opened
+
+    // Chrome shows its chooser only in response to a click: called straight from the button's clicked().
+    connect(btnChooseDevice, &QPushButton::clicked, this, [] { WebSerialHub::requestPort(false); });
+    connect(btnChooseAny, &QPushButton::clicked, this, [] { WebSerialHub::requestPort(true); });
+    connect(WebSerialHub::instance(), &WebSerialHub::portsChanged, this, [this] {
+        if (ui->rbGVRET->isChecked() || ui->rbLawicel->isChecked()) fillSerialPorts();
+    });
+    connect(WebSerialHub::instance(), &WebSerialHub::portChosen, this, &NewConnectionDialog::webSerialPortChosen);
+}
+
+void NewConnectionDialog::webSerialPortChosen(const QString &name, const QString &error)
+{
+    if (name.isEmpty())
+    {
+        if (!error.isEmpty()) lblWebSerial->setText(error);
+        return;
+    }
+    fillSerialPorts();
+    int idx = ui->cbPort->findText(name);
+    if (idx >= 0) ui->cbPort->setCurrentIndex(idx);
+    lblWebSerial->clear();
+}
+#endif
 
 void NewConnectionDialog::selectSocketCan()
 {
