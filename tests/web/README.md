@@ -22,7 +22,7 @@ failures, `fullload-*.json`).
 | `fake/rc1.js` | The fake rc1, one dependency-free file for the browser and Node: the firmware's serial engines ported line by line (`firmware/proto/src/serial.rs`, `gvret.rs`, `slcan.rs`; session end on DTR as `app/src/serialport.rs`), a CAN bus with traffic modes, the Web Serial mock, file-picker mocks (OPFS), an event-loop probe, a GVRET host parser and SavvyCAN's CSV parser |
 | `fake/rc1-stdio.js` | The same fake on stdin/stdout, for the desktop pty |
 | `unit/rc1.test.js` | The fake against the firmware's own unit-test vectors (`node --test`) |
-| `selftest/index.html` | A small reference client doing what stage 1 will do (choose rc1, GVRET/slcan, bounded trace with a dropped counter, CSV logging committed every few seconds, theme), with the app's test hook: proves the fake, the mocks and every check in Chromium before the app exists |
+| `selftest/index.html` | A small reference client doing what stage 1 will do (choose rc1, GVRET/slcan, bounded trace with a dropped counter, CSV logging as one download on stop (the MVP), theme), with the app's test hook: proves the fake, the mocks and every check in Chromium before the app exists |
 | `lib/harness.mjs` | Fixtures: the init script, console-error collection (every test fails on a console error or uncaught exception), a driver per target |
 | `specs/*.spec.mjs` | The suite, run once per project: `selftest` and `app` |
 | `server.mjs` | Static server: `dist/` at `/`, the harness at `/__harness/` |
@@ -90,29 +90,52 @@ window.webSavvyCAN = {
 
 `selftest/index.html` implements exactly this; use it as the reference.
 
-## UI names the app driver uses
+## How the app driver works (`lib/harness.mjs` `AppDriver`)
 
-The `app` driver clicks through the UI by role and name in Qt's accessibility tree (Qt for WebAssembly mirrors
-widgets as hidden HTML once its "Enable screen reader" button is pressed; the driver presses it). SavvyCAN's own
-names: menu Connection > Open Connection Window, Add New Device Connection, radio "Serial Connection (GVRET)" /
-"LAWICEL / SLCAN Serial", Create New Connection, Speed, Enable Bus, Enable CAN FD, CAN FD Data Rate, Save Bus
-Settings, Disconnect Selected Device, File > Start Continuous Logging. Stage-1 names assumed (tell the tests if the UI
-chooses others: `lib/harness.mjs` `AppDriver`): button **Choose device**, File > **Stop Continuous Logging**, View >
-**Dark theme** / **Light theme**. A missing widget skips the test with its name, not fails it.
+- Qt 6.12 puts its windows in a shadow root (`#qt-shadow-container`): `document.querySelector('canvas')` sees
+  nothing. Its accessibility tree starts as one visually hidden "Enable Screen Reader" button that reacts only to a
+  DOM click (a Playwright click does nothing); after that, Playwright's role locators (which pierce open shadow
+  roots) reach menus, buttons, checkboxes and radios by name.
+- Names as the app has them (case-insensitive prefix match): Connection > Open Connection Window, Add New Device
+  Connection, radio "Serial Connection (GVRET)" / "LAWICEL / SLCAN Serial", **Choose device...**, Create New
+  Connection, Save Bus Settings, Disconnect Selected Device, File > Start Continuous Logging / **Cease Continuous
+  Logging**, View > **Light Theme** / **Dark Theme** / **Follow System Theme**. A widget that isn't there skips the
+  test with its name.
+- Combo boxes are mirrored without a usable box: the driver gives a neighbouring checkbox the focus with two real
+  clicks, tabs to the combo box and types the value (QComboBox's keyboard search). Not through the popup: Enter there
+  also presses the connection window's default button, Disconnect Selected Device.
+- Bus Details' checkboxes are all named "Bus Details:" (their labels aren't buddies): Listen Only, Enable Bus, Enable
+  CAN FD in that order. They fill in from the device once the GVRET connection is up, so they are set after that.
+- After connecting the driver closes the connection window (Escape): while it is open the main window's menus don't
+  react.
+- Unplugging with the accessibility layer on hits a Qt 6.12 bug (`setAttribute` of undefined from Qt's
+  accessibility code, the window stops drawing); the app's unplug test therefore clicks the canvas at fixed positions
+  without the layer (`traffic.spec.mjs`, 1280x800 viewport).
 
-## Tests and what they wait for
+## Tests and what they check
 
-| Spec | Checks | `app` waits for |
-| --- | --- | --- |
-| connect | chooser filtered to rc1 from a gesture; GVRET FD / classic and slcan FD set up rc1 as asked; every FD length, BRS, 29-bit, classic and remote frame arrives exactly; returning visitor (getPorts); chooser cancelled; channel refused | build (`dist/`), Web Serial port + Choose device, connection window, hook |
-| traffic | Leaf bus 5 s: every frame counted; garbled stream resyncs; slcan error lines not counted as frames; overload: dropped counter, received = trace + evicted + dropped; unplug mid-stream and reconnect | + frame store / dropped counter (ring buffer) |
-| logging | start/stop through the UI; native GVRET CSV identical to what the fake sent (FD rows, BRS); rows on disk while running (commits); file named by the start time | + logging to disk |
-| theme | light first, dark visibly darker (screenshot luminance), remembered after reload | + theme switch |
-| fullload `@long` | 60 s at 8 000 classic / 6 900 FD64 frames/s: accounting, rc1-side loss < 0.1 %, 10 ms timer lateness p95 < 50 ms, no stall > 1 s; `results/fullload-*.json` | + everything above |
-| every test | no console error, no uncaught exception | |
+| Spec | Checks |
+| --- | --- |
+| connect | chooser filtered to rc1 from a gesture; GVRET FD / classic and slcan FD set up rc1 as asked; every FD length, BRS, 29-bit, classic and remote frame arrives exactly (`traceTail`); returning visitor (granted port, no chooser); chooser cancelled; channel refused |
+| traffic | Leaf bus 5 s: every frame counted; garbled stream resyncs; slcan error lines not counted as frames; overload (5x rc1's rate): received = trace + evicted + dropped; unplug mid-stream and reconnect |
+| logging | File > Start Continuous Logging / Cease: one download named `SavvyCAN_<start time>.csv`, SavvyCAN's native GVRET CSV, its rows equal to what the fake sent (FD rows, BRS); an empty log is the header |
+| theme | light first, dark visibly darker (screenshot luminance), remembered after reload; a dark system: followed on a first visit, overridden and followed again |
+| fullload `@long` | 60 s at 8 000 classic / 6 900 FD64 frames/s: accounting, rc1-side loss < 0.1 %, 10 ms timer lateness p95 < 50 ms, no stall > 1 s; `results/fullload-*.json` |
+| every test | no console error, no uncaught exception |
 
-Until `dist/index.html` exists every `app` test is skipped with that reason; with a build but no hook, with "no
-window.webSavvyCAN test hook"; with a hook but a missing widget, with the widget's name.
+Without `dist/SavvyCAN.html` every `app` test is skipped with that reason. `run.sh` uses port 8751 for its server and
+never reuses one already there (another worktree's server would serve its own harness and build): set `WSC_PORT`
+when two run at once.
+
+## Consolidation (proposal for the simplification review)
+
+Three browser-test locations exist today: `tests/web` (this suite), `test/web` (logging: the disk-log module, the
+download, multi-GB, Firefox, real pickers under Xvfb) and `wasm/webserial/tests` (`e2e.mjs`, `bridge.test.mjs`, the
+desktop Qt tests of the Web Serial stand-in). Proposal: one `tests/web` with one `package.json`, one server, one fake
+and one driver; `test/web`'s specs move in as Playwright projects (`logging-module`, `firefox`, `xvfb`, `large`);
+`e2e.mjs` is dropped (`connect` and `traffic` cover it with the same driver); `bridge.test.mjs` joins `unit/`; the
+desktop C++ tests (`tst_webserial*`, `test/frames`, `test/nativecsv`) go under one `tests/desktop` with one CMake
+project and one `run.sh`.
 
 ## The desktop fake
 
