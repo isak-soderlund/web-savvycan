@@ -74,6 +74,17 @@ static std::string jsonTheme() { return theme().toStdString(); }
 static std::string jsonTraceTail(int n) { return QJsonDocument(traceTail(n)).toJson(QJsonDocument::Compact).toStdString(); }
 static std::string jsonVersion() { return AboutDialog::gitCommit().toStdString(); }
 
+// window.webSavvyCAN, calling the bindings below (EM_JS: its body may contain commas, EM_ASM's may not)
+EM_JS(void, wsc_install_hook, (), {
+    const mod = Module;
+    window.webSavvyCAN = {
+        version: mod.wscVersion(),
+        stats: () => JSON.parse(mod.wscStats()),
+        theme: () => mod.wscTheme(),
+        traceTail: (n) => JSON.parse(mod.wscTraceTail(n | 0)),
+    };
+});
+
 EMSCRIPTEN_BINDINGS(web_savvycan_testhook)
 {
     emscripten::function("wscStats", &jsonStats);
@@ -99,15 +110,7 @@ void install(CommFrameModel *model)
         });
     }
 #ifdef Q_OS_WASM
-    EM_ASM({
-        const mod = Module;
-        window.webSavvyCAN = {
-            version: mod.wscVersion(),
-            stats: () => JSON.parse(mod.wscStats()),
-            theme: () => mod.wscTheme(),
-            traceTail: (n) => JSON.parse(mod.wscTraceTail(n | 0)),
-        };
-    });
+    wsc_install_hook();
 #endif
 }
 
