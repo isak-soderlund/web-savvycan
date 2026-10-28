@@ -45,7 +45,7 @@ test.describe('connect', () => {
       expect(a.framesReceived).toBe(s.encoded);
       expect(a.framesDropped).toBe(0);
       const sent = await fake.recorded(page);
-      const tail = await page.evaluate((n) => window.webSavvyCAN.traceTail ? window.webSavvyCAN.traceTail(n) : null, sent.length);
+      const tail = await page.evaluate((n) => window.webSavvyCAN && window.webSavvyCAN.traceTail ? window.webSavvyCAN.traceTail(n) : null, sent.length);
       test.skip(!tail, 'the app has no webSavvyCAN.traceTail(n) (README "The app\'s test hook")');
       const norm = (f) => ({ id: f.id, ext: f.ext, fd: f.fd, brs: f.brs, data: f.data });
       expect(tail.slice(-sent.length).map(norm)).toEqual(sent.map(norm));

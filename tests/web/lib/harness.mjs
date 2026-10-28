@@ -24,9 +24,13 @@ export async function installFake(page, opts = {}) {
 }
 
 /** Why an app test can't run yet (null when it can). */
+export function appEntry() {
+  for (const f of ['SavvyCAN.html', 'index.html']) if (existsSync(join(DIST, f))) return f;
+  return null;
+}
 export function appMissing() {
-  if (!existsSync(join(DIST, 'index.html'))) {
-    return `no ${DIST}/index.html: waiting for the wasm build (RESOLVE.md MVP #1, build agent); set WSC_DIST to a dist/`;
+  if (!appEntry()) {
+    return `no ${DIST}/SavvyCAN.html: waiting for the wasm build (RESOLVE.md MVP #1, scripts/build-wasm.sh); set WSC_DIST to a dist/`;
   }
   return null;
 }
@@ -85,11 +89,10 @@ class AppDriver {
     this.name = 'app';
   }
   async open(query = '') {
-    await this.page.goto(`/${query ? '?' + query : ''}`);
-    const hook = await this.page.waitForFunction(() => !!window.webSavvyCAN, null, { timeout: 30000 }).catch(() => null);
-    if (!hook) {
-      base.skip(true, 'the app has no window.webSavvyCAN test hook yet (README "The app\'s test hook"; ui/webserial agents)');
-    }
+    await this.page.goto(`/${appEntry()}${query ? '?' + query : ''}`);
+    // Qt's loader: the app is up when its window (canvas / accessibility container) is there.
+    await this.page.waitForFunction(() => document.querySelector('canvas, [role=application], .qt-window'), null, { timeout: 60000 });
+    await this.page.waitForTimeout(1500);
     await this.enableA11y();
   }
   async enableA11y() {
@@ -115,11 +118,15 @@ class AppDriver {
   async connect({ protocol = 'gvret', bitrate = 500000, fd = true, dataBitrate = 2000000 } = {}) {
     await this.menu('Connection', 'Open Connection Window');
     await (await this.need(this.role('button', 'Add New Device Connection'), 'Add New Device Connection')).click({ force: true });
-    const type = protocol === 'gvret' ? 'Serial Connection (GVRET)' : 'LAWICEL / SLCAN Serial';
+    const type = protocol === 'gvret' ? 'Serial Connection (GVRET)' : 'LAWICEL';
     await (await this.need(this.role('radio', type), `radio "${type}"`)).click({ force: true });
     await this.chooseDevice();
     await (await this.need(this.role('button', 'Create New Connection'), 'Create New Connection')).click({ force: true });
-    await this.page.waitForFunction(() => window.webSavvyCAN.stats().connected, null, { timeout: 10000 });
+    // Connected as rc1 sees it: GVRET mode with keep-alives coming (SavvyCAN's ESP32 mode waits 3 s first), or slcan open.
+    await this.page.waitForFunction((p) => {
+      const s = window.__rc1.stats();
+      return p === 'gvret' ? s.mode === 'gvret' && s.bytesFromHost > 20 : s.channel.open;
+    }, protocol, { timeout: 15000 });
     if (protocol === 'gvret') {
       // Bus details: speed, enable, FD, data rate; Save Bus Settings.
       const speed = await this.need(this.role('combobox', 'Speed'), 'Speed');
@@ -142,7 +149,7 @@ class AppDriver {
     await this.page.waitForFunction(() => !window.webSavvyCAN.stats().logging, null, { timeout: 10000 });
   }
   async toggleTheme() {
-    const viaHook = await this.page.evaluate(() => typeof window.webSavvyCAN.theme === 'function');
+    const viaHook = await this.page.evaluate(() => !!window.webSavvyCAN && typeof window.webSavvyCAN.theme === 'function');
     if (!viaHook) base.skip(true, 'the app reports no theme (webSavvyCAN.theme())');
     await this.menu('View', 'Dark theme').catch(async () => this.menu('View', 'Light theme'));
   }
@@ -181,7 +188,11 @@ export const fake = {
   log: (page) => page.evaluate(() => window.__rc1.log()),
   events: (page) => page.evaluate(() => window.__rc1.events),
   recorded: (page) => page.evaluate(() => window.__rc1.recorded()),
-  appStats: (page) => page.evaluate(() => window.webSavvyCAN.stats()),
+  async appStats(page) {
+    const s = await page.evaluate(() => (window.webSavvyCAN ? window.webSavvyCAN.stats() : null));
+    if (!s) base.skip(true, 'the app has no window.webSavvyCAN test hook yet (README "The app\'s test hook")');
+    return s;
+  },
   probe: (page) => page.evaluate(() => window.__probe.report()),
 };
 
