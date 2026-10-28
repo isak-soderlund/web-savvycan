@@ -17,7 +17,14 @@ ConnectionWindow::ConnectionWindow(QWidget *parent) :
     ui(new Ui::ConnectionWindow)
 {
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    // web-savvycan: Qt for WebAssembly shows a Qt::Window as a frameless page-sized window over the main window: no
+    // title bar or close button, the main window's menus unreachable (only Escape closed it). As a dialog it gets Qt's
+    // window frame (title bar, close button) and can be moved aside.
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+#else
     setWindowFlags(Qt::Window);
+#endif
 
     QSettings settings;
 
