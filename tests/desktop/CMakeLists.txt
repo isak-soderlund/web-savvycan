@@ -58,8 +58,7 @@ endforeach()
 # The Web Serial stand-in: no Qt6::SerialPort here, <QSerialPort> must be the stand-in's.
 set(WEBSERIAL ${SRC}/wasm/webserial)
 add_executable(tst_webserialport tst_webserialport.cpp fakebackend.h
-    ${WEBSERIAL}/webserialport.cpp ${WEBSERIAL}/webserialport.h
-    ${WEBSERIAL}/webserialhub.cpp ${WEBSERIAL}/webserialhub.h)
+    ${WEBSERIAL}/webserialport.cpp ${WEBSERIAL}/webserialport.h)
 target_include_directories(tst_webserialport BEFORE PRIVATE ${WEBSERIAL}/include ${WEBSERIAL})
 target_link_libraries(tst_webserialport PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME tst_webserialport COMMAND tst_webserialport)
