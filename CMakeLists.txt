@@ -16,19 +16,11 @@ option(BUILD_TESTS "Build test target" OFF)
 option(USE_SANITIZER "Enable sanitizers for Debug builds" OFF)
 option(USE_TSAN "Enable ThreadSanitizer for Debug builds (instead of USE_SANITIZER's ASan/UBSan)" OFF)
 
-# web-savvycan: the WebAssembly build (Qt for WebAssembly, wasm_singlethread). Qt 6.12 has no
-# Serial Port / Serial Bus for wasm, so the wasm build uses the stand-ins in wasm/ and leaves out
-# the QtSerialBus connection, OpenGL, Help and MQTT over TLS. The desktop build is unchanged.
+# web-savvycan: the WebAssembly build (Qt for WebAssembly, wasm_singlethread, wasm/wasm.cmake). Qt 6.12 has
+# no Serial Port / Serial Bus for wasm, so the wasm build uses the stand-ins in wasm/ and leaves out the
+# QtSerialBus connection, OpenGL, Help, scripting (Qt Qml, until its stage) and MQTT over TLS.
 if(EMSCRIPTEN)
-    set(WEB_SAVVYCAN_WASM ON)
-else()
-    set(WEB_SAVVYCAN_WASM OFF)
-endif()
-option(WEB_SAVVYCAN_JSPI "wasm: JSPI instead of Asyncify for QDialog::exec() (needs a Qt built with JSPI)" OFF)
-option(WEB_SAVVYCAN_SCRIPTING "The scripting window (QJSEngine, Qt Qml); OFF leaves Qt Qml out" ON)
-set(WEB_SAVVYCAN_WASM_LINK_OPT "-Oz" CACHE STRING "wasm: optimisation level for our code and the link (-O2, -Os, -Oz)")
-
-if(WEB_SAVVYCAN_WASM)
+    set(WEB_SAVVYCAN_WASM_LINK_OPT "-Oz" CACHE STRING "wasm: optimisation level for our code and the link (-O2, -Os, -Oz)")
     find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS Core Gui PrintSupport Widgets Network)
 else()
     find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS Core Gui PrintSupport SerialBus SerialPort Widgets Help Network OpenGL Qml)
@@ -179,20 +171,13 @@ target_include_directories(SavvyCAN PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/connections
 )
 
-if(WEB_SAVVYCAN_SCRIPTING)
-    find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS Qml)
+if(NOT EMSCRIPTEN)
     target_sources(SavvyCAN PRIVATE
+        connections/serialbusconnection.cpp connections/serialbusconnection.h
         scriptcontainer.cpp scriptcontainer.h
         scriptingwindow.cpp scriptingwindow.h
         ui/scriptingwindow.ui
     )
-    target_link_libraries(SavvyCAN PRIVATE Qt6::Qml) # for QJSEngine
-else()
-    target_compile_definitions(SavvyCAN PRIVATE SAVVYCAN_NO_SCRIPTING)
-endif()
-
-if(NOT WEB_SAVVYCAN_WASM)
-    target_sources(SavvyCAN PRIVATE connections/serialbusconnection.cpp connections/serialbusconnection.h)
     target_compile_definitions(SavvyCAN PRIVATE QCUSTOMPLOT_USE_OPENGL)
 endif()
 
@@ -202,11 +187,6 @@ endif()
 
 set_debug_sanitizer_options(SavvyCAN)
 
-# web-savvycan: continuous logging straight to disk in the browser
-if(EMSCRIPTEN)
-    include(wasm/disklog/disklog.cmake)
-endif()
-
 target_link_libraries(SavvyCAN PRIVATE
     Qt6::Core
     Qt6::Gui
@@ -214,18 +194,17 @@ target_link_libraries(SavvyCAN PRIVATE
     Qt6::Widgets
     Qt6::Network
 )
-if(NOT WEB_SAVVYCAN_WASM)
+if(EMSCRIPTEN)
+    include(wasm/wasm.cmake)
+else()
     target_link_libraries(SavvyCAN PRIVATE
         Qt6::SerialBus
         Qt6::SerialPort
         Qt6::Help
         Qt6::OpenGL
+        Qt6::Qml # for QJSEngine
         OpenGL::GL
     )
-endif()
-
-if(WEB_SAVVYCAN_WASM)
-    include(wasm/wasm.cmake)
 endif()
 
 if(USE_DBUS AND UNIX AND NOT APPLE)
@@ -292,7 +271,6 @@ target_sources(SavvyCAN PRIVATE
     theme.cpp theme.h
     aboutdialog.cpp aboutdialog.h
     tracedatadelegate.cpp tracedatadelegate.h
-    testhook.cpp testhook.h
 )
 # The commit this build is made from, for Help > About (the GPL source link). Read at configure
 # time; "+dirty" when the tree had changes.
