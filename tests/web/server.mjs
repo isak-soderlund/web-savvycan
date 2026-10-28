@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// A static server for the browser tests: the built app (dist/) at /, the harness (fake rc1, self-test page) at
-// /__harness/. No dependencies. Usage: node server.mjs [--port 8751] [--dist DIR]   (env WSC_DIST, WSC_PORT)
+// A static server for the browser tests: the built app (dist/) at /, this directory (tests/web) at /__harness/, the
+// repository's sources at /__src/ (the logging module's own page). No dependencies. Usage: node server.mjs [--port 8751] [--dist DIR]   (env WSC_DIST, WSC_PORT)
 import { createServer } from 'node:http';
 import { createReadStream, statSync } from 'node:fs';
 import { extname, join, normalize, resolve, dirname } from 'node:path';
@@ -33,9 +33,11 @@ createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   let path = decodeURIComponent(url.pathname);
   let root = dist;
-  if (path.startsWith('/__harness/')) {
-    root = here;
-    path = path.slice('/__harness'.length);
+  for (const [prefix, dir] of [['/__harness/', here], ['/__src/', join(here, '../..')]]) {
+    if (path.startsWith(prefix)) {
+      root = resolve(dir);
+      path = path.slice(prefix.length - 1);
+    }
   }
   if (path.includes('node_modules')) path = '/nope';
   const f = file(root, path);

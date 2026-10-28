@@ -742,7 +742,7 @@ QVariant CommFrameModel::data(const QModelIndex &index, int role) const
             if (dataLen < 0)
                 dataLen = 0;
 
-            if (thisFrame.frameType() == QCanBusFrame::RemoteRequestFrame)
+            if (thisFrame.frameType() == CommFrame::RemoteRequestFrame)
                 return tempString;
 
             for (int i = 0; i < dataLen; i++)

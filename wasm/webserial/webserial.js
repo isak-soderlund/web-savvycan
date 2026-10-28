@@ -1,13 +1,11 @@
-// web-savvycan: the browser half of the Web Serial QSerialPort stand-in. Linked with --pre-js, so it runs inside the
-// Emscripten module (MODULARIZE: `Module` is this app instance). C++ calls webSerialBridge.* through EM_JS
-// (webserialbackend_wasm.cpp); the bridge answers through the embind functions Module.webSerial*.
+// web-savvycan: the browser half of the Web Serial QSerialPort stand-in: globalThis.resolveWebSerial. Linked with
+// --pre-js, so it runs inside the Emscripten module (MODULARIZE: `Module` is this app instance). C++ calls it through
+// EM_JS (webserialbackend_wasm.cpp); it answers through the embind functions Module.webSerial*. Tests read ports().
 //
 // One session per C++ handle. Per physical port, opens and closes run one after another (a promise chain), so closing
 // and reopening at once (SavvyCAN does it when it retries) waits for the close to finish.
-//
-// Also on globalThis.resolveWebSerial for the page: requestPort(anyPort) from an HTML button, ports() for tests.
 
-var webSerialBridge = (function () {
+globalThis.resolveWebSerial = (function () {
   'use strict';
 
   // resolve-can rc1: the pid.codes test PID 1209:0001 (firmware/app/src/usb.rs; lab use only until it has its own).
@@ -93,7 +91,7 @@ var webSerialBridge = (function () {
   }
 
   // Qt's SerialPortError values (webserialport.h).
-  var ERR = { DeviceNotFound: 1, Permission: 2, Open: 3, Write: 7, Read: 8, Resource: 9, Unknown: 11 };
+  var ERR = { DeviceNotFound: 1, Permission: 2, Open: 3, Write: 7, Resource: 9 };
 
   function openError(err) {
     var n = err && err.name;
@@ -138,9 +136,9 @@ var webSerialBridge = (function () {
         s.reader = null;
         if (s.closing) return;
         var n = err && err.name;
-        // Non-fatal: Web Serial gives a new readable stream after these.
+        // Non-fatal: Web Serial gives a new readable stream after these; the bytes are lost, the stream goes on.
         if (n === 'BufferOverrunError' || n === 'BreakError' || n === 'FramingError' || n === 'ParityError') {
-          call('webSerialReadError', handle, text(err));
+          console.warn('webserial: read error, data lost, reading on: ' + text(err));
           return next();
         }
         lost(handle, s, text(err)); // NetworkError: the device is gone
@@ -165,8 +163,7 @@ var webSerialBridge = (function () {
       s.entry = entry;
       entry.chain = entry.chain.then(function () {
         if (s.closing) return;
-        var opts = { baudRate: options.baudRate, dataBits: options.dataBits, stopBits: options.stopBits,
-                     parity: options.parity, flowControl: options.flowControl, bufferSize: BUFFER_SIZE };
+        var opts = { baudRate: options.baudRate, flowControl: options.flowControl, bufferSize: BUFFER_SIZE };
         return entry.port.open(opts).catch(function (err) {
           if (!(err instanceof TypeError) || opts.bufferSize === BUFFER_SIZE_FALLBACK) throw err;
           opts.bufferSize = BUFFER_SIZE_FALLBACK; // an older or stricter browser: smaller buffer
@@ -193,20 +190,17 @@ var webSerialBridge = (function () {
   function write(handle, bytes) {
     var s = sessions.get(handle);
     if (!s || !s.writer || s.closing) return;
-    var n = bytes.length;
-    s.writer.write(bytes).then(function () {
-      call('webSerialWritten', handle, n);
-    }, function (err) {
+    s.writer.write(bytes).catch(function (err) {
       if (s.closing || s.reported) return;
       s.reported = true;
       call('webSerialError', handle, ERR.Write, 'Write failed: ' + text(err));
     });
   }
 
-  function setSignals(handle, dtr, rts, brk) {
+  function setSignals(handle, dtr, rts) {
     var s = sessions.get(handle);
     if (!s || s.closing) return;
-    var signals = { dataTerminalReady: !!dtr, requestToSend: !!rts, break: !!brk };
+    var signals = { dataTerminalReady: !!dtr, requestToSend: !!rts };
     if (!s.opened) { s.signals = signals; return; } // sent right after the open
     s.entry.port.setSignals(signals).catch(function (e) { console.warn('webserial: setSignals failed', e); });
   }
@@ -261,16 +255,11 @@ var webSerialBridge = (function () {
   }
 
   function ports() {
-    return entries.map(function (e) {
-      return { name: e.name, description: e.description, vid: e.vid, pid: e.pid, hasUsbIds: e.hasUsbIds };
-    });
+    return entries.map(function (e) { return { name: e.name, description: e.description }; });
   }
 
-  var api = {
+  return {
     supported: !!serial, ports: ports, open: open, write: write, setSignals: setSignals, close: close,
-    requestPort: requestPort, refresh: refresh, ready: function () { return ready; },
-    sessions: function () { return sessions.size; }
+    requestPort: requestPort, ready: function () { return ready; }, sessions: function () { return sessions.size; }
   };
-  if (typeof globalThis !== 'undefined') globalThis.resolveWebSerial = api;
-  return api;
 })();

@@ -1,18 +1,17 @@
 #!/bin/bash
 # Desktop build of web-savvycan (Qt 6.12 gcc_64, CMake + Ninja).
 #
-# Usage: scripts/build-desktop.sh [release|asan|tsan|all] [--tests] [--clean] [-j N]
+# Usage: scripts/build-desktop.sh [release|asan|tsan|all] [--clean]
 #   release  Release build                                  -> build/desktop-release/SavvyCAN
 #   asan     Debug + AddressSanitizer/UBSan (USE_SANITIZER)  -> build/desktop-asan/SavvyCAN
 #   tsan     Debug + ThreadSanitizer (USE_TSAN)              -> build/desktop-tsan/SavvyCAN
 #   all      the three
-#   --tests  also build SavvyCAN_tests (BUILD_TESTS)
 #
 # Toolchain from ~/.local/share/web-savvycan/toolchain.env (scripts/setup-toolchain.sh), or set
 # QT_DESKTOP to a Qt 6 gcc_64 prefix. On the rig, run it through the heavy-job wrapper
 # (build lock, memory cap, sets WSC_JOBS):
 #   ~/.local/share/web-savvycan/heavy.sh scripts/build-desktop.sh
-# Parallel jobs: -j N, else WSC_JOBS, else 2.
+# Parallel jobs: WSC_JOBS, else 2. The desktop tests: tests/desktop/run.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
@@ -24,15 +23,13 @@ if [ -z "${QT_DESKTOP:-}" ] && [ -f "$ENV_FILE" ]; then
 fi
 [ -n "${QT_DESKTOP:-}" ] || { echo "QT_DESKTOP not set (run scripts/setup-toolchain.sh)" >&2; exit 1; }
 
-VARIANTS=() TESTS=OFF CLEAN=0 JOBS="${WSC_JOBS:-2}"
+VARIANTS=() CLEAN=0 JOBS="${WSC_JOBS:-2}"
 while [ $# -gt 0 ]; do
     case "$1" in
         release|asan|tsan) VARIANTS+=("$1") ;;
         all) VARIANTS+=(release asan tsan) ;;
-        --tests) TESTS=ON ;;
         --clean) CLEAN=1 ;;
-        -j) JOBS="$2"; shift ;;
-        -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
@@ -51,8 +48,7 @@ for v in "${VARIANTS[@]}"; do
     B="$ROOT/build/desktop-$v"
     [ "$CLEAN" = 1 ] && rm -rf "$B"
     echo "== desktop $v -> $B"
-    cmake -S "$ROOT" -B "$B" -G Ninja -DCMAKE_PREFIX_PATH="$QT_DESKTOP" \
-        -DBUILD_TESTS="$TESTS" "${LAUNCHER[@]}" "${OPTS[@]}"
+    cmake -S "$ROOT" -B "$B" -G Ninja -DCMAKE_PREFIX_PATH="$QT_DESKTOP" "${LAUNCHER[@]}" "${OPTS[@]}"
     cmake --build "$B" -j "$JOBS"
     ls -l "$B/SavvyCAN"
 done

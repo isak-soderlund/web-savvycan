@@ -56,12 +56,14 @@ jobs:
 
       - name: Smoke test (headless Chromium)
         run: |
-          (cd scripts && npm ci && npx playwright install --with-deps chromium)
+          (cd tests/web && npm ci && npx playwright install --with-deps chromium)
           scripts/smoke-wasm.sh
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: web-savvycan-wasm
-          path: dist/
+          path: |
+            dist/
+            tests/web/results/
           if-no-files-found: ignore

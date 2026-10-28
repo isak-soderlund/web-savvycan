@@ -4,11 +4,4 @@
 class QCanBusDeviceInfo {
 public:
     QString name() const { return {}; }
-    QString description() const { return {}; }
-    QString serialNumber() const { return {}; }
-    QString alias() const { return {}; }
-    QString plugin() const { return {}; }
-    bool hasFlexibleDataRate() const { return false; }
-    bool isVirtual() const { return false; }
-    int channel() const { return 0; }
 };

@@ -9,7 +9,7 @@
  * entry, button, panel and window is hidden (not broken) until its stage turns it on here, on the
  * desktop and in the browser alike.
  *
- * To switch a feature on: set its line in enabledFeature() below to true. MainWindow::applyFeatures()
+ * To switch a feature on: set its line in on() below to true. MainWindow::applyFeatures()
  * hides/disables everything tied to a feature that is off (menu actions, so their shortcuts are dead
  * too; panels; Preferences groups; context-menu entries), and the show...() slots refuse to open a
  * window whose feature is off, so nothing is reachable another way either.
@@ -59,7 +59,7 @@ enum class Feature {
     MotorControlConfig,
 };
 
-constexpr bool enabledFeature(Feature f)
+constexpr bool on(Feature f)
 {
     switch (f) {
     case Feature::Connection:         return true;
@@ -97,18 +97,6 @@ constexpr bool enabledFeature(Feature f)
     }
     return false;
 }
-
-// Browser logging (WebAssembly build only).
-//   false (the MVP, owner 2026-10-28): the log is collected in the page and one normal download of the
-//         CSV starts when logging stops, in every browser. A tab crash loses that log (accepted).
-//   true: written to disk while it runs (File System Access in Chrome/Edge, committed every 3 s, a
-//         start-time-named file in a remembered folder or the save dialog; Firefox: a streaming download
-//         through a service worker), with the start dialog (wasm/disklog/weblogstartdialog). Kept in the
-//         tree, tested on the disklog branch; the owner may want it later.
-constexpr bool LOG_TO_DISK_LIVE = false;
-
-// Same as enabledFeature(); the short name used at the call sites.
-constexpr bool on(Feature f) { return enabledFeature(f); }
 
 } // namespace Features
 

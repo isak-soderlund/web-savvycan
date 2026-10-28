@@ -1,24 +1,18 @@
 #!/bin/bash
 # WebAssembly build of web-savvycan (Qt 6.12 wasm_singlethread + Emscripten 5.0.5).
 #
-# Usage: scripts/build-wasm.sh [--clean] [--jspi] [--opt -Oz|-Os|-O2] [--wasm-opt] [--dist DIR]
-#                              [--gzip-loader] [-j N] [-- extra cmake args]
-#   --jspi      JSPI instead of Asyncify (WEB_SAVVYCAN_JSPI; Chrome 137+)
-#   --opt       optimisation level for our code and the link (default -Oz)
-#   --wasm-opt  an extra `wasm-opt -Oz` pass over the linked .wasm before it goes to dist/
-#   --dist      output directory (default dist/)
-#   Defaults (2026-10-28): --gzip-loader on (--no-gzip-loader for the raw .wasm), scripting window off
-#               (--scripting to build it; stage 1 doesn't use it, 5.7 MB less).
-#   --gzip-loader  ship the wasm only as SavvyCAN.wasm.gz: the page fetches it and decompresses it
-#               with DecompressionStream('gzip') (Chrome 80+, Firefox 113+, Safari 16.4+), so no file
-#               is over a static host's 20 MB limit (Shopify Oxygen). The raw .wasm is left out.
-# Output: dist/SavvyCAN.{html,js,wasm}, qtloader.js, qtlogo.svg, each also as .gz and .br;
-# sizes printed at the end (Shopify Oxygen allows 20 MB per file).
+# Usage: scripts/build-wasm.sh [--clean] [--no-gzip-loader] [--dist DIR] [-- extra cmake args]
+#   The wasm ships only as SavvyCAN.wasm.gz: the page fetches it and decompresses it with
+#   DecompressionStream('gzip') (Chrome 80+, Firefox 113+, Safari 16.4+), so no file is over a static
+#   host's 20 MB limit (Shopify Oxygen). --no-gzip-loader: the raw .wasm instead.
+#   --dist       output directory (default dist/)
+# Output: dist/SavvyCAN.{html,js,wasm.gz}, qtloader.js, qtlogo.svg, each also as .gz and .br;
+# sizes printed at the end.
 #
 # Toolchain from ~/.local/share/web-savvycan/toolchain.env (scripts/setup-toolchain.sh). On the
 # rig, run it through the heavy-job wrapper (build lock, memory cap, sets WSC_JOBS):
 #   ~/.local/share/web-savvycan/heavy.sh scripts/build-wasm.sh
-# Parallel jobs: -j N, else WSC_JOBS, else 2.
+# Parallel jobs: WSC_JOBS, else 2.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
@@ -31,35 +25,28 @@ fi
 [ -n "${QT_WASM:-}" ] && [ -n "${QT_DESKTOP:-}" ] || { echo "QT_WASM/QT_DESKTOP not set (run scripts/setup-toolchain.sh)" >&2; exit 1; }
 command -v emcc >/dev/null || { echo "emcc not on PATH (source $ENV_FILE)" >&2; exit 1; }
 
-CLEAN=0 JSPI=OFF OPT=-Oz WASMOPT=0 GZLOADER=1 SCRIPTING=OFF DIST="$ROOT/dist" JOBS="${WSC_JOBS:-2}" EXTRA=()
+CLEAN=0 GZLOADER=1 DIST="$ROOT/dist" JOBS="${WSC_JOBS:-2}" EXTRA=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --clean) CLEAN=1 ;;
-        --jspi) JSPI=ON ;;
-        --opt) OPT="$2"; shift ;;
-        --wasm-opt) WASMOPT=1 ;;
-        --gzip-loader) GZLOADER=1 ;;
         --no-gzip-loader) GZLOADER=0 ;;
-        --scripting) SCRIPTING=ON ;;
         --dist) DIST="$(realpath -m "$2")"; shift ;;
-        -j) JOBS="$2"; shift ;;
         --) shift; EXTRA=("$@"); break ;;
-        -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
 done
 
-B="${WASM_BUILD_DIR:-$ROOT/build/wasm}"   # --jspi, --opt and -D options only re-link/re-configure here
+B="${WASM_BUILD_DIR:-$ROOT/build/wasm}"
 [ "$CLEAN" = 1 ] && rm -rf "$B"
 
 LAUNCHER=()
 command -v ccache >/dev/null && LAUNCHER=(-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache)
 
-echo "== wasm ($OPT, JSPI=$JSPI) -> $B"
+echo "== wasm -> $B"
 "$QT_WASM/bin/qt-cmake" -S "$ROOT" -B "$B" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DQT_HOST_PATH="$QT_DESKTOP" \
-    -DWEB_SAVVYCAN_JSPI="$JSPI" -DWEB_SAVVYCAN_WASM_LINK_OPT="$OPT" -DWEB_SAVVYCAN_SCRIPTING="$SCRIPTING" \
     "${LAUNCHER[@]}" "${EXTRA[@]}"
 cmake --build "$B" -j "$JOBS"
 
@@ -70,12 +57,6 @@ FILES=(SavvyCAN.html SavvyCAN.js SavvyCAN.wasm qtloader.js qtlogo.svg)
 for f in "${FILES[@]}"; do
     [ -f "$B/$f" ] && cp "$B/$f" "$DIST/"
 done
-if [ "$WASMOPT" = 1 ]; then
-    before=$(stat -c %s "$DIST/SavvyCAN.wasm")
-    wasm-opt -Oz --all-features "$DIST/SavvyCAN.wasm" -o "$DIST/SavvyCAN.wasm.opt"
-    mv "$DIST/SavvyCAN.wasm.opt" "$DIST/SavvyCAN.wasm"
-    echo "wasm-opt -Oz: $before -> $(stat -c %s "$DIST/SavvyCAN.wasm") bytes"
-fi
 # The commit this build is from (GPL: every hosted build names its source).
 ( git -C "$ROOT" rev-parse HEAD; git -C "$ROOT" status --porcelain --untracked-files=no | grep -q . && echo dirty || true ) > "$DIST/SOURCE_COMMIT"
 

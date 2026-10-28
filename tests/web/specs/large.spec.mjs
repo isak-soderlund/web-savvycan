@@ -4,19 +4,21 @@
 // memory (PSS of every process of this browser) and the profile's size on disk (Chrome pages blobs
 // into its blob_storage there); then the download's time, size and SHA-256 against the rows written.
 //
-// Not in the normal runs (project "chromium-large"); run it through the heavy-job wrapper:
-//   ~/.local/share/web-savvycan/heavy.sh npx playwright test --project=chromium-large
-// WSC_LARGE_GB=2,4  sizes to try (default 2); WSC_LARGE_DIR: profile + downloads (default
-// test-results/large, on disk: /tmp is a RAM disk here); WSC_LARGE_BROWSER=firefox for Firefox.
+// Not in the normal runs: tests/web/run.sh --large (through the heavy-job wrapper).
+// WSC_LARGE_GB=2,4  sizes to try (default 2); WSC_LARGE_DIR: profile + downloads (default results/large, on disk:
+// /tmp is a RAM disk here); WSC_LARGE_BROWSER=firefox for Firefox.
 import { test, expect, chromium, firefox } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
-import { HARNESS, HEADER, ROWS, OUT, BASE, WEB, note } from './common.mjs';
+import { RESULTS } from '../lib/harness.mjs';
+
+const PAGE = '/__harness/lib/disklog.html';
+const HEADER = 'Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n';
 
 const SIZES = (process.env.WSC_LARGE_GB || '2').split(',').map(Number);
-const DIR = path.resolve(process.env.WSC_LARGE_DIR || path.join(WEB, 'test-results/large'));
+const DIR = path.resolve(process.env.WSC_LARGE_DIR || path.join(RESULTS, 'large'));
 const BROWSER = process.env.WSC_LARGE_BROWSER || 'chromium';
 const MB = 1 << 20;
 const STEP = 256 * MB;
@@ -56,26 +58,31 @@ function browserPid(profile) {
   return main ? Number(main[1]) : null;
 }
 
-// whole rows from the reference file, about 1 MiB
+// about 1 MiB of whole rows (classic and FD rows, as nativeCSVRow writes them)
 function makeBlock() {
-  const text = fs.readFileSync(ROWS, 'latin1');
-  let end = text.lastIndexOf('\n', MB) + 1;
-  return Buffer.from(text.slice(0, end), 'latin1');
+  let text = '';
+  for (let i = 0; text.length < MB - 300; i++) {
+    const n = i % 3 ? 8 : 64;
+    const data = Array.from({ length: n }, (_, j) => ((i * 31 + j * 17) & 0xff).toString(16).toUpperCase().padStart(2, '0'));
+    text += `${1000000 + i * 137},${(i * 7 % 0x800).toString(16).toUpperCase().padStart(8, '0')},false,Rx,0,${n},${data.join(',')},${n > 8 ? 'FD+BRS,' : ''}\n`;
+  }
+  return Buffer.from(text, 'latin1');
 }
 
 for (const [run, gb] of SIZES.entries()) {
-  test(`large blob log #${run + 1}: ${gb} GB of rows collected, one download (${BROWSER})`, async () => {
+  test(`large blob log #${run + 1}: ${gb} GB of rows collected, one download (${BROWSER}) @large`, async ({ baseURL }) => {
+    test.setTimeout(3_600_000);
     fs.mkdirSync(DIR, { recursive: true });
     const profile = fs.mkdtempSync(path.join(DIR, 'profile-'));
     const downloads = fs.mkdtempSync(path.join(DIR, 'downloads-'));
     const type = BROWSER === 'firefox' ? firefox : chromium;
     const ctx = await type.launchPersistentContext(profile, {
-      headless: true, baseURL: BASE, acceptDownloads: true, downloadsPath: downloads,
+      headless: true, baseURL, acceptDownloads: true, downloadsPath: downloads,
     });
     const samples = [];
     try {
       const page = ctx.pages()[0] || await ctx.newPage();
-      await page.goto(HARNESS);
+      await page.goto(PAGE);
       const cdp = BROWSER === 'chromium' ? await ctx.newCDPSession(page) : null;
       const pid = browserPid(profile);
       const block = makeBlock();
@@ -85,7 +92,7 @@ for (const [run, gb] of SIZES.entries()) {
       for (let i = 0; i < blocks; i++) hash.update(block);
       const wantSha = hash.digest('hex');
 
-      // the block sits in a fixed "wasm heap" buffer, copied out per write (writeCopy), 1 MiB per call
+      // the block sits in a fixed "wasm heap" buffer, copied out per write (as the C++ side does), 1 MiB per call
       await page.evaluate(async ({ b64, header }) => {
         const bin = atob(b64);
         window.heap = new Uint8Array(new ArrayBuffer(64 << 20));
@@ -93,11 +100,11 @@ for (const [run, gb] of SIZES.entries()) {
         window.blockLen = bin.length;
         window.writeBlocks = async (n) => {
           for (let i = 0; i < n; i++) {
-            if (!SavvyDiskLog.writeCopy(window.heap.subarray(0, window.blockLen))) throw new Error('write refused');
+            if (!SavvyDiskLog.write(window.heap.slice(0, window.blockLen))) throw new Error('write refused');
             if (i % 16 === 15) await new Promise((r) => setTimeout(r, 0));   // the event loop runs, as with a device
           }
         };
-        await SavvyDiskLog.start({ mode: 'blob', header });
+        await SavvyDiskLog.start({ header });
       }, { b64: block.toString('base64'), header: HEADER });
 
       const sample = async (written) => {
@@ -107,9 +114,9 @@ for (const [run, gb] of SIZES.entries()) {
           const h = await cdp.send('Runtime.getHeapUsage');
           jsHeapMB = Math.round(h.usedSize / MB);
         }
-        const st = await page.evaluate(() => ({ s: SavvyDiskLog.status(), heap: window.heap.byteLength }));
-        const s = { writtenMB: Math.round(written / MB), jsHeapMB, wasmHeapMB: st.heap / MB,
-                    pendingMB: Math.round(st.s.pendingBytes / MB), browserPssMB: pid ? treePssMB(pid) : null,
+        const heap = await page.evaluate(() => window.heap.byteLength);
+        const s = { writtenMB: Math.round(written / MB), jsHeapMB, wasmHeapMB: heap / MB,
+                    browserPssMB: pid ? treePssMB(pid) : null,
                     profileDiskMB: duMB(profile), t: Date.now() };
         samples.push(s);
         console.log(`  ${JSON.stringify(s)}`);
@@ -154,8 +161,9 @@ for (const [run, gb] of SIZES.entries()) {
         profileDiskMBMax: Math.max(...samples.map((s) => s.profileDiskMB)),
         sha256: 'match',
       };
-      fs.writeFileSync(path.join(OUT, `large-${BROWSER}-${gb}GB-${run + 1}.json`), JSON.stringify({ summary, samples }, null, 1));
-      note(JSON.stringify(summary));
+      fs.writeFileSync(path.join(RESULTS, `large-${BROWSER}-${gb}GB-${run + 1}.json`), JSON.stringify({ summary, samples }, null, 1));
+      test.info().annotations.push({ type: 'result', description: JSON.stringify(summary) });
+      console.log(JSON.stringify(summary));
       fs.rmSync(file, { force: true });
     } finally {
       await ctx.close().catch(() => {});

@@ -3,8 +3,9 @@
 ## Building web-savvycan (desktop and WebAssembly)
 
 The same tree builds for the desktop (Qt 6.12, `gcc_64`) and for the browser (Qt 6.12
-`wasm_singlethread` + Emscripten 5.0.5). The wasm build is selected by Qt's toolchain (`EMSCRIPTEN`
-in CMake, `Q_OS_WASM` in C++); the desktop build is not changed by it.
+`wasm_singlethread` + Emscripten 5.0.5), with CMake only (upstream's `SavvyCAN.pro` is left as it came and
+does not build our tree). The wasm build is selected by Qt's toolchain (`EMSCRIPTEN` in CMake, `Q_OS_WASM`
+in C++); the desktop build is not changed by it.
 
 ### 1. Toolchain (once)
 
@@ -29,22 +30,18 @@ scripts/build-desktop.sh all --clean
 ```
 
 CMake options behind them: `USE_SANITIZER` (ASan + UBSan, Debug), `USE_TSAN` (ThreadSanitizer, Debug).
-Upstream's `BUILD_TESTS` target (`test/`) does not compile on QT6WIP (it still uses `CANFrame`,
-`SOCKETCAN`); `--tests` turns it on anyway.
+Our desktop tests are their own CMake project: `tests/desktop/run.sh` (upstream's `BUILD_TESTS`, `test/`,
+does not compile on QT6WIP).
 
 ### 3. WebAssembly
 
 ```bash
-scripts/build-wasm.sh                   # -> dist/
-scripts/build-wasm.sh --wasm-opt        # plus an extra wasm-opt -Oz pass
-scripts/build-wasm.sh --opt -Os         # another optimisation level (default -Oz)
-scripts/build-wasm.sh --gzip-loader     # wasm only as SavvyCAN.wasm.gz, decompressed in the page (20 MB file limits)
-scripts/build-wasm.sh --jspi            # JSPI instead of Asyncify
-WASM_BUILD_DIR=build/wasm-noscript scripts/build-wasm.sh -- -DWEB_SAVVYCAN_SCRIPTING=OFF  # no scripting window/Qt Qml (own build dir: toggling it in one leaves stale moc output)
-scripts/smoke-wasm.sh                   # serve dist/, open it in headless Chromium, dist/smoke.png
+scripts/build-wasm.sh                   # -> dist/ (wasm as SavvyCAN.wasm.gz, unpacked by the page; no scripting window)
+scripts/build-wasm.sh --no-gzip-loader  # the raw SavvyCAN.wasm instead
+scripts/smoke-wasm.sh                   # the smoke test (tests/web's smoke spec) on dist/
 ```
 
-`dist/` gets `SavvyCAN.html`, `SavvyCAN.js`, `SavvyCAN.wasm`, `qtloader.js`, `qtlogo.svg`, each also
+`dist/` gets `SavvyCAN.html`, `SavvyCAN.js`, `SavvyCAN.wasm.gz`, `qtloader.js`, `qtlogo.svg`, each also
 as `.gz` (gzip -9) and `.br` (brotli 11), and `SOURCE_COMMIT` (the commit, plus `dirty`). The script
 prints the sizes. To try it by hand: `python3 -m http.server -d dist 8000`, then
 `http://localhost:8000/SavvyCAN.html` in Chrome.
@@ -59,13 +56,14 @@ What the wasm build changes (all in `wasm/` and behind `EMSCRIPTEN` / `Q_OS_WASM
   (`canconnection.cpp`, `framesenderobject.cpp`, `frameplaybackobject.cpp`).
 - **No TLS:** MQTT over TLS is left out (`QT_NO_SSL`).
 - **No OpenGL** for QCustomPlot, no Qt Help / OpenGL modules linked.
-- **`QDialog::exec()`:** Asyncify (`-sASYNCIFY`), or JSPI with `--jspi`.
-- Optimised for size (`-Oz`, `WEB_SAVVYCAN_WASM_LINK_OPT`).
-- `WEB_SAVVYCAN_SCRIPTING=OFF` (any build) leaves the scripting window and Qt Qml out (`SAVVYCAN_NO_SCRIPTING`).
+- **`QDialog::exec()`:** Asyncify (`-sASYNCIFY`; JSPI needs a Qt built for it, below).
+- Optimised for size (`-Oz`).
+- No scripting window (Qt Qml) in the browser until its stage; the desktop build has it.
 
 ### Sizes and JSPI (measured 2026-10-28, Qt 6.12.0, Emscripten 5.0.5)
 
-`scripts/wasm-size-experiments.sh` rebuilds these; every variant except JSPI passes the smoke test.
+The variants were built with a since deleted experiment script (git history: `scripts/wasm-size-experiments.sh`,
+the `--opt`/`--wasm-opt`/`--scripting`/`--jspi` options of `build-wasm.sh`); every variant except JSPI passed the smoke test.
 
 | Variant | .wasm | gzip -9 | brotli 11 |
 | --- | --- | --- | --- |
@@ -78,7 +76,7 @@ What the wasm build changes (all in `wasm/` and behind `EMSCRIPTEN` / `Q_OS_WASM
 
 SavvyCAN.js is 0.25 MB (0.05 MB brotli); qtloader.js and the html are a few kB.
 
-- **20 MB per file (Shopify Oxygen):** no raw .wasm fits. `--gzip-loader` ships only
+- **20 MB per file (Shopify Oxygen):** no raw .wasm fits. The gzip loader (the default) ships only
   `SavvyCAN.wasm.gz` (11.1 MB) and the page decompresses it (`DecompressionStream('gzip')`; Chromium
   has no `'brotli'` there): every file is under 20 MB, smoke test passes.
 - **JSPI:** links (Asyncify costs ~11.5 MB of the wasm), but fails at start with "trying to suspend
@@ -87,7 +85,7 @@ SavvyCAN.js is 0.25 MB (0.05 MB brotli); qtloader.js and the html are a few kB.
   6.12 built from source with `-feature-wasm-jspi`. Asyncify works (the smoke test's modal
   `QMessageBox` through `exec()`).
 
-
+### Heavy jobs
 
 Heavy jobs share the PC with the rig's test jobs and a Windows VM: run builds through the wrapper,
 which takes the build lock (one job at a time), runs the job in its own 3G memory slice
@@ -104,7 +102,12 @@ Exit 137 means the job hit 3G: lower `-j`, never raise the cap.
 ### CI
 
 `.github/workflows/web-savvycan.yml` runs the same scripts on GitHub's `ubuntu-24.04` runner:
-desktop Release, wasm, the smoke test; `dist/` as an artifact.
+desktop Release, wasm, the smoke test (Playwright from `tests/web`); `dist/` and the smoke pictures as an artifact.
+
+## Screenshots
+
+`scripts/screenshots/desktop.sh BUILD_DIR OUT_DIR`: the desktop build in light and dark under Xvfb, fed by the fake
+rc1 (`tests/desktop/rc1_pty.py --tcp --enable-bus`). The browser build's pictures: `tests/web/run.sh --screenshots`.
 
 ## Running scripts
 

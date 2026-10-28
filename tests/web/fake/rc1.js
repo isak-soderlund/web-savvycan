@@ -1209,51 +1209,6 @@
     return api;
   }
 
-  // ---------------------------------------------------------------- file pickers (logging to disk)
-  /**
-   * File System Access mocks for the logging tests, backed by the origin private file system (OPFS), so the test reads
-   * back exactly what the app wrote: showSaveFilePicker() returns an OPFS file named by `suggestedName` (or `name`),
-   * showDirectoryPicker() the OPFS root (or a sub-directory `dir`). `window.__pickers` lists the calls and reads files.
-   */
-  function installFilePickers(o = {}) {
-    const g = globalThis;
-    const calls = [];
-    const root = async () => {
-      let d = await g.navigator.storage.getDirectory();
-      if (o.dir) d = await d.getDirectoryHandle(o.dir, { create: true });
-      return d;
-    };
-    g.showSaveFilePicker = async (opts = {}) => {
-      calls.push({ kind: 'save', opts: JSON.parse(JSON.stringify(opts)) });
-      if (o.cancel) throw new DOMException('The user aborted a request.', 'AbortError');
-      const name = o.name || opts.suggestedName || 'log.csv';
-      return (await root()).getFileHandle(name, { create: true });
-    };
-    g.showDirectoryPicker = async (opts = {}) => {
-      calls.push({ kind: 'directory', opts: JSON.parse(JSON.stringify(opts)) });
-      if (o.cancel) throw new DOMException('The user aborted a request.', 'AbortError');
-      return root();
-    };
-    g.__pickers = {
-      calls,
-      async list() {
-        const out = [];
-        for await (const [name, h] of (await root()).entries()) {
-          if (h.kind === 'file') out.push({ name, size: (await h.getFile()).size });
-        }
-        return out;
-      },
-      async read(name) {
-        return (await (await (await root()).getFileHandle(name)).getFile()).text();
-      },
-      async clear() {
-        const d = await root();
-        for await (const [name] of d.entries()) await d.removeEntry(name, { recursive: true });
-      },
-    };
-    return g.__pickers;
-  }
-
   // ---------------------------------------------------------------- event-loop probe
   /**
    * Measures how responsive the page is: a 10 ms timer and requestAnimationFrame, recording how late each fires.
@@ -1303,8 +1258,8 @@
     return g.__probe;
   }
 
-  // ---------------------------------------------------------------- host-side parsers (tests, self-test page)
-  /** A GVRET stream parser as SavvyCAN's (frames 00/14 and the replies), for the self-test page and unit tests. */
+  // ---------------------------------------------------------------- host-side parsers (tests)
+  /** A GVRET stream parser as SavvyCAN's (frames 00/14 and the replies), for the unit tests. */
   class GvretHostParser {
     constructor() {
       this.buf = [];
@@ -1389,5 +1344,5 @@
 
   return { USB_VENDOR_ID, USB_PRODUCT_ID, PRODUCT, DEFAULT_INFO, DLC_LEN, dlcToLen, lenToDlc, frame, frameLen, frameData,
     ERR, ERROR_FRAMES, LEAF_TABLE, Gvret, Slcan, Port, Rc1Device, makeTraffic, gvretFrameBytes, slcanParseFrame,
-    installWebSerial, installFilePickers, installProbe, GvretHostParser, parseSavvyCsv, seqCheck };
+    installWebSerial, installProbe, GvretHostParser, parseSavvyCsv, seqCheck };
 });

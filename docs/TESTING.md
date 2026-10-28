@@ -20,13 +20,13 @@ is the check with the real device, the real Chrome and a real bus.
 From the rig, without copying anything (the page runs in your Chrome, rc1 is plugged into your PC):
 
 ```
-ssh -L 8000:127.0.0.1:8000 hil 'node ~/src/web-savvycan-integration/tests/web/server.mjs --port 8000 --dist ~/src/web-savvycan-integration/dist'
+ssh -L 8000:127.0.0.1:8000 hil 'node ~/src/web-savvycan/tests/web/server.mjs --port 8000 --dist ~/src/web-savvycan/dist'
 ```
 
 or copy the folder and serve it on your PC:
 
 ```
-scp -r hil:src/web-savvycan-integration/dist ~/web-savvycan-dist
+scp -r hil:src/web-savvycan/dist ~/web-savvycan-dist
 cd ~/web-savvycan-dist && python3 -m http.server 8000 --bind 127.0.0.1
 ```
 
@@ -44,7 +44,6 @@ second line `dirty` means uncommitted changes were in it).
    - **Bus Details**: Speed **500000**, tick **Enable Bus**, **Enable CAN FD** as your bus is (with CAN FD:
      **CAN FD Data Rate**, e.g. 2000000), then **Save Bus Settings**.
    - Close the connection window (its close button, or Escape); the connection stays up.
-   - Don't press **Enter** inside the connection window: it presses Disconnect Selected Device (known issue below).
 3. **Frames.** With the peer sending: frames appear in the trace, *Total Frames Captured* and *Frames Per Second*
    count up; *Dropped: 0* at the bottom right stays 0 (it counts frames the app had to drop on an overloaded bus). Check a few IDs and data bytes against what the peer sends (and with CAN FD: lengths over 8, BRS).
    Tick **Auto Scroll Window** to follow the newest.
@@ -92,7 +91,5 @@ checked by it, so checked only by this test:
 
 ## Known issues (2026-10-28, branch `integration`)
 
-- Pressing **Enter** in the connection window presses *Disconnect Selected Device* (also when Enter picks an item in
-  an open drop-down list): the window's default button. Use the mouse in the drop-downs.
 - With a **screen reader** (Qt's accessibility layer switched on), unplugging rc1 makes Qt 6.12 throw an error in its
   accessibility code and the window stops drawing; reload the page. Without a screen reader unplugging is fine.

@@ -1,13 +1,13 @@
 #!/bin/bash
-# Screenshots of the desktop build, light and dark, without hardware: a fake GVRET device
-# (fake_gvret_pty.py --tcp) streams classic and CAN FD frames, SavvyCAN starts with a saved "Network
+# Screenshots of the desktop build, light and dark, without hardware: the fake rc1
+# (tests/desktop/rc1_pty.py --tcp) streams classic and CAN FD frames, SavvyCAN starts with a saved "Network
 # connection (GVRET)" to it (port 23 redirected by port23_redirect.so; SavvyCAN's serial GVRET can't open
 # a pty: QSerialPortInfo doesn't list ptys), on a virtual X screen (Xvfb). Settings go to a throw-away XDG_CONFIG_HOME, never the user's.
 #
 #   scripts/screenshots/desktop.sh BUILD_DIR OUT_DIR
 #
 # Writes OUT_DIR/desktop-{light,dark}-{trace,trace-expanded,view-menu,preferences,about}.png
-# Needs: xvfb-run, xdotool, ImageMagick (import), python3, Qt (toolchain.env's QT_DESKTOP).
+# Needs: xvfb-run, xdotool, ImageMagick (import), python3, node, Qt (toolchain.env's QT_DESKTOP).
 set -euo pipefail
 BUILD=$(realpath "$1"); OUT=$(realpath -m "$2"); HERE=$(dirname "$(realpath "$0")")
 . ~/.local/share/web-savvycan/toolchain.env
@@ -34,7 +34,7 @@ shot() { # theme
         connections/actives=@ints:1
     # driverNames must have one (empty) entry like portNames
     sed -i 's/^driverNames=.*/driverNames=""/' "$cfg/EVTV/SavvyCAN.ini"
-    python3 "$HERE/fake_gvret_pty.py" --tcp "$port" --seconds 60 --rate 4 &
+    python3 "$HERE/../../tests/desktop/rc1_pty.py" --link "$cfg/rc1" --tcp "$port" --enable-bus --traffic fd-mix >/dev/null 2>&1 &
     local fake=$!
     sleep 1
     WSC_PORT23=$port LD_PRELOAD="$SHIM" XDG_CONFIG_HOME="$cfg" OUT="$OUT" THEME="$theme" BIN="$BUILD/SavvyCAN" \

@@ -1,9 +1,9 @@
-// Shared test fixtures: the fake rc1 injected before the page loads, console-error collection, and a driver per target:
-//   selftest  the harness's own reference client (selftest/index.html): proves the fake, the mock and the checks
-//   app       the built web-savvycan (dist/), driven through its UI (Qt's accessibility tree) and read through its
-//             test hook window.webSavvyCAN (README "The app's test hook")
+// Shared test fixtures: the fake rc1 injected before the page loads, console-error collection, and the app driver:
+// the built web-savvycan (dist/), driven through its UI (Qt's accessibility tree) and read through its test hook
+// window.webSavvyCAN (README "The app's test hook").
 import { test as base, expect } from '@playwright/test';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,76 +11,25 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const WEB = join(here, '..');
 export const FAKE_SRC = readFileSync(join(WEB, 'fake/rc1.js'), 'utf8');
 export const DIST = process.env.WSC_DIST || join(WEB, '../../dist');
-export const RESULTS = process.env.WSC_RESULTS || join(WEB, 'results');
+export const RESULTS = join(WEB, 'results');
+/** SavvyCAN's own CSV code as a tool (tests/desktop, built by tests/desktop/run.sh). */
+export const NATIVECSV = process.env.NATIVECSV_TOOL || join(WEB, '../../build/desktop-tests/nativecsv_tool');
+/** SavvyCAN's loader on a log file (nativecsv_tool check): its summary line; throws on a mismatch. */
+export const savvycanCheck = (file, ...args) =>
+  execFileSync(NATIVECSV, ['check', file, ...args], { encoding: 'utf8' }).split('\n').filter((l) => l.startsWith(file)).join(' ');
 
-/** The init script: the fake, the Web Serial mock, the file pickers, the probe, all before any page script. */
+/** The init script: the fake, the Web Serial mock and the probe, all before any page script. */
 export async function installFake(page, opts = {}) {
-  const cfg = JSON.stringify({ serial: opts.serial || {}, pickers: opts.pickers || {}, probe: opts.probe || {} });
+  const cfg = JSON.stringify({ serial: opts.serial || {}, probe: opts.probe || {} });
   await page.addInitScript({
     content: `${FAKE_SRC}
-;(function () { const c = ${cfg};
-  RC1Fake.installWebSerial(c.serial); RC1Fake.installFilePickers(c.pickers); RC1Fake.installProbe(c.probe); })();`,
+;(function () { const c = ${cfg}; RC1Fake.installWebSerial(c.serial); RC1Fake.installProbe(c.probe); })();`,
   });
 }
 
-/** Why an app test can't run yet (null when it can). */
-export function appEntry() {
-  for (const f of ['SavvyCAN.html', 'index.html']) if (existsSync(join(DIST, f))) return f;
-  return null;
-}
+/** Why the app tests can't run (null when they can). */
 export function appMissing() {
-  if (!appEntry()) {
-    return `no ${DIST}/SavvyCAN.html: waiting for the wasm build (RESOLVE.md MVP #1, scripts/build-wasm.sh); set WSC_DIST to a dist/`;
-  }
-  return null;
-}
-
-class SelftestDriver {
-  constructor(page) {
-    this.page = page;
-    this.name = 'selftest';
-  }
-  async open(query = '') {
-    await this.page.goto(`/__harness/selftest/index.html${query ? '?' + query : ''}`);
-    await this.page.waitForFunction(() => window.webSavvyCAN);
-  }
-  async reload() {
-    await this.page.reload();
-    await this.page.waitForFunction(() => window.webSavvyCAN);
-  }
-  async chooseDevice() {
-    await this.page.click('#choose');
-    await expect(this.page.locator('#status')).toHaveText(/device chosen|no device/);
-  }
-  async connect({ protocol = 'gvret', bitrate = 500000, fd = true, dataBitrate = 2000000 } = {}) {
-    const granted = await this.page.evaluate(async () => (await navigator.serial.getPorts()).length > 0);
-    if (!granted) await this.chooseDevice();
-    await this.page.selectOption('#proto', protocol);
-    await this.page.fill('#bitrate', String(bitrate));
-    await this.page.setChecked('#fd', fd);
-    await this.page.fill('#dbitrate', String(dataBitrate));
-    await this.page.click('#connect');
-    await this.page.waitForFunction(() => /connected|failed/.test(document.getElementById('status').textContent));
-  }
-  async disconnect() {
-    await this.page.click('#disconnect');
-  }
-  async startLog() {
-    await this.page.click('#logStart');
-    await this.page.waitForFunction(() => window.webSavvyCAN.stats().logging);
-  }
-  async stopLog() {
-    const dl = this.page.waitForEvent('download', { timeout: 20000 });
-    await this.page.click('#logStop');
-    await this.page.waitForFunction(() => !window.webSavvyCAN.stats().logging);
-    return dl;
-  }
-  async toggleTheme() {
-    await this.page.click('#theme');
-  }
-  async themeShot() {
-    return this.page.locator('#canvas').screenshot();
-  }
+  return existsSync(join(DIST, 'SavvyCAN.html')) ? null : `no ${DIST}/SavvyCAN.html: run scripts/build-wasm.sh, or set WSC_DIST`;
 }
 
 /**
@@ -88,7 +37,7 @@ class SelftestDriver {
  * shadow root (#qt-shadow-container), so document.querySelector('canvas') sees nothing. Its accessibility layer mirrors
  * the widgets as HTML in that shadow root once its visually hidden "Enable Screen Reader" button gets a DOM click (a
  * Playwright click on it does nothing); Playwright's role locators pierce open shadow roots, so menus, buttons,
- * checkboxes and radios are then reachable by role and name, as a user would see them (wasm/webserial/tests/e2e.mjs).
+ * checkboxes and radios are then reachable by role and name, as a user would see them.
  * Combo boxes are mirrored without a usable box: the driver reaches them with Tab from a neighbouring checkbox and
  * picks the value with the keyboard (pickCombo).
  */
@@ -101,10 +50,9 @@ const ci = (name) => (name instanceof RegExp ? name : new RegExp('^' + name.repl
 export class AppDriver {
   constructor(page) {
     this.page = page;
-    this.name = 'app';
   }
   async open(query = '') {
-    await this.page.goto(`/${appEntry()}${query ? '?' + query : ''}`);
+    await this.page.goto(`/SavvyCAN.html${query ? '?' + query : ''}`);
     await this.enableA11y();
   }
   async reload() {
@@ -140,8 +88,7 @@ export class AppDriver {
    * Picks `value` in the combo box just before (tab = 'Shift+Tab') or after (tab = 'Tab') the checkbox `anchor` in the
    * tab order: two real clicks on the checkbox give it the keyboard focus (and leave it as it was), Tab moves to the
    * combo box and the typed value selects the item (QComboBox's keyboard search on the closed box). Not through the
-   * popup: Enter there also presses the window's default button ("Disconnect Selected Device", README "Known app
-   * issues").
+   * popup (Qt's popup isn't reachable by role).
    */
   async pickCombo(anchor, tab, value) {
     const b = await anchor.boundingBox();
@@ -244,7 +191,6 @@ export class AppDriver {
 }
 
 export const test = base.extend({
-  target: ['selftest', { option: true }],
   fakeOptions: [{}, { option: true }],
   consoleErrors: async ({ page }, use) => {
     const errors = [];
@@ -252,14 +198,11 @@ export const test = base.extend({
     page.on('pageerror', (e) => errors.push(String(e)));
     await use(errors);
   },
-  app: async ({ page, target, fakeOptions, consoleErrors }, use, testInfo) => {
-    if (target === 'app') {
-      const why = appMissing();
-      testInfo.skip(!!why, why || '');
-    }
+  app: async ({ page, fakeOptions, consoleErrors }, use, testInfo) => {
+    const why = appMissing();
+    testInfo.skip(!!why, why || '');
     await installFake(page, fakeOptions);
-    const d = target === 'app' ? new AppDriver(page) : new SelftestDriver(page);
-    await use(d);
+    await use(new AppDriver(page));
     // Every test: no console errors, no uncaught exceptions.
     expect(consoleErrors, 'console errors').toEqual([]);
   },
@@ -273,11 +216,7 @@ export const fake = {
   log: (page) => page.evaluate(() => window.__rc1.log()),
   events: (page) => page.evaluate(() => window.__rc1.events),
   recorded: (page) => page.evaluate(() => window.__rc1.recorded()),
-  async appStats(page) {
-    const s = await page.evaluate(() => (window.webSavvyCAN ? window.webSavvyCAN.stats() : null));
-    if (!s) base.skip(true, 'the app has no window.webSavvyCAN test hook yet (README "The app\'s test hook")');
-    return s;
-  },
+  appStats: (page) => page.evaluate(() => window.webSavvyCAN.stats()),
   probe: (page) => page.evaluate(() => window.__probe.report()),
 };
 

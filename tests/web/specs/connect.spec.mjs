@@ -51,6 +51,16 @@ test.describe('connect', () => {
       expect(tail.slice(-sent.length).map(norm)).toEqual(sent.map(norm));
     });
   }
+
+  test('the New Connection dialog offers only GVRET and LAWICEL (no other type, not even hidden)', async ({ app, page }) => {
+    await app.open();
+    await app.menu('Connection', 'Open Connection Window');
+    await app.click('button', 'Add New Device Connection');
+    await expect(app.role('radio', 'Serial Connection (GVRET)')).toBeVisible();
+    const radios = await page.getByRole('radio', { includeHidden: true }).evaluateAll(
+      (els) => els.map((e) => e.getAttribute('aria-label') || e.textContent.trim()));
+    expect(radios.sort()).toEqual(['LAWICEL / SLCAN Serial', 'Serial Connection (GVRET)'].sort());
+  });
 });
 
 test.describe('connect: a returning visitor', () => {

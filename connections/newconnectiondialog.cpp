@@ -6,7 +6,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
-#include "webserialhub.h"
+#include "webserialport.h"
 #endif
 
 NewConnectionDialog::NewConnectionDialog(QVector<QString>* gvretips, QVector<QString>* kayakhosts, QWidget *parent) :
@@ -173,10 +173,11 @@ void NewConnectionDialog::fillSerialPorts()
 // after the user picked it in its own chooser (once per device: it is remembered for later visits).
 void NewConnectionDialog::setupWebSerial()
 {
-    for (QWidget *w : {static_cast<QWidget *>(ui->rbSocketCAN), static_cast<QWidget *>(ui->rbRemote),
-                       static_cast<QWidget *>(ui->rbKayak), static_cast<QWidget *>(ui->rbMQTT),
-                       static_cast<QWidget *>(ui->rbCANserver), static_cast<QWidget *>(ui->rbCanlogserver)})
-        w->setHidden(true);
+    // The other types go into a window that is never shown (owned by the dialog): out of the dialog's layout, its
+    // focus chain and its accessibility tree (a hidden widget would still be in that), so they can't be checked.
+    auto *unused = new QWidget(this, Qt::Window);
+    for (QRadioButton *rb : {ui->rbSocketCAN, ui->rbRemote, ui->rbKayak, ui->rbMQTT, ui->rbCANserver, ui->rbCanlogserver})
+        rb->setParent(unused);
     ui->rbGVRET->setChecked(true);
 
     btnChooseDevice = new QPushButton(tr("Choose device..."), this);

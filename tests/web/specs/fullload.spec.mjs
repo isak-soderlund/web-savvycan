@@ -1,14 +1,14 @@
 // Full-load replay (RESOLVE.md "Frame loss in the browser"): rc1's measured full rates for 60 s (classic 8 bytes at
 // 1 Mbit/s ~8 000 frames/s, FD 64 bytes BRS at 500k/8M ~6 900/s; resolve-can docs/research/usb-throughput.md),
 // with the trace live. Measures the page's responsiveness (a 10 ms timer's lateness, animation frame intervals)
-// and checks the frame accounting; numbers to results/fullload-<target>-<mode>.json.
-// Tagged @long: run.sh --long (or WSC_LONG=1). WSC_FULLLOAD_SECONDS shortens it.
+// and checks the frame accounting; numbers to results/fullload-<mode>.json.
+// Tagged @long: run.sh --long (WSC_RUN=long). WSC_FULLLOAD_SECONDS shortens it.
 import { test, expect, fake, settle, saveResult } from '../lib/harness.mjs';
 
 const SECONDS = Number(process.env.WSC_FULLLOAD_SECONDS || 60);
 
 for (const [mode, fd, bitrate, dataBitrate] of [['classic-full', false, 1000000, 0], ['fd64-full', true, 500000, 8000000]]) {
-  test(`${mode} for ${SECONDS} s: responsive, every frame accounted for @long`, async ({ app, page, target }) => {
+  test(`${mode} for ${SECONDS} s: responsive, every frame accounted for @long`, async ({ app, page }) => {
     test.setTimeout((SECONDS + 90) * 1000);
     await app.open();
     await app.connect({ protocol: 'gvret', bitrate, fd, dataBitrate: dataBitrate || 2000000 });
@@ -25,9 +25,9 @@ for (const [mode, fd, bitrate, dataBitrate] of [['classic-full', false, 1000000,
     const probe = await fake.probe(page);
     const [s, a] = await settle(page, 20000);
     const heap = await page.evaluate(() => (performance.memory ? performance.memory.usedJSHeapSize : null));
-    const result = { target, mode, seconds: SECONDS, fake: s, app: a, probe, heapBytes: heap, samples,
+    const result = { mode, seconds: SECONDS, fake: s, app: a, probe, heapBytes: heap, samples,
       rateDelivered: Math.round(s.encoded / SECONDS) };
-    const file = saveResult(`fullload-${target}-${mode}`, result);
+    const file = saveResult(`fullload-${mode}`, result);
     test.info().annotations.push({ type: 'result', description: file });
     console.log(`${mode}: ${JSON.stringify({ rate: result.rateDelivered, lost: s.lost, dropped: a.framesDropped, timer: probe.timer, raf: probe.raf, longGaps: probe.longGaps.length })}`);
     // Accounting: everything rc1 put out was parsed; the app's own losses are counted.
