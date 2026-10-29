@@ -263,6 +263,7 @@ TemporalGraphWindow::TemporalGraphWindow(const FrameListView *frames, QWidget *p
         p->xAxis->setLabel(Utility::timeStyle == TS_SECONDS ? QString("Time (s)") : QString::fromUtf8("Time (µs)"));
 
     p->yAxis->setLabel("ID");
+    p->yAxis->setNumberFormat("g"); // no "b": with it QCustomPlot draws a label's "E" as a power of ten (0x7E8 as 0x7·10⁸)
     idTicker = QSharedPointer<TemporalIdTicker>(new TemporalIdTicker(&mDensity));
     idTicker->setTickCount(10);
     p->yAxis->setTicker(idTicker);
@@ -306,10 +307,11 @@ TemporalGraphWindow::TemporalGraphWindow(const FrameListView *frames, QWidget *p
     connect(p->xAxis, SIGNAL(rangeChanged(QCPRange)), this, SLOT(xRangeChanged(QCPRange)));
     connect(p->yAxis, SIGNAL(rangeChanged(QCPRange)), this, SLOT(xRangeChanged(QCPRange)));
 
-    // about one ID label per 16 pixels of height (the axis rect's height from the last layout)
+    // about one ID label per 16 pixels of height and one time label per 160 pixels of width (µs labels are long)
     connect(p, &QCustomPlot::beforeReplot, this, [this]() {
         QCustomPlot *plot = ui->graphingView;
         idTicker->setTickCount(qBound(2, qMax(plot->axisRect()->height(), plot->height() - 100) / 16, 40));
+        plot->xAxis->ticker()->setTickCount(qBound(2, qMax(plot->axisRect()->width(), plot->width() - 150) / 160, 10));
     });
 
     buildTimer.setSingleShot(true);
