@@ -6,6 +6,8 @@
 #include <QDialog>
 #include <QSerialPortInfo>
 #include <QDebug>
+#include <QHash>
+#include <QStringList>
 #include <QSettings>
 #include <QTimer>
 #include <QItemSelection>
@@ -67,8 +69,14 @@ private:
 
     CANConnection* create(CANCon::type pTye, QString pPortName, QString pDriver, int pSerialSpeed, int pBusSpeed, bool pCanFd, int pDataRate, bool pListenOnly = false, bool pActive = true);
     void populateBusDetails(int offset);
-    void loadConnections();
+    void loadConnections(const QStringList *onlyPorts = nullptr); // onlyPorts: just the connections on these ports
     void saveConnections();
+    void rememberConnections();
+#ifdef Q_OS_WASM
+    void autoConnect();
+    void applyRememberedBus(CANConnection *conn, bool evenWithoutFd);
+    QHash<CANConnection *, CANBus> rememberedBus; // remembered GVRET bus settings, set once the device has answered
+#endif
     void showEvent(QShowEvent *);
     void closeEvent(QCloseEvent *event);
     bool eventFilter(QObject *obj, QEvent *event);

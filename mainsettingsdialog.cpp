@@ -123,7 +123,14 @@ MainSettingsDialog::MainSettingsDialog(QWidget *parent) :
     QString decPass = crypto.decryptToString(encPass);
     ui->lineRemotePassword->setText(decPass);
 
+#ifdef Q_OS_WASM
+    // web-savvycan: the browser always remembers the last connection; this makes it again as the page opens, when the
+    // device is plugged in and allowed (ConnectionWindow::autoConnect). On by default.
+    ui->cbLoadConnections->setText(tr("Connect to the last device when the page opens"));
+    ui->cbLoadConnections->setChecked(settings.value("Main/SaveRestoreConnections", true).toBool());
+#else
     ui->cbLoadConnections->setChecked(settings.value("Main/SaveRestoreConnections", false).toBool());
+#endif
 
     ui->spinFontSize->setValue(settings.value("Main/FontSize", ui->cbDisplayHex->font().pointSize()).toUInt());
     ui->cbFontFixedWidth->setChecked(settings.value("Main/FontFixedWidth", false).toBool());

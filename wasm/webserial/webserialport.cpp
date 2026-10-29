@@ -191,6 +191,12 @@ void WebSerialHub::requestPort(bool anyPort)
         s_backend->requestPort(anyPort);
 }
 
+void WebSerialHub::listPorts()
+{
+    if (s_backend) s_backend->listPorts();
+    else deliverPortsChanged();
+}
+
 // deliver(port) from the event loop, if the handle is open now and still is then.
 template <typename F> void WebSerialHub::later(int handle, F deliver)
 {

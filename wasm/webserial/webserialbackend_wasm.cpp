@@ -28,6 +28,8 @@ EM_JS(void, wsjs_close, (int handle), { resolveWebSerial.close(handle); });
 
 EM_JS(void, wsjs_request_port, (int anyPort), { resolveWebSerial.requestPort(anyPort != 0); });
 
+EM_JS(void, wsjs_list_ports, (), { resolveWebSerial.listPorts(); });
+
 namespace {
 
 QString toQString(const val &v) { return v.isString() ? QString::fromStdString(v.as<std::string>()) : QString(); }
@@ -54,6 +56,7 @@ public:
     void setSignals(int handle, bool dtr, bool rts) override { wsjs_set_signals(handle, dtr, rts); }
     void close(int handle) override { wsjs_close(handle); }
     void requestPort(bool anyPort) override { wsjs_request_port(anyPort); }
+    void listPorts() override { wsjs_list_ports(); }
 };
 
 BrowserBackend s_browserBackend;
