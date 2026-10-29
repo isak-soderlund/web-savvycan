@@ -45,6 +45,15 @@ MainWindow::MainWindow(QWidget *parent) :
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    // web-savvycan (owner 2026-10-29): the menu bar's and the status bar's text in the middle of the bands at the
+    // top and bottom of the page: no empty layout margin between them and the frame list (it made the top band
+    // 36 px with the menu text at its top, the bottom one 34 px with the status text at its bottom).
+    if (QLayout *central = ui->centralWidget->layout()) {
+        const QMargins m = central->contentsMargins();
+        central->setContentsMargins(m.left(), 0, m.right(), 0);
+    }
+#endif
 #if QT_VERSION < QT_VERSION_CHECK( 6, 0, 0 )
     qRegisterMetaTypeStreamOperators<QVector<QString>>();
     qRegisterMetaTypeStreamOperators<QVector<int>>();

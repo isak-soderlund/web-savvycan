@@ -60,6 +60,11 @@ HelpWindow* HelpWindow::getRef()
 
 void HelpWindow::showHelp(QString help)
 {
+#ifdef Q_OS_WASM
+    // web-savvycan: the help pages aren't part of the browser build; F1 does nothing there (owner 2026-10-29).
+    Q_UNUSED(help);
+    return;
+#endif
     QString helpfile = QCoreApplication::applicationDirPath() + "/help/" + help;
     QUrl url = QUrl::fromLocalFile(helpfile);
     qDebug() << "Searching for " << url;
