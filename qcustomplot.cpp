@@ -25994,7 +25994,7 @@ double QCPColorMapData::data(double key, double value)
 /* undocumented getter */
 double QCPColorMapData::cell(int keyIndex, int valueIndex)
 {
-  if (keyIndex >= 0 && keyIndex < mKeySize && valueIndex >= 0 && valueIndex < mValueSize)
+  if (mData && keyIndex >= 0 && keyIndex < mKeySize && valueIndex >= 0 && valueIndex < mValueSize)
     return mData[valueIndex*mKeySize + keyIndex];
   else
     return 0;
@@ -26030,27 +26030,41 @@ unsigned char QCPColorMapData::alpha(int keyIndex, int valueIndex)
 */
 void QCPColorMapData::setSize(int keySize, int valueSize)
 {
+  // web-savvycan (G2 of resolve-can docs/research/savvycan-improve.md): the cell count is multiplied in size_t
+  // (in int it overflowed before the cast) and capped so that the int index math (valueIndex*mKeySize+keyIndex)
+  // can't overflow; a map that can't be allocated is empty (0 x 0), never a size with a null array.
+  if (keySize < 0) keySize = 0;
+  if (valueSize < 0) valueSize = 0;
+  if (size_t(keySize)*size_t(valueSize) > size_t(std::numeric_limits<int>::max()))
+  {
+    qDebug() << Q_FUNC_INFO << "too many cells for data dimensions "<< keySize << "*" << valueSize;
+    keySize = valueSize = 0;
+  }
   if (keySize != mKeySize || valueSize != mValueSize)
   {
     mKeySize = keySize;
     mValueSize = valueSize;
     delete[] mData;
+    mData = nullptr;
     mIsEmpty = mKeySize == 0 || mValueSize == 0;
     if (!mIsEmpty)
     {
 #ifdef __EXCEPTIONS
       try { // 2D arrays get memory intensive fast. So if the allocation fails, at least output debug message
 #endif
-      mData = new double[size_t(mKeySize*mValueSize)];
+      mData = new double[size_t(mKeySize)*size_t(mValueSize)];
 #ifdef __EXCEPTIONS
       } catch (...) { mData = nullptr; }
 #endif
       if (mData)
         fill(0);
       else
+      {
         qDebug() << Q_FUNC_INFO << "out of memory for data dimensions "<< mKeySize << "*" << mValueSize;
-    } else
-      mData = nullptr;
+        mKeySize = mValueSize = 0;
+        mIsEmpty = true;
+      }
+    }
 
     if (mAlpha) // if we had an alpha map, recreate it with new size
       createAlpha();
@@ -26175,7 +26189,7 @@ void QCPColorMapData::setData(double key, double value, double z)
 */
 void QCPColorMapData::setCell(int keyIndex, int valueIndex, double z)
 {
-  if (keyIndex >= 0 && keyIndex < mKeySize && valueIndex >= 0 && valueIndex < mValueSize)
+  if (mData && keyIndex >= 0 && keyIndex < mKeySize && valueIndex >= 0 && valueIndex < mValueSize)
   {
     mData[valueIndex*mKeySize + keyIndex] = z;
     if (z < mDataBounds.lower)
@@ -26275,8 +26289,10 @@ void QCPColorMapData::clearAlpha()
 */
 void QCPColorMapData::fill(double z)
 {
-  const int dataCount = mValueSize*mKeySize;
-  memset(mData, z, dataCount*sizeof(*mData));
+  // web-savvycan: no array, nothing to fill; every cell set to z (memset took z as a byte: only 0 worked)
+  if (!mData) return;
+  const size_t dataCount = size_t(mValueSize)*size_t(mKeySize);
+  std::fill(mData, mData + dataCount, z);
   mDataBounds = QCPRange(z, z);
   mDataModified = true;
 }
@@ -26294,7 +26310,7 @@ void QCPColorMapData::fillAlpha(unsigned char alpha)
 {
   if (mAlpha || createAlpha(false))
   {
-    const int dataCount = mValueSize*mKeySize;
+    const size_t dataCount = size_t(mValueSize)*size_t(mKeySize); // web-savvycan: in size_t
     memset(mAlpha, alpha, dataCount*sizeof(*mAlpha));
     mDataModified = true;
   }
@@ -26370,7 +26386,7 @@ bool QCPColorMapData::createAlpha(bool initializeOpaque)
 #ifdef __EXCEPTIONS
   try { // 2D arrays get memory intensive fast. So if the allocation fails, at least output debug message
 #endif
-    mAlpha = new unsigned char[size_t(mKeySize*mValueSize)];
+    mAlpha = new unsigned char[size_t(mKeySize)*size_t(mValueSize)]; // web-savvycan: in size_t
 #ifdef __EXCEPTIONS
   } catch (...) { mAlpha = nullptr; }
 #endif

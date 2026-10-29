@@ -2,66 +2,333 @@
 #include "ui_temporalgraphwindow.h"
 #include "helpwindow.h"
 #include "mainwindow.h"
+#include "utility.h"
 
-QString HexTicker::getTickLabel (double tick, const QLocale& locale, QChar formatChar, int precision)
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <numeric>
+
+/*
+ * web-savvycan: the temporal graph (RE Tools > Temporal Graph), rebuilt (G1-G4, resolve-can
+ * docs/research/savvycan-improve.md):
+ * - G1/G2: SavvyCAN sized its colour map by the ID range / 30 x the duration x 4 (29-bit IDs or long captures:
+ *   billions of cells, an int overflow in QCustomPlot's setSize and writes through its null array). Here the map
+ *   is TemporalDensity: at most Columns time columns x one row per distinct ID (at most MaxIds).
+ * - G3: no point per frame (a scatter of every frame, redrawn on every pan and zoom): one colour map of
+ *   frame counts, its size bounded as above.
+ * - G4: live. MainWindow's framesUpdated(n) adds the new frames' counts (O(new frames) per GUI tick); -1/-2 (list
+ *   cleared, loaded or replaced) rebuild from the frame list, in slices of ~25 ms so the page stays responsive
+ *   on a big capture. No debug output per frame.
+ * The trace is a ring of the newest frames: the counts keep the whole session (the ring may have dropped the
+ * oldest frames since), and new frames are found by the newest frame counted, not by an index into the list.
+ */
+
+namespace {
+
+qint64 floorDiv(qint64 a, qint64 b) // b > 0
 {
+    qint64 q = a / b;
+    if ((a % b) != 0 && a < 0) q--;
+    return q;
+}
+
+bool sameFrame(const CommFrame &a, const CommFrame &b)
+{
+    return a.timeStamp().microSeconds() == b.timeStamp().microSeconds() && a.frameId() == b.frameId()
+           && a.hasExtendedFrameFormat() == b.hasExtendedFrameFormat() && a.getBus() == b.getBus()
+           && a.frameType() == b.frameType() && a.payload() == b.payload();
+}
+
+QString idLabel(quint64 key)
+{
+    const bool ext = (key >> 32) != 0;
+    return "0x" + QString::number(quint32(key), 16).toUpper().rightJustified(ext ? 8 : 3, '0');
+}
+
+QString durationLabel(qint64 us)
+{
+    if (us < 1000) return QString::fromUtf8("%1 µs").arg(us);
+    if (us < 1000000) return QString("%1 ms").arg(us / 1000.0, 0, 'g', 3);
+    if (us < 60000000) return QString("%1 s").arg(us / 1000000.0, 0, 'g', 3);
+    if (us < 3600000000LL) return QString("%1 min").arg(us / 60000000.0, 0, 'g', 3);
+    return QString("%1 h").arg(us / 3600000000.0, 0, 'g', 3);
+}
+
+constexpr int BuildChunk = 4096;     // frames copied out of the list at a time
+constexpr int BuildSliceMs = 25;     // then the event loop (and the browser) gets a turn
+
+} // namespace
+
+// ---------------------------------------------------------------- TemporalDensity
+
+void TemporalDensity::clear()
+{
+    mFrames = mHiddenFrames = 0;
+    mFirstUs = mLastUs = mOriginUs = 0;
+    mBinUs = 1;
+    mSlot.clear();
+    mKeys.clear();
+    mCounts.clear();
+    mSorted.clear();
+    mSortedSlot.clear();
+    mSortedValid = false;
+}
+
+void TemporalDensity::add(qint64 timeUs, quint32 id, bool extended)
+{
+    const quint64 k = key(id, extended);
+    int slot = -1;
+    auto it = mSlot.constFind(k);
+    if (it != mSlot.constEnd())
+        slot = it.value();
+    else if (int(mKeys.size()) < MaxIds)
+    {
+        slot = int(mKeys.size());
+        mSlot.insert(k, slot);
+        mKeys.push_back(k);
+        mCounts.emplace_back(Columns, 0u);
+        mSortedValid = false;
+    }
+
+    if (mFrames == 0)
+    {
+        mFirstUs = mLastUs = mOriginUs = timeUs;
+        mBinUs = 1;
+    }
+    else
+    {
+        if (timeUs < mFirstUs) mFirstUs = timeUs;
+        if (timeUs > mLastUs) mLastUs = timeUs;
+        if (timeUs < mOriginUs || (timeUs - mOriginUs) / mBinUs >= Columns) fit(mFirstUs, mLastUs);
+    }
+    mFrames++;
+
+    if (slot < 0)
+    {
+        mHiddenFrames++;
+        return;
+    }
+    const qint64 col = qBound(qint64(0), (timeUs - mOriginUs) / mBinUs, qint64(Columns - 1));
+    quint32 &c = mCounts[size_t(slot)][size_t(col)];
+    if (c != std::numeric_limits<quint32>::max()) c++;
+}
+
+// Widen the columns (doubling, columns added in pairs) and move column 0 so that [lo, hi] fits. Every origin is a
+// multiple of the column width, so an old column always falls into exactly one new one.
+void TemporalDensity::fit(qint64 lo, qint64 hi)
+{
+    qint64 bin = mBinUs, origin = 0;
+    for (;;)
+    {
+        origin = floorDiv(lo, bin) * bin;
+        if ((hi - origin) / bin < Columns) break;
+        if (bin >= (qint64(1) << 55)) break;   // ~1000 years a column: timestamps that far apart are not a capture
+        bin *= 2;
+    }
+    if (bin == mBinUs && origin == mOriginUs) return;
+
+    std::vector<quint32> merged(Columns);
+    for (std::vector<quint32> &row : mCounts)
+    {
+        std::fill(merged.begin(), merged.end(), 0u);
+        for (int i = 0; i < Columns; i++)
+        {
+            const quint32 n = row[size_t(i)];
+            if (!n) continue;
+            const qint64 start = mOriginUs + qint64(i) * mBinUs;
+            const qint64 j = qBound(qint64(0), floorDiv(start - origin, bin), qint64(Columns - 1));
+            quint32 &c = merged[size_t(j)];
+            c = (std::numeric_limits<quint32>::max() - c < n) ? std::numeric_limits<quint32>::max() : c + n;
+        }
+        row.swap(merged);
+    }
+    mBinUs = bin;
+    mOriginUs = origin;
+}
+
+int TemporalDensity::usedColumns() const
+{
+    if (mFrames == 0) return 0;
+    return int(qBound(qint64(1), (mLastUs - mOriginUs) / mBinUs + 1, qint64(Columns)));
+}
+
+quint32 TemporalDensity::maxCount() const
+{
+    quint32 m = 0;
+    for (const std::vector<quint32> &row : mCounts)
+        for (quint32 c : row) m = qMax(m, c);
+    return m;
+}
+
+std::size_t TemporalDensity::memoryBytes() const
+{
+    const std::size_t rows = mCounts.capacity();
+    return rows * (sizeof(std::vector<quint32>) + Columns * sizeof(quint32))
+           + mKeys.capacity() * sizeof(quint64) + mSorted.capacity() * sizeof(quint64)
+           + mSortedSlot.capacity() * sizeof(int) + std::size_t(mSlot.capacity()) * (sizeof(quint64) + 2 * sizeof(int));
+}
+
+void TemporalDensity::sortKeys() const
+{
+    if (mSortedValid) return;
+    mSortedSlot.resize(mKeys.size());
+    std::iota(mSortedSlot.begin(), mSortedSlot.end(), 0);
+    std::sort(mSortedSlot.begin(), mSortedSlot.end(), [this](int a, int b) { return mKeys[size_t(a)] < mKeys[size_t(b)]; });
+    mSorted.resize(mKeys.size());
+    for (size_t i = 0; i < mSortedSlot.size(); i++) mSorted[i] = mKeys[size_t(mSortedSlot[i])];
+    mSortedValid = true;
+}
+
+const std::vector<quint64> &TemporalDensity::sortedKeys() const
+{
+    sortKeys();
+    return mSorted;
+}
+
+const std::vector<quint32> &TemporalDensity::countsOfRank(int rank) const
+{
+    sortKeys();
+    return mCounts[size_t(mSortedSlot[size_t(rank)])];
+}
+
+// ---------------------------------------------------------------- TemporalIdTicker
+
+double TemporalIdTicker::getTickStep(const QCPRange &range)
+{
+    // whole rows only: 1, 2, 5, 10, 20, 50, ... rows per tick, about tickCount() ticks
+    const double raw = range.size() / double(qMax(1, tickCount()));
+    double step = 1;
+    for (double mag = 1; step < raw; mag *= 10)
+    {
+        if (raw <= mag) { step = mag; break; }
+        if (raw <= 2 * mag) { step = 2 * mag; break; }
+        if (raw <= 5 * mag) { step = 5 * mag; break; }
+        step = 10 * mag;
+    }
+    return step;
+}
+
+int TemporalIdTicker::getSubTickCount(double tickStep)
+{
+    Q_UNUSED(tickStep);
+    return 0;
+}
+
+QString TemporalIdTicker::getTickLabel(double tick, const QLocale &locale, QChar formatChar, int precision)
+{
+    Q_UNUSED(locale);
     Q_UNUSED(formatChar);
     Q_UNUSED(precision);
-    Q_UNUSED(locale);
-    int valu = static_cast<int>(tick);
-    //qDebug() << valu;
-    return "0x" + QString::number(valu, 16).toUpper().rightJustified(3,'0');
+    const std::vector<quint64> &keys = mDensity->sortedKeys();
+    const double r = std::round(tick);
+    if (std::abs(tick - r) > 0.01 || r < 0 || r >= double(keys.size())) return QString();
+    return idLabel(keys[size_t(r)]);
 }
+
+// ---------------------------------------------------------------- TemporalGraphWindow
 
 TemporalGraphWindow::TemporalGraphWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::TemporalGraphWindow)
 {
     ui->setupUi(this);
-
+#ifdef Q_OS_WASM
+    // web-savvycan: as the connection and graphing windows: a Qt::Window is frameless and covers the main window's
+    // menus in the browser; as a dialog it has Qt's title bar and close button and can be moved aside.
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+#else
     setWindowFlags(Qt::Window);
+#endif
 
     readSettings();
 
     modelFrames = frames;
+    QCustomPlot *p = ui->graphingView;
 
-    ui->graphingView->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectAxes);
+    p->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectAxes);
 
-    ui->graphingView->xAxis->setRange(0, 8);
-    ui->graphingView->yAxis->setRange(0, 255);
-    ui->graphingView->axisRect()->setupFullAxesBox();
+    // Time in the app's time style (File > Preferences), as the graphing window: µs, or seconds, or the clock.
+    if (Utility::timeStyle == TS_SECONDS || Utility::timeStyle == TS_CLOCK) keyScale = 1e-6;
+    p->xAxis->setNumberFormat("f");
+    p->xAxis->setNumberPrecision(Utility::timeStyle == TS_SECONDS ? 3 : 0);
+    if (Utility::timeStyle == TS_CLOCK)
+    {
+        QSharedPointer<QCPAxisTickerDateTime> clock(new QCPAxisTickerDateTime);
+        clock->setDateTimeFormat("hh:mm:ss.zzz");
+        p->xAxis->setTicker(clock);
+        p->xAxis->setLabel("Time");
+    }
+    else
+        p->xAxis->setLabel(Utility::timeStyle == TS_SECONDS ? QString("Time (s)") : QString::fromUtf8("Time (µs)"));
 
+    p->yAxis->setLabel("ID");
+    idTicker = QSharedPointer<TemporalIdTicker>(new TemporalIdTicker(&mDensity));
+    idTicker->setTickCount(10);
+    p->yAxis->setTicker(idTicker);
+    p->axisRect()->setupFullAxesBox();
+    p->xAxis->setRange(0, 1);
+    p->yAxis->setRange(-0.5, 0.5);
 
-    ui->graphingView->xAxis->setLabel("Elapsed Time");
-    ui->graphingView->yAxis->setLabel("ID");
-    ui->graphingView->xAxis->setNumberFormat("f");
-    ui->graphingView->xAxis->setNumberPrecision(6);
+    // A line above the plot: IDs, frames, the width of a column (the map's resolution).
+    p->plotLayout()->insertRow(0);
+    QFont small = font();
+    if (small.pointSizeF() > 8) small.setPointSizeF(small.pointSizeF() - 1);
+    summary = new QCPTextElement(p, QString(), small);
+    p->plotLayout()->addElement(0, 0, summary);
 
-    HexTicker *tick = new HexTicker;
-    QSharedPointer<QCPAxisTicker> sharedTicker(tick);
-    tick->setTickCount(10);
-    ui->graphingView->yAxis->setTicker(sharedTicker);
+    // One colour map of frame counts per (time column, ID): empty cells transparent, the count on a log scale.
+    // One gradient for light and dark (its darkest blue still reads on the dark plot background).
+    colorMap = new QCPColorMap(p->xAxis, p->yAxis);
+    colorMap->setName("Frames");
+    colorMap->setInterpolate(false);
+    colorMap->setTightBoundary(false);
+    colorMap->setDataScaleType(QCPAxis::stLogarithmic);
+    QCPColorGradient gradient;
+    gradient.setColorStopAt(0.0, QColor(40, 100, 235));
+    gradient.setColorStopAt(0.3, QColor(0, 175, 215));
+    gradient.setColorStopAt(0.55, QColor(60, 190, 70));
+    gradient.setColorStopAt(0.78, QColor(240, 200, 0));
+    gradient.setColorStopAt(1.0, QColor(230, 45, 35));
+    gradient.setNanHandling(QCPColorGradient::nhTransparent);
+    colorMap->setGradient(gradient);
+    colorMap->setDataRange(QCPRange(1, 2));
 
     // connect slot that ties some axis selections together (especially opposite axes):
-    connect(ui->graphingView, SIGNAL(selectionChangedByUser()), this, SLOT(selectionChanged()));
-    connect(ui->graphingView, SIGNAL(mousePress(QMouseEvent*)), this, SLOT(mousePress()));
-    connect(ui->graphingView, SIGNAL(mouseWheel(QWheelEvent*)), this, SLOT(mouseWheel()));
+    connect(p, SIGNAL(selectionChangedByUser()), this, SLOT(selectionChanged()));
+    connect(p, SIGNAL(mousePress(QMouseEvent*)), this, SLOT(mousePress()));
+    connect(p, SIGNAL(mouseWheel(QWheelEvent*)), this, SLOT(mouseWheel()));
     connect(MainWindow::getReference(), SIGNAL(framesUpdated(int)), this, SLOT(updatedFrames(int)));
     // make bottom and left axes transfer their ranges to top and right axes:
-    connect(ui->graphingView->xAxis, SIGNAL(rangeChanged(QCPRange)), ui->graphingView->xAxis2, SLOT(setRange(QCPRange)));
-    connect(ui->graphingView->yAxis, SIGNAL(rangeChanged(QCPRange)), ui->graphingView->yAxis2, SLOT(setRange(QCPRange)));
+    connect(p->xAxis, SIGNAL(rangeChanged(QCPRange)), p->xAxis2, SLOT(setRange(QCPRange)));
+    connect(p->yAxis, SIGNAL(rangeChanged(QCPRange)), p->yAxis2, SLOT(setRange(QCPRange)));
+    // the user zoomed or panned: stop fitting the view to the whole capture (R puts it back)
+    connect(p->xAxis, SIGNAL(rangeChanged(QCPRange)), this, SLOT(xRangeChanged(QCPRange)));
+    connect(p->yAxis, SIGNAL(rangeChanged(QCPRange)), this, SLOT(xRangeChanged(QCPRange)));
+
+    // about one ID label per 16 pixels of height (the axis rect's height from the last layout)
+    connect(p, &QCustomPlot::beforeReplot, this, [this]() {
+        QCustomPlot *plot = ui->graphingView;
+        idTicker->setTickCount(qBound(2, qMax(plot->axisRect()->height(), plot->height() - 100) / 16, 40));
+    });
+
+    buildTimer.setSingleShot(true);
+    buildTimer.setInterval(1); // a real timer: the browser gets a turn between slices
+    connect(&buildTimer, &QTimer::timeout, this, &TemporalGraphWindow::buildStep);
 
     if (useOpenGL)
     {
-        ui->graphingView->setAntialiasedElements(QCP::aeAll);
+        p->setAntialiasedElements(QCP::aeAll);
         //ui->graphingView->setNoAntialiasingOnDrag(true);
-        ui->graphingView->setOpenGl(true);
+        p->setOpenGl(true);
     }
     else
     {
-        ui->graphingView->setOpenGl(false);
-        ui->graphingView->setAntialiasedElements(QCP::aeNone);
+        p->setOpenGl(false);
+        p->setAntialiasedElements(QCP::aeNone);
     }
+
+    generateGraph();
 }
 
 TemporalGraphWindow::~TemporalGraphWindow()
@@ -69,13 +336,23 @@ TemporalGraphWindow::~TemporalGraphWindow()
     delete ui;
 }
 
+QCustomPlot *TemporalGraphWindow::plot() const
+{
+    return ui->graphingView;
+}
+
+std::size_t TemporalGraphWindow::mapBytes() const
+{
+    const std::size_t cells = std::size_t(colorMap->data()->keySize()) * std::size_t(colorMap->data()->valueSize());
+    return cells * (sizeof(double) + sizeof(QRgb)); // the cells and the map's image (more if oversampled, < 100 cells)
+}
+
 void TemporalGraphWindow::showEvent(QShowEvent* event)
 {
     QDialog::showEvent(event);
     installEventFilter(this);
     readSettings();
-    generateGraph();
-    ui->graphingView->replot();
+    updatePlot(); // the counts went on while the window was closed
 }
 
 void TemporalGraphWindow::closeEvent(QCloseEvent *event)
@@ -107,160 +384,199 @@ void TemporalGraphWindow::writeSettings()
     }
 }
 
-void TemporalGraphWindow::updatedFrames(int numFrames)
+void TemporalGraphWindow::countFrame(const CommFrame &frame)
 {
-    CommFrame thisFrame;
-    QVector<double> x, y;
-    bool appendedToGraph = false;
-    bool needReplot = false;
-
-    if (numFrames == -1) //all frames deleted. Kill the display
-    {
-        //removeAllGraphs();
-        //now instead of removing the graphs regenerate them which will blank them out but leave them there in case
-        //more traffic that matches comes in or someone otherwise loads more data
-        ui->graphingView->clearGraphs(); //temporarily remove the graphs from the graph view
-        ui->graphingView->clearPlottables();
-        ui->graphingView->replot(); //now, redisplay them all
-
-    }
-    else if (numFrames == -2) //all new set of frames. Reset
-    {
-        //there shouldn't be any need to actually remove the graphs.
-        //regenerate them instead
-        ui->graphingView->clearGraphs(); //temporarily remove the graphs from the graph view
-        //needScaleSetup = true;
-        generateGraph();
-        //ui->graphingView->replot(); //now, redisplay them all
-    }
-    else //just got some new frames. See if they are relevant.
-    {
-        if (numFrames > modelFrames->count()) return;
-
-            appendedToGraph = false;
-            x.clear();
-            y.clear();
-            for (int i = modelFrames->count() - numFrames; i < modelFrames->count(); i++)
-            {
-                thisFrame = modelFrames->at(i);
-                /*
-                if (graphParams[j].ID == thisFrame.ID)
-                {
-                    appendToGraph(graphParams[j], thisFrame, x, y);
-                    appendedToGraph = true;
-                }*/
-            }
-            if (appendedToGraph)
-            {
-                //graphParams[j].ref->addData(x, y);
-                needReplot = true;
-            }
-
-        if (needReplot)
-        {
-            if (followGraphEnd)
-            {
-                //find the current X span and maintain that span but move the end of it over to match the new end
-                //of the actual graph. This causes the view to move with the data to always show the end
-                QCPRange range = ui->graphingView->xAxis->range();
-                double size = range.size();
-                bool foundRange;
-                QCPRange keyRange = ui->graphingView->graph()->getKeyRange(foundRange);
-                if (foundRange)
-                {
-                    double end, start;
-                    end = keyRange.upper;
-                    start = end - size;
-                    ui->graphingView->xAxis->setRange(start, end);
-                }
-            }
-            ui->graphingView->replot();
-        }
-    }
+    const CommFrame::FrameType type = frame.frameType();
+    if (type == CommFrame::ErrorFrame || type == CommFrame::InvalidFrame) return; // no ID on the bus
+    mDensity.add(frame.timeStamp().microSeconds(), frame.frameId(), frame.hasExtendedFrameFormat());
 }
 
+void TemporalGraphWindow::updatedFrames(int numFrames)
+{
+    if (numFrames == -1 || numFrames == -2)
+    {
+        // -1: cleared, or a file loaded in its place; -2: an all new set. Count the list as it is now.
+        generateGraph();
+        return;
+    }
+    if (numFrames <= 0 || mBuilding) return; // a build reads up to the end of the list anyway
+
+    // The n new frames are the newest rows of the list (fewer if the ring dropped some). Rows already counted
+    // (a filtered list's tail, or frames a build has read) are told apart by the newest frame counted.
+    const qsizetype count = modelFrames->count();
+    if (count == 0) return;
+    qsizetype start = qMax<qsizetype>(0, count - numFrames);
+    if (haveLast)
+    {
+        const qsizetype before = count - numFrames - 1;
+        if (before >= 0 && sameFrame(modelFrames->at(before), lastFrame))
+            start = before + 1;
+        else
+        {
+            for (qsizetype i = count - 1; i >= qMax<qsizetype>(0, before); i--)
+            {
+                if (sameFrame(modelFrames->at(i), lastFrame))
+                {
+                    start = i + 1;
+                    break;
+                }
+            }
+        }
+    }
+    if (start >= count) return;
+    const QVector<CommFrame> fresh = modelFrames->mid(start, count - start);
+    for (const CommFrame &f : fresh) countFrame(f);
+    if (!fresh.isEmpty())
+    {
+        lastFrame = fresh.last();
+        haveLast = true;
+    }
+    updatePlot();
+}
+
+// Count every frame of the list again, in slices (buildStep).
 void TemporalGraphWindow::generateGraph()
 {
-    if (modelFrames->count() == 0) return;
+    buildTimer.stop();
+    mDensity.clear();
+    haveLast = false;
+    buildCursor = 0;
+    mBuilding = true;
+    autoFit = true;
+    buildReplotClock.start();
+    buildStep();
+}
 
-    ui->graphingView->clearGraphs();
-    ui->graphingView->clearPlottables();
-
-    qDebug() << "Regenerating the graph";
-    ui->graphingView->addGraph();
-    graph = ui->graphingView->graph();
-
-    QVector<double> x, y;
-    int frameCount = modelFrames->count();
-
-    x.reserve(frameCount);
-    y.reserve(frameCount);
-
-    xminval = xmaxval = modelFrames->at(0).timeStamp().microSeconds() / 1000000.0;
-    yminval = ymaxval = modelFrames->at(0).frameId();
-
-    for (int i = 0; i < frameCount; i++)
+void TemporalGraphWindow::buildStep()
+{
+    QElapsedTimer slice;
+    slice.start();
+    while (mBuilding)
     {
-        x.append(modelFrames->at(i).timeStamp().microSeconds() / 1000000.0);
-        y.append(modelFrames->at(i).frameId());
-        if (x[i] > xmaxval) xmaxval = x[i];
-        if (x[i] < xminval) xminval = x[i];
-        if (y[i] > ymaxval) ymaxval = y[i];
-        if (y[i] < yminval) yminval = y[i];
+        const qsizetype count = modelFrames->count();
+        // The ring may have dropped its oldest chunk since the last slice: find where the list moved to.
+        if (haveLast && buildCursor > 0 && !sameFrame(modelFrames->at(buildCursor - 1), lastFrame))
+        {
+            qsizetype i = qMin(buildCursor - 1, count - 1);
+            const qsizetype stop = qMax<qsizetype>(0, i - 2 * FrameStore::DefaultChunkFrames);
+            for (; i >= stop; i--)
+                if (sameFrame(modelFrames->at(i), lastFrame)) break;
+            buildCursor = i >= stop ? i + 1 : qMin(buildCursor, count);
+        }
+        if (buildCursor >= count)
+        {
+            mBuilding = false;
+            break;
+        }
+        const QVector<CommFrame> chunk = modelFrames->mid(buildCursor, BuildChunk);
+        if (chunk.isEmpty())
+        {
+            mBuilding = false;
+            break;
+        }
+        for (const CommFrame &f : chunk) countFrame(f);
+        buildCursor += chunk.size();
+        lastFrame = chunk.last();
+        haveLast = true;
+        if (slice.elapsed() >= BuildSliceMs) break;
     }
 
-    ui->graphingView->graph()->setData(x,y);
-    ui->graphingView->graph()->setLineStyle(QCPGraph::lsNone); //no lines
-    ui->graphingView->graph()->setScatterStyle(QCPScatterStyle::ssCircle);
-    QPen graphPen;
-    graphPen.setColor(Qt::blue);
-    graphPen.setWidth(2);
-    ui->graphingView->graph()->setPen(graphPen);
-
-    qDebug() << "xmin: " << xminval;
-    qDebug() << "xmax: " << xmaxval;
-    qDebug() << "ymin: " << yminval;
-    qDebug() << "ymax: " << ymaxval;
-
-    ui->graphingView->xAxis->setRange(xminval, xmaxval);
-    ui->graphingView->yAxis->setRange(yminval, ymaxval);
-    ui->graphingView->axisRect()->setupFullAxesBox();
-
-    ui->graphingView->replot();
-
-
-    QCPColorMap *colorMap = new QCPColorMap(ui->graphingView->xAxis, ui->graphingView->yAxis);
-
-    int ySize = static_cast<int>(ymaxval - yminval) / 30 + 1;
-    int xSize = static_cast<int>((xmaxval - xminval) * 4.0) + 1;
-    colorMap->data()->setSize(xSize, ySize);
-    colorMap->data()->setRange(QCPRange(xminval, xmaxval), QCPRange(yminval, ymaxval));
-    for (int x = 0; x < xSize; ++x)
+    if (mBuilding)
     {
-      for (int y = 0; y < ySize; ++y)
-      {
-        colorMap->data()->setAlpha(x, y, 180);
-        colorMap->data()->setCell(x, y, 0.0);
-      }
+        if (buildReplotClock.elapsed() >= 500) // show the progress now and then
+        {
+            updatePlot();
+            buildReplotClock.restart();
+        }
+        buildTimer.start();
     }
+    else
+        updatePlot();
+}
 
-    for (int i = 0; i < frameCount; i++)
+void TemporalGraphWindow::updatePlot()
+{
+    if (!isVisible())
     {
-        int x = static_cast<int>(((modelFrames->at(i).timeStamp().microSeconds() / 1000000.0) - xminval) * 4.0);
-        int y = static_cast<int>(modelFrames->at(i).frameId() - yminval) / 30;
-        double val = colorMap->data()->cell(x, y);
-        double inc;
-        inc = 1 / (val + 1); //logarithmic decay
-        inc = inc * inc; //square the increment to make it even more stark
-        val = val + inc;
-        qDebug() << "X: " << x << " Y: " << y << "Val: " << val;
-        colorMap->data()->setCell(x, y, val);
+        plotDirty = true;
+        return;
     }
+    plotDirty = false;
+    QCustomPlot *p = ui->graphingView;
+    QCPColorMapData *d = colorMap->data();
+    const int rows = mDensity.ids();
 
-    colorMap->setGradient(QCPColorGradient::gpJet);
-    colorMap->rescaleDataRange(true);
-    ui->graphingView->rescaleAxes();
-    ui->graphingView->replot();
+    QString text;
+    if (mDensity.isEmpty() || rows == 0)
+    {
+        d->setSize(0, 0);
+        text = mBuilding ? tr("Reading frames...") : tr("No frames");
+    }
+    else
+    {
+        // Cells are centred on the map's key/value range; at least 2 x 2 (QCustomPlot draws a 1-cell side as
+        // nothing), the spare row or column empty.
+        const int cols = qMax(2, mDensity.usedColumns());
+        const int valueRows = qMax(2, rows);
+        d->setSize(cols, valueRows);
+        const double bin = double(mDensity.binUs());
+        const double origin = double(mDensity.originUs());
+        d->setRange(QCPRange((origin + bin / 2) * keyScale, (origin + (cols - 1) * bin + bin / 2) * keyScale),
+                    QCPRange(0, valueRows - 1));
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        quint32 maxCount = 1;
+        for (int r = 0; r < valueRows; r++)
+        {
+            if (r >= rows)
+            {
+                for (int c = 0; c < cols; c++) d->setCell(c, r, nan);
+                continue;
+            }
+            const std::vector<quint32> &counts = mDensity.countsOfRank(r);
+            for (int c = 0; c < cols; c++)
+            {
+                const quint32 n = counts[size_t(c)];
+                d->setCell(c, r, n ? double(n) : nan);
+                if (n > maxCount) maxCount = n;
+            }
+        }
+        colorMap->setDataRange(QCPRange(1, qMax(2.0, double(maxCount))));
+
+        text = tr("%1 IDs, %2 frames over %3; a column is %4; colour: frames per cell (1 to %5, log)")
+                   .arg(rows).arg(mDensity.frames())
+                   .arg(durationLabel(mDensity.lastUs() - mDensity.firstUs()))
+                   .arg(durationLabel(mDensity.binUs())).arg(maxCount);
+        if (mDensity.hiddenFrames())
+            text += tr("; %1 frames of IDs past the first %2 not shown").arg(mDensity.hiddenFrames()).arg(TemporalDensity::MaxIds);
+        if (mBuilding)
+            text += tr(" (reading frames: %1 of %2)").arg(buildCursor).arg(modelFrames->count());
+    }
+    summary->setText(text);
+
+    if (autoFit) fitView();
+    p->replot(QCustomPlot::rpQueuedReplot);
+}
+
+// The whole capture: from the first frame's column to the end of the last frame's, every ID row.
+void TemporalGraphWindow::fitView()
+{
+    QCustomPlot *p = ui->graphingView;
+    settingRange = true;
+    if (!mDensity.isEmpty())
+    {
+        const qint64 bin = mDensity.binUs(), origin = mDensity.originUs();
+        const qint64 lower = origin + floorDiv(mDensity.firstUs() - origin, bin) * bin;
+        const qint64 upper = origin + floorDiv(mDensity.lastUs() - origin, bin) * bin + bin;
+        p->xAxis->setRange(double(lower) * keyScale, double(upper) * keyScale);
+        p->yAxis->setRange(-0.5, qMax(1, mDensity.ids()) - 0.5);
+    }
+    settingRange = false;
+}
+
+void TemporalGraphWindow::xRangeChanged(const QCPRange &range)
+{
+    Q_UNUSED(range);
+    if (!settingRange) autoFit = false;
 }
 
 void TemporalGraphWindow::selectionChanged()
@@ -272,13 +588,7 @@ void TemporalGraphWindow::selectionChanged()
 
    The selection state of the left and right axes shall be synchronized as well as the state of the
    bottom and top axes.
-
-   Further, we want to synchronize the selection of the graphs with the selection state of the respective
-   legend item belonging to that graph. So the user can select a graph by either clicking on the graph itself
-   or on its legend item.
   */
-
-    qDebug() << "SelectionChanged";
 
   // make top and bottom axes be selected synchronously, and handle axis and tick labels as one selectable object:
   if (ui->graphingView->xAxis->selectedParts().testFlag(QCPAxis::spAxis) || ui->graphingView->xAxis->selectedParts().testFlag(QCPAxis::spTickLabels) ||
@@ -317,7 +627,6 @@ void TemporalGraphWindow::mousePress()
 
 void TemporalGraphWindow::mouseWheel()
 {
-   qDebug() << "Mouse WHeel";
   // if an axis is selected, only allow the direction of that axis to be zoomed
   // if no axis is selected, both directions may be zoomed
 
@@ -357,12 +666,11 @@ bool TemporalGraphWindow::eventFilter(QObject *obj, QEvent *event)
     return false;
 }
 
+// R: the whole capture again, and follow it as it grows.
 void TemporalGraphWindow::resetView()
 {
-    ui->graphingView->xAxis->setRange(xminval, xmaxval);
-    ui->graphingView->yAxis->setRange(yminval, ymaxval);
-    ui->graphingView->axisRect()->setupFullAxesBox();
-
+    autoFit = true;
+    fitView();
     ui->graphingView->replot();
 }
 
@@ -407,4 +715,3 @@ void TemporalGraphWindow::zoomOut()
     }
     ui->graphingView->replot();
 }
-

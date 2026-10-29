@@ -193,9 +193,9 @@ export class AppDriver {
   /**
    * File > Load Log File with `file` picked; waits until its `frames` are in the trace. Qt opens Chrome's
    * showOpenFilePicker() (File System Access), which Playwright can't answer, so the page's showOpenFilePicker is
-   * replaced for this one call by one that hands over the file, as the user's pick would.
+   * replaced for this one call by one that hands over the file, as the user's pick would. `timeout`: for big files.
    */
-  async loadFile(file, frames) {
+  async loadFile(file, frames, timeout = 30000) {
     const bytes = readFileSync(file);
     await this.page.evaluate(([name, b64]) => {
       const real = window.showOpenFilePicker;
@@ -207,7 +207,7 @@ export class AppDriver {
       };
     }, [basename(file), bytes.toString('base64')]);
     await this.menu('File', 'Load Log File');
-    await this.page.waitForFunction((n) => window.webSavvyCAN.stats().framesReceived >= n, frames, { timeout: 30000 });
+    await this.page.waitForFunction((n) => window.webSavvyCAN.stats().framesReceived >= n, frames, { timeout });
   }
   async themeShot() {
     return this.page.screenshot();
