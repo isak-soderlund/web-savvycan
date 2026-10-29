@@ -79,7 +79,9 @@ void IdFrames::clear()
 
 void IdFrames::restride(int stride)
 {
-    std::vector<quint8> bytes(size_t(size()) * size_t(stride), 0);
+    std::vector<quint8> bytes;
+    if (mMax > 0) bytes.reserve(mLen.capacity() * size_t(stride));
+    bytes.resize(size_t(size()) * size_t(stride), 0);
     for (int i = 0; i < size(); i++)
         std::copy_n(mBytes.data() + size_t(i) * size_t(mStride), mStride, bytes.data() + size_t(i) * size_t(stride));
     mBytes.swap(bytes);
@@ -98,6 +100,14 @@ void IdFrames::append(qint64 timeUs, const quint8 *data, int len)
         mTime.erase(mTime.begin(), mTime.begin() + drop);
         mLen.erase(mLen.begin(), mLen.begin() + drop);
         mDropped += drop;
+    }
+    if (mMax > 0 && mLen.size() == mLen.capacity())
+    {
+        // a bounded ring grows to at most mMax frames (no vector doubling past the bound)
+        const size_t frames = size_t(qMin(mMax, qMax(1024, 2 * size())));
+        mBytes.reserve(frames * size_t(mStride));
+        mTime.reserve(frames);
+        mLen.reserve(frames);
     }
     const size_t at = mBytes.size();
     mBytes.resize(at + size_t(mStride), 0);
@@ -233,6 +243,15 @@ void varyingBits(const IdFrames &frames, quint8 mask[64])
 
 static inline bool bitSet(const quint8 mask[64], int bit) { return bit < 512 && (mask[bit / 8] >> (bit % 8)) & 1; }
 
+// Does a field contain one found already (a smaller one: the fields are tried smallest first)? Then it is only that
+// field with more bits around it and is not reported.
+static bool containsFound(const std::vector<DiscreteMatch> &out, size_t from, int start, int bits)
+{
+    for (size_t i = from; i < out.size(); i++)
+        if (out[i].startBit >= start && out[i].startBit + out[i].bits <= start + bits) return true;
+    return false;
+}
+
 // A little-endian field of at most 8 bits (Intel numbering); -1 if the frame is too short for it.
 static inline int field(const quint8 *d, int len, int startBit, int bits)
 {
@@ -255,11 +274,13 @@ void discreteLogged(quint32 id, bool ext, const IdFrames &frames, int states, in
     quint8 mask[64];
     varyingBits(frames, mask);
     const int totalBits = frames.maxLength() * 8;
-    for (int bits = maxBits; bits >= minBits; bits--)
+    const size_t first = out.size();
+    for (int bits = minBits; bits <= maxBits; bits++)
     {
         for (int start = 0; start + bits <= totalBits; start++)
         {
             if (!bitSet(mask, start) || !bitSet(mask, start + bits - 1)) continue; // not the tightest field
+            if (containsFound(out, first, start, bits)) continue;
             std::bitset<256> seen;
             int unique = 0, n = 0;
             for (int i = 0; i < frames.size() && unique <= states; i++)
@@ -298,9 +319,9 @@ void discreteRealtime(quint32 id, bool ext, const std::vector<IdFrames> &perStat
         if (f.size() < minFramesPerState) return; // too few frames of this ID in a state to tell
         stride = qMax(stride, f.maxLength());
     }
-    std::vector<quint8> first(size_t(stride), 0);
-    std::copy_n(perState[0].data(0), perState[0].maxLength(), first.data());
-    ref = first.data();
+    std::vector<quint8> firstRow(size_t(stride), 0);
+    std::copy_n(perState[0].data(0), perState[0].maxLength(), firstRow.data());
+    ref = firstRow.data();
     for (const IdFrames &f : perState)
         for (int i = 0; i < f.size(); i++)
         {
@@ -309,11 +330,13 @@ void discreteRealtime(quint32 id, bool ext, const std::vector<IdFrames> &perStat
         }
     const int totalBits = stride * 8;
     std::vector<int> hist(256);
-    for (int bits = maxBits; bits >= minBits; bits--)
+    const size_t first = out.size();
+    for (int bits = minBits; bits <= maxBits; bits++)
     {
         for (int start = 0; start + bits <= totalBits; start++)
         {
             if (!bitSet(mask, start) || !bitSet(mask, start + bits - 1)) continue;
+            if (containsFound(out, first, start, bits)) continue;
             DiscreteMatch m;
             m.id = id;
             m.ext = ext;

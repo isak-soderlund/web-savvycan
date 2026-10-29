@@ -126,7 +126,7 @@ QJsonObject plotState(QCustomPlot *plot)
         o.insert("xUpper", plot->xAxis->range().upper);
         if (plot->graphCount() > 0)
             o.insert("penColor", plot->graph(0)->pen().color().name());
-        o.insert("background", plot->background().color().name());
+        o.insert("tickLabelColor", plot->xAxis->tickLabelColor().name()); // themed with the background (Theme::applyToPlot)
     }
     return o;
 }
@@ -286,6 +286,7 @@ QJsonObject rangeStateJson()
     }
     o.insert("lastRunMs", double(win->lastRunMs()));
     o.insert("lastRunFrames", double(win->lastRunFrames()));
+    o.insert("runs", win->runs());
     o.insert("plot", plotState(win->plot()));
     return o;
 }
@@ -345,6 +346,7 @@ QJsonObject discreteJson()
     sampler.insert("ids", int(s.entries().size()));
     o.insert("sampler", sampler);
     o.insert("lastRunMs", double(win->lastRunMs()));
+    o.insert("runs", win->runs());
     return o;
 }
 

@@ -143,7 +143,7 @@ void SnifferItem::update(const CommFrame& pFrame, quint32 timeSeq, bool mute)
         }
     }
     mCurrent.len = dataLen;
-    mCurrentTime = pFrame.timeStamp().microSeconds();
+    mCurrentTime = pFrame.timeStamp().seconds() * 1000000ULL + pFrame.timeStamp().microSeconds(); // web-savvycan: seconds too
 
     /* update marker */
     //We "OR" our stored marker with the changed bits.

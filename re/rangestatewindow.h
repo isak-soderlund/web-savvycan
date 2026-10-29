@@ -28,6 +28,7 @@ public:
     bool busy() const { return running; }
     qint64 lastRunMs() const { return runMs; }
     qint64 lastRunFrames() const { return runFrames; }
+    int runs() const { return runCount; }
     QCustomPlot *plot() const;
 
 private slots:
@@ -42,6 +43,7 @@ private:
     QMap<int, bool> idFilters;
     bool running = false;
     qint64 runMs = 0, runFrames = 0;
+    int runCount = 0;
 
     void refreshFilterList();
     void closeEvent(QCloseEvent *event);

@@ -295,6 +295,7 @@ void RangeStateWindow::recalcButton()
 
     progress.cancel();
     runMs = clock.elapsed();
+    runCount++;
     running = false;
     ui->btnRecalc->setEnabled(true);
     qDebug() << "Found " << foundSignals.size() << " signals total.";

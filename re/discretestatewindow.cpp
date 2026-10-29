@@ -410,6 +410,7 @@ void DiscreteStateWindow::calculateResults()
             ReTools::discreteLogged(quint32(it.key()), (it.key() >> 32) != 0, it.value(), states, minBits, maxBits, results);
     }
     runMs = clock.elapsed();
+    runCount++;
     showResults();
 }
 

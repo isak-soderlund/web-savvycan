@@ -46,6 +46,7 @@ public:
     const std::vector<ReTools::DiscreteMatch> &matches() const { return results; }
     const ReTools::StateSampler &sampler() const { return samples; }
     qint64 lastRunMs() const { return runMs; }
+    int runs() const { return runCount; }
     void start() { handleStartButton(); }
 
 private slots:
@@ -72,6 +73,7 @@ private:
     ReTools::StateSampler samples;   // realtime: frames per ID and state, bounded
     std::vector<ReTools::DiscreteMatch> results;
     qint64 runMs = 0;
+    int runCount = 0;
 
     void refreshFilterList();
     void addFilterId(const CommFrame &frame);

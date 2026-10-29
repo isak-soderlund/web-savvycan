@@ -90,7 +90,7 @@ struct RangeParams
     int minBits = 8, maxBits = 16, granularity = 1;
     int sigType = 3;      // 1 big endian, 2 little endian, 3 both (SavvyCAN's combo index + 1)
     int signedType = 3;   // 1 signed, 2 unsigned, 3 both
-    int sensitivity = 50; // 10..250
+    int sensitivity = 10; // 10..250 (the window's slider starts at 10)
 };
 struct RangeCandidate
 {
@@ -120,11 +120,13 @@ struct DiscreteMatch
 // The bits (Intel numbering) that are not the same in every frame: 64 bytes of masks.
 void varyingBits(const IdFrames &frames, quint8 mask[64]);
 // "From logged data": fields of minBits..maxBits bits that take exactly `states` values over the frames and whose
-// first and last bits both change (the tightest field: a toggling bit is reported once, not in every wider field).
+// first and last bits both change, smallest first, none containing a field found already (a toggling bit is
+// reported once, not again in every wider field around it).
 void discreteLogged(quint32 id, bool ext, const IdFrames &frames, int states, int minBits, int maxBits,
                     std::vector<DiscreteMatch> &out);
 // "Realtime": perState[k] holds the frames recorded while the user held state k. A field matches when in every
-// state at least minShare of its frames have one value, and those values differ from state to state.
+// state at least minShare of its frames have one value, and those values differ from state to state (fields tried
+// as in discreteLogged: tightest, smallest first, none containing one found).
 void discreteRealtime(quint32 id, bool ext, const std::vector<IdFrames> &perState, int minBits, int maxBits,
                       std::vector<DiscreteMatch> &out, double minShare = 0.9, int minFramesPerState = 3);
 
