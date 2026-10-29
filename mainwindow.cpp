@@ -2354,17 +2354,8 @@ void MainWindow::showTemporalGraphWindow()
         else
             frames = model->getFilteredListReference();
 
-        if(frames->count() > 2000)
-        {
-            QMessageBox::StandardButton confirmDialog;
-            confirmDialog = QMessageBox::question(this, "Danger Will Robinson", "There are a lot of frames (>2000) to plot, this may take a while or crash the app. Crash likely with more than 10k frames. Continue?",
-                                          QMessageBox::Yes|QMessageBox::No);
-            if (confirmDialog == QMessageBox::No)
-            {
-                return;
-            }
-        }
-
+        //web-savvycan: no "Danger Will Robinson" question past 2000 frames: the map is bounded now (G1-G4) and is
+        //built in slices, so a big capture neither crashes it nor stalls the page
         temporalGraphWindow = new TemporalGraphWindow(frames);
     }
 

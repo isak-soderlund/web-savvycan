@@ -74,7 +74,7 @@ constexpr bool on(Feature f)
     case Feature::SignalViewer:       return false; // stage 3
     case Feature::Sniffer:            return false; // stage 4
     case Feature::FrameInfo:          return true;  // stage 4, brought forward: the heatmap tool with CAN FD (owner 2026-10-29)
-    case Feature::TemporalGraph:      return false; // stage 4
+    case Feature::TemporalGraph:      return true;  // stage 4, brought forward (owner 2026-10-29)
     case Feature::FlowView:           return false; // stage 4
     case Feature::RangeState:         return false; // stage 4
     case Feature::DiscreteState:      return false; // stage 4

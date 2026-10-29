@@ -254,12 +254,100 @@ EM_JS(void, wsc_install_hook, (), {
 });
 
 static void installFrameInfoHook(); // Frame Data Analysis, at the end of this file
+// ---- Temporal Graph (stage 4): what RE Tools > Temporal Graph shows. Its own block (and its own EM_JS below),
+// so it merges apart from the other windows' hooks.
+#include "re/temporalgraphwindow.h"
+#include <cmath>
+
+static TemporalGraphWindow *temporalWindow()
+{
+    for (QWidget *w : QApplication::topLevelWidgets())
+        if (auto *t = qobject_cast<TemporalGraphWindow *>(w); t && t->isVisible()) return t;
+    return nullptr;
+}
+
+// The IDs with their frame counts, the time span, the column width, the colour map's size and what it holds, the
+// plot's items, the memory of the counts and the map, the visible ranges.
+static QJsonObject temporalState()
+{
+    QJsonObject o;
+    TemporalGraphWindow *win = temporalWindow();
+    o.insert("open", win != nullptr);
+    if (!win) return o;
+    const TemporalDensity &d = win->density();
+    QCustomPlot *plot = win->plot();
+    QJsonArray ids;
+    const std::vector<quint64> &keys = d.sortedKeys();
+    for (int r = 0; r < int(keys.size()); r++) {
+        double n = 0;
+        int from = -1, to = -1;   // its first and last column with frames
+        const std::vector<quint32> &counts = d.countsOfRank(r);
+        for (int c = 0; c < int(counts.size()); c++) {
+            if (!counts[size_t(c)]) continue;
+            n += counts[size_t(c)];
+            if (from < 0) from = c;
+            to = c;
+        }
+        QJsonObject id;
+        id.insert("id", double(quint32(keys[size_t(r)])));
+        id.insert("ext", (keys[size_t(r)] >> 32) != 0);
+        id.insert("frames", n);
+        id.insert("fromUs", double(d.originUs() + qint64(from) * d.binUs()));     // start of its first column
+        id.insert("toUs", double(d.originUs() + qint64(to + 1) * d.binUs()));     // end of its last column
+        ids.append(id);
+    }
+    double plotted = 0, nonEmpty = 0;
+    int keySize = 0, valueSize = 0;
+    for (int i = 0; i < plot->plottableCount(); i++) {
+        if (auto *map = qobject_cast<QCPColorMap *>(plot->plottable(i))) {
+            QCPColorMapData *m = map->data();
+            keySize = m->keySize();
+            valueSize = m->valueSize();
+            for (int r = 0; r < valueSize; r++)
+                for (int c = 0; c < keySize; c++)
+                    if (const double v = m->cell(c, r); !std::isnan(v) && v > 0) { plotted += v; nonEmpty++; }
+        }
+    }
+    o.insert("building", win->building());
+    o.insert("frames", double(d.frames()));
+    o.insert("hiddenFrames", double(d.hiddenFrames()));
+    o.insert("ids", ids);
+    o.insert("firstUs", double(d.firstUs()));
+    o.insert("lastUs", double(d.lastUs()));
+    o.insert("binUs", double(d.binUs()));
+    o.insert("columns", d.usedColumns());
+    o.insert("maxColumns", TemporalDensity::Columns);
+    o.insert("maxIds", TemporalDensity::MaxIds);
+    o.insert("mapKeySize", keySize);
+    o.insert("mapValueSize", valueSize);
+    o.insert("plotted", plotted);           // frames in the map's cells (= frames - hiddenFrames)
+    o.insert("nonEmptyCells", nonEmpty);
+    o.insert("plottables", plot->plottableCount());
+    o.insert("graphs", plot->graphCount());
+    o.insert("items", plot->itemCount());
+    o.insert("memoryBytes", double(d.memoryBytes() + win->mapBytes()));
+    o.insert("xLower", plot->xAxis->range().lower);
+    o.insert("xUpper", plot->xAxis->range().upper);
+    o.insert("yLower", plot->yAxis->range().lower);
+    o.insert("yUpper", plot->yAxis->range().upper);
+    return o;
+}
+
+extern "C" {
+EMSCRIPTEN_KEEPALIVE const char *wsc_temporal_state() { return keep(QJsonDocument(temporalState()).toJson(QJsonDocument::Compact)); }
+}
+
+EM_JS(void, wsc_install_temporal_hook, (), {
+    window.webSavvyCAN.temporalState = () => JSON.parse(UTF8ToString(_wsc_temporal_state()));
+});
+// ---- end of Temporal Graph
 
 void TestHook::install(CommFrameModel *model)
 {
     g_model = model;
     wsc_install_hook();
     installFrameInfoHook();
+    wsc_install_temporal_hook();
 }
 
 // ---- Frame Data Analysis (RE Tools > Frame Data Analysis, the heatmap tool) -------------------------------------

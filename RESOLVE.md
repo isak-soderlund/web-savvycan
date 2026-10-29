@@ -120,6 +120,29 @@ are unchanged, so rc1 stays usable with standard SavvyCAN. Goal: whole CCS charg
 Not yet seen: a real log of more than 72 min from rc1 (on the rig). `MQTT_BUS` (not in the browser build) has the same
 int32 time basis as upstream's GVRET had.
 
+## Temporal Graph (stage 4, switched on 2026-10-29)
+
+Brought forward from stage 4 (owner 2026-10-29): RE Tools > Temporal Graph, which IDs appear when.
+
+| What | How |
+| --- | --- |
+| The crash | SavvyCAN's map was ID range / 30 x seconds x 4 cells, sized in `int` in QCustomPlot (G1, G2): 20 000 frames of J1939-style 29-bit IDs over 60 s ask for 1.6 G cells and the page aborts ("Aborted()", measured on the unchanged window 2026-10-29); plus a circle per frame redrawn on every pan and zoom (G3), and no live update (G4) |
+| The map | `TemporalDensity` (`re/temporalgraphwindow.h`): frame counts per (time column, ID). At most **512 columns**, each a power of two µs wide; the width doubles as the capture grows (columns added in pairs), so 10 s and 10 h both fit. **One row per distinct ID** (11-bit and 29-bit apart, in ID order, labelled in hex), at most 2048 rows; frames of further IDs are counted and named in the summary line, not drawn. About 2 KB of counts per ID plus the map's cells (12 bytes each): ~0.25 MB for 30 IDs, whatever the number of frames |
+| Drawing | One `QCPColorMap` of the counts (log colour scale, empty cells transparent), a summary line (IDs, frames, span, column width); no point per frame. One gradient (blue to red) for light and dark; the plot is themed as every plot |
+| Live | `framesUpdated(n)` adds the new frames: O(new frames) per GUI tick. New frames are found by the newest frame counted, not by an index (the trace is a ring; a filtered list's tail isn't counted twice). The counts keep the **whole session**, also after the trace's ring has dropped the oldest frames. -1/-2 (cleared, a file loaded, a new set) count the list again, in slices of ~25 ms, so the page keeps running on a big capture; the ">2000 frames, may crash" question is gone. The view shows the whole capture and follows it until the user zooms or pans (R: whole capture again) |
+| Browser | A framed dialog (title bar, close button), as the graphing window. Time axis in the app's time style |
+| QCustomPlot | `QCPColorMapData`: cell count in `size_t` and capped at 2^31, no cell access without an array, `fill()` of any value (it was a `memset` of a double) |
+| Limits | The map's resolution is the column width (span / 256..512): zooming in shows wider cells, not finer ones. Over 2048 distinct IDs, the rest are counted, not shown. In overwrite mode with the filtered list (Main/UseFiltered) live counts follow the trace's rows, not the bus |
+
+Tests: `tests/web` `temporal.spec`: a 1-hour log of 600 000 frames (30 IDs: Leaf, J1939-style 29-bit, 11- and
+29-bit CAN FD 64 bytes with BRS; one ID only in the second half hour) loaded and the window opened: every ID with its
+frame count, the whole hour on the time axis, 0x7E8 from the second half, one plottable, < 1 MB; it opens in
+0.4 s with no event-loop gap over 253 ms (the 40 MB file itself takes ~70 s to load through File > Load Log File in the test). Live: a Leaf bus, then 20 s of 64-byte FD at
+16 000 frames/s with a 50 000-frame trace ring: every frame counted exactly once across the ring's wraps (323 344
+frames, 275 000 of them evicted from the trace), 45 IDs, memory flat (0.35-0.40 MB for counts and map). Pictures in light and dark.
+A native harness of the same code (Qt 6.4, offscreen) built the 600 000 frames in 77 ms and counted 1.19 M live frames
+across 1.14 M ring evictions exactly.
+
 ## Next (owner 2026-10-29)
 
 1. **A faster, leaner log loader.** Measured 2026-10-29 in the browser (graph-bounds and temporal-graph tests):
