@@ -886,8 +886,12 @@ void ConnectionWindow::rememberConnections()
 void ConnectionWindow::autoConnect()
 {
     if (connModel->rowCount() > 0) return; // already connected by hand
+    // Only rc1 (its USB IDs, 1209:0001): a port without USB IDs ("WebSerial #n") or another device's can be a
+    // different device on a later visit under the same name.
     QStringList available;
-    for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts()) available << info.portName();
+    for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts())
+        if (info.portName().startsWith(QLatin1String("WebSerial 1209:0001"), Qt::CaseInsensitive))
+            available << info.portName();
     if (available.isEmpty()) return;
     loadConnections(&available);
 }

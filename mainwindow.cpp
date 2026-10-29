@@ -1707,10 +1707,12 @@ void MainWindow::handleLoadFile()
 // A file picked in the browser: its bytes are written to the in-memory file system for the loaders
 // (they read by file name), loaded as a dropped file is, and deleted again. Everything lives in the
 // page's memory (wasm32: at most 4 GB): the bytes twice, the frames twice while they are handed to the
-// trace (about 150 bytes a frame), so files over kMaxBrowserFileBytes are refused with a message.
+// trace, so files over kMaxBrowserFileBytes are refused with a message. Measured 2026-10-29: ~1.4 KB of heap a loaded
+// frame (600 000 frames: ~850 MB; 1 M: ~1.5 GB), a GVRET CSV ~66 bytes a frame: 100 MB ~ 1.5 M frames ~ 2 GB, room
+// left for the copies while loading (RESOLVE.md "Next": a leaner loader). Binary formats hold more frames a MB.
 void MainWindow::loadBrowserFile(const QString &name, const QByteArray &content)
 {
-    constexpr qint64 kMaxBrowserFileBytes = 500LL * 1000 * 1000;
+    constexpr qint64 kMaxBrowserFileBytes = 100LL * 1000 * 1000;
     const QString shown = QFileInfo(name).fileName();
     if (content.size() > kMaxBrowserFileBytes) {
         QMessageBox::warning(this, tr("File too large"),
