@@ -5,7 +5,7 @@ name: web-savvycan build
 
 on:
   push:
-    branches: [main]
+    branches-ignore: ['dist/**'] # every branch (its build goes to dist/<branch>, below), not the builds themselves
   pull_request:
     branches: [main]
   workflow_dispatch:
