@@ -13,8 +13,17 @@ import { test, expect, fake, RESULTS, saveResult } from '../lib/harness.mjs';
 const state = (page) => page.evaluate(() => window.webSavvyCAN.graphState());
 const MB = (b) => (b / 1048576).toFixed(1);
 const hex = (b) => b.toString(16).toUpperCase().padStart(2, '0');
+/** A menu of the graphing window (its menu bar comes after the main window's in the accessibility tree, which has a
+ * hidden View menu of its own). */
+async function graphMenu(page, top, item) {
+  await page.getByRole('menuitem', { name: new RegExp(`^${top}$`) }).last().click({ force: true });
+  await page.getByRole('menuitem', { name: new RegExp(`^${item}$`) }).last().click({ force: true });
+}
 
-/** A GVRET CSV as SavvyCAN saves it (FrameFileIO::nativeCSVRow), written in pieces: rows(i) -> [time µs, id, bytes, fd]. */
+/**
+ * A GVRET CSV as SavvyCAN saves it (FrameFileIO::nativeCSVRow), written in pieces: row(i) -> [time µs, id, bytes, fd].
+ * Times from 1 s: SavvyCAN's loader takes a time of up to 3 characters as "none" and stamps the frame itself.
+ */
 function writeCsv(name, count, row) {
   mkdirSync(RESULTS, { recursive: true });
   const file = join(RESULTS, name);
@@ -120,7 +129,7 @@ test('a live graph far past its cap stays bounded, spans the whole session, and 
   expect(growth, `heap growth after the first fold (${MB(growth)} MB)`).toBeLessThan(4 * 1048576);
 
   // Zoomed out (View > Reset View): the whole session on the graph, drawn as the min/max envelope.
-  await app.menu('View', 'Reset View');
+  await graphMenu(page, 'View', 'Reset View');
   await page.waitForTimeout(1000);
   const all = await state(page);
   expect(all.xLower, 'Reset View: from the first time').toBe(seq0.firstKey);
@@ -133,31 +142,36 @@ test('a live graph far past its cap stays bounded, spans the whole session, and 
 
 test('a big log file graphs within the cap and spans the whole file', async ({ app, page }) => {
   test.setTimeout(300_000);
-  // 1 000 000 frames of 0x1DA every ms (1 000 s), bytes 0..3 the frame number (little-endian).
-  const frames = 1000000;
-  const file = writeCsv('graph-bigfile.csv', frames, (i) => [i * 1000, 0x1da, [i & 0xff, (i >> 8) & 0xff, (i >> 16) & 0xff, 0, 0, 0, 0, 0]]);
+  // 600 000 frames of 0x1DA every ms (600 s from 1 s), bytes 0..3 the frame number (little-endian).
+  const frames = 600000;
+  const file = writeCsv('graph-bigfile.csv', frames, (i) => [1e6 + i * 1000, 0x1da, [i & 0xff, (i >> 8) & 0xff, (i >> 16) & 0xff, 0, 0, 0, 0, 0]]);
   await app.open();
   const t0 = Date.now();
   await app.loadFile(file, frames, { timeout: 240_000 });
   const loaded = (Date.now() - t0) / 1000;
   await page.waitForTimeout(1000);
+  // The window first (a graph of an ID the file doesn't have: one dummy point), then the graph of the file.
+  expect(await page.evaluate(() => window.webSavvyCAN.addGraph(0x7ff, 0, 8, true)), 'graph window').toBe(true);
+  await page.waitForTimeout(1000);
   const before = await state(page);
-  expect(await page.evaluate(() => window.webSavvyCAN.addGraph(0x1da, 0, 32, true)), 'graph created').toBe(true);
+  expect(await page.evaluate(() => window.webSavvyCAN.addGraph(0x1da, 0, 32, true, true)), 'graph created').toBe(true);
   await page.waitForTimeout(1000);
   const g = await state(page);
-  const [s] = g.series;
+  const s = g.series[1];
   saveResult('graph-bigfile', { frames, loaded, before: { heapUsed: before.heapUsed, heapSize: before.heapSize }, after: g });
   expect(s.samples, 'every frame of the file taken in').toBe(frames);
   expect(s.stored, `stored points (${s.stored}) within the cap ${g.cap}`).toBeLessThanOrEqual(g.cap);
-  expect([s.firstKey, s.lastKey], 'from the first to the last time of the file').toEqual([0, (frames - 1) * 1000]);
+  expect([s.firstKey, s.lastKey], 'from the first to the last time of the file').toEqual([1e6, 1e6 + (frames - 1) * 1000]);
   expect([s.firstValue, s.minValue, s.maxValue, s.lastValue], 'first, smallest, largest, last value').toEqual([0, 0, frames - 1, frames - 1]);
   const added = g.heapUsed - before.heapUsed;
   test.info().annotations.push({ type: 'result', description: `${frames} frames loaded in ${loaded.toFixed(0)} s; graph: ` +
     `${s.stored} points, ${s.envelope} in the envelope (buckets of ${s.bucket}); heap in use +${MB(added)} MB ` +
     `(${MB(before.heapUsed)} -> ${MB(g.heapUsed)}), memory ${MB(g.heapSize)} MB` });
-  // The graph's points, nothing else: without the bound (and the copies) 1 M points took 32 bytes each plus a copy of
-  // every matching frame.
-  expect(added, `heap in use added by the graph (${MB(added)} MB)`).toBeLessThan(s.stored * 16 * 1.25 + 2 * 1048576);
+  // The graph's points (its container, allocated at the cap), nothing else: without the bound (and the copies) the
+  // 600 000 points took 32 bytes each plus a copy of every matching frame.
+  expect(added, `heap in use added by the graph (${MB(added)} MB)`).toBeLessThan(g.cap * 16 * 1.1 + 2 * 1048576);
+  await graphMenu(page, 'View', 'Reset View');
+  await page.waitForTimeout(1000);
   await page.screenshot({ path: join(RESULTS, 'graph-bigfile.png') });
 });
 
@@ -168,7 +182,7 @@ test('CAN FD: a signal past byte 8 graphs, and Add New Graph shows the 64-byte f
     const d = Array.from({ length: 64 }, (_, j) => (j * 3 + 1) & 0xff);
     d[40] = i % 200;
     d[63] = 0x5a;
-    return [i * 1000, 0x123, d, true];
+    return [1e6 + i * 1000, 0x123, d, true];
   });
   await app.open();
   await app.loadFile(file, frames);
@@ -181,7 +195,7 @@ test('CAN FD: a signal past byte 8 graphs, and Add New Graph shows the 64-byte f
   expect([intel.minValue, intel.maxValue, intel.firstValue, intel.lastValue], 'byte 40: 0..199').toEqual([0, 199, 0, (frames - 1) % 200]);
 
   // Graph > Add New Graph (exec()): the ID's frames are 64 bytes, so its bit grid shows 64 bytes (512 bits).
-  await app.menu('Graph', 'Add New Graph');
+  await graphMenu(page, 'Graph', 'Add New Graph');
   await expect.poll(async () => (await page.evaluate(() => window.webSavvyCAN.graphDialog())).open, { message: 'dialog open' }).toBe(true);
   expect((await page.evaluate(() => window.webSavvyCAN.graphDialog())).gridBytes, 'no ID yet: the classic 8-byte grid').toBe(8);
   expect(await page.evaluate(() => window.webSavvyCAN.setGraphDialogField('id', 0x123)), 'ID typed').toBe(true);

@@ -193,6 +193,12 @@ EMSCRIPTEN_KEEPALIVE int wsc_graph_dialog_set(int field, int value)
     e->setText(field == 0 ? QStringLiteral("0x") + QString::number(uint32_t(value), 16).toUpper() : QString::number(value));
     return 1;
 }
+// Graph > Add New Graph in the newest graphing window, from the event loop (the dialog runs with exec()).
+EMSCRIPTEN_KEEPALIVE int wsc_open_graph_dialog()
+{
+    GraphingWindow *win = graphWindow();
+    return win && QMetaObject::invokeMethod(win, "addNewGraph", Qt::QueuedConnection) ? 1 : 0;
+}
 EMSCRIPTEN_KEEPALIVE const char *wsc_graph_dialog() { return keep(QJsonDocument(graphDialogState()).toJson(QJsonDocument::Compact)); }
 // The trace's size (frames kept) as File > Preferences stores it (QSettings Main/MaximumFrames, the page's
 // localStorage); read at start: reload after.
@@ -224,6 +230,7 @@ EM_JS(void, wsc_install_hook, (), {
             _wsc_add_graph(id, startBit, numBits, intel ? 1 : 0, sameWindow ? 1 : 0) === 1,
         graphState: () => JSON.parse(UTF8ToString(_wsc_graph_state())),
         graphDialog: () => JSON.parse(UTF8ToString(_wsc_graph_dialog())),
+        openGraphDialog: () => _wsc_open_graph_dialog() === 1,
         setGraphDialogField: (name, value) =>
             _wsc_graph_dialog_set({ id: 0, startBit: 1, bits: 2, frameLen: 3 }[name] ?? -1, value | 0) === 1,
         setMaxFrames: (frames) => _wsc_set_max_frames(frames | 0),

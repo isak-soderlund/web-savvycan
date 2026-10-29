@@ -706,7 +706,9 @@ void GraphingWindow::setupMenuBar()
     QMenuBar *menuBar = new QMenuBar(this);
     menuBar->setNativeMenuBar(false);
     menuBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+#ifndef Q_OS_WASM
     menuBar->setMaximumHeight(20);
+#endif // web-savvycan: in the browser 20 px is less than the menu bar's font needs: every menu went into its "»"
 
     // Graph menu
     QMenu *graphMenu = menuBar->addMenu(tr("Graph"));
