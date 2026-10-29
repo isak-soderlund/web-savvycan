@@ -166,10 +166,11 @@ static QJsonObject graphDialogState()
 
 extern "C" {
 // A new graphing window with one graph, as RE Tools > New Graphing Window and its "Add New Graph"
-// dialog make it: frame ID, start bit, bits, Intel byte order.
-EMSCRIPTEN_KEEPALIVE int wsc_add_graph(int id, int startBit, int numBits, int intel)
+// dialog make it: frame ID, start bit, bits, Intel byte order; with sameWindow, one more graph in the newest window.
+EMSCRIPTEN_KEEPALIVE int wsc_add_graph(int id, int startBit, int numBits, int intel, int sameWindow)
 {
-    QMetaObject::invokeMethod(MainWindow::getReference(), "showGraphingWindow", Qt::DirectConnection);
+    if (!sameWindow || !graphWindow())
+        QMetaObject::invokeMethod(MainWindow::getReference(), "showGraphingWindow", Qt::DirectConnection);
     GraphingWindow *win = graphWindow();
     if (!win) return 0;
     GraphParams params;
@@ -219,7 +220,8 @@ EM_JS(void, wsc_install_hook, (), {
         version: UTF8ToString(_wsc_version()),
         stats: () => JSON.parse(UTF8ToString(_wsc_stats())),
         theme: () => UTF8ToString(_wsc_theme()),
-        addGraph: (id, startBit, numBits, intel = true) => _wsc_add_graph(id, startBit, numBits, intel ? 1 : 0) === 1,
+        addGraph: (id, startBit, numBits, intel = true, sameWindow = false) =>
+            _wsc_add_graph(id, startBit, numBits, intel ? 1 : 0, sameWindow ? 1 : 0) === 1,
         graphState: () => JSON.parse(UTF8ToString(_wsc_graph_state())),
         graphDialog: () => JSON.parse(UTF8ToString(_wsc_graph_dialog())),
         setGraphDialogField: (name, value) =>
