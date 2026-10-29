@@ -2313,10 +2313,12 @@ bool FrameFileIO::loadNativeCSVFile(QString filename, QVector<CommFrame>* frames
             QList<QByteArray> tokens = line.split(',');
             if (tokens.length() >= 5)
             {
-                if (tokens[0].length() > 3)
+                //web-savvycan: any number is the time in µs, also "0".."999" (a log's first millisecond); upstream
+                //took a field shorter than 4 characters as "no time stamp". Made-up times only without a number.
+                bool haveTime = false;
+                const qint64 tstamp = tokens[0].trimmed().toLongLong(&haveTime);
+                if (haveTime)
                 {
-                    quint64 tstamp = tokens[0].toULongLong();
-                    if (tstamp == 0) tstamp = (quint64)(tokens[0].toLongLong());
                     thisFrame.setTimeStamp(CommFrame::TimeStamp(0, tstamp));
                 }
                 else

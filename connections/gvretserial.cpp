@@ -31,6 +31,10 @@ GVRetSerial::GVRetSerial(QString portName, bool useTcp, bool useThread) :
     timeBasis = 0;
     lastSystemTimeBasis = 0;
     timeAtGVRETSync = 0;
+    anchorDeviceUs = 0;
+    anchorClock.invalidate();
+    syncDeviceUs = 0;
+    haveTimeSync = false;
 
     readSettings();
 }
@@ -419,6 +423,10 @@ void GVRetSerial::deviceConnected()
 {
     sendDebug("Connecting to GVRET Device!");
     QByteArray output;
+    //a new session: its device times are unwrapped from its own start, timed by its own time sync
+    anchorClock.invalidate();
+    haveTimeSync = false;
+    timeBasis = 0;
     output.append((char)0xE7); //this puts the device into binary comm mode
     output.append((char)0xE7);
 
@@ -755,7 +763,7 @@ void GVRetSerial::procRXChar(unsigned char c)
         case 3:
             buildTimestamp |= (uint)c << 24;
 
-            buildTimestamp += timeBasis;
+            buildTimestamp = unwrapDeviceTime(quint32(buildTimestamp)) + timeBasis; //64-bit: past the 32-bit wrap
             if (useSystemTime)
             {
                 buildFrame.setTimeStamp(CommFrame::TimeStamp::fromMicroSeconds(QDateTime::currentMSecsSinceEpoch() * 1000ul));
@@ -833,7 +841,7 @@ void GVRetSerial::procRXChar(unsigned char c)
         case 3:
             buildTimestamp |= (uint)c << 24;
 
-            buildTimestamp += timeBasis;
+            buildTimestamp = unwrapDeviceTime(quint32(buildTimestamp)) + timeBasis; //64-bit: past the 32-bit wrap
             if (useSystemTime)
             {
                 buildFrame.setTimeStamp(CommFrame::TimeStamp::fromMicroSeconds(QDateTime::currentMSecsSinceEpoch() * 1000ul));
@@ -907,6 +915,8 @@ void GVRetSerial::procRXChar(unsigned char c)
             buildTimeBasis += ((uint32_t)c << 24);
             qDebug() << "GVRET firmware reports timestamp of " << buildTimeBasis;
             timeAtGVRETSync = QDateTime::currentMSecsSinceEpoch() * 1000;
+            syncDeviceUs = unwrapDeviceTime(buildTimeBasis);
+            haveTimeSync = true;
 
             rebuildLocalTimeBasis();
 
@@ -1201,9 +1211,32 @@ void GVRetSerial::rebuildLocalTimeBasis()
       timeAtGVRETSync stores the "system" timestamp when the GVRET timestamp was retrieved.
     */
     lastSystemTimeBasis = CANConManager::getInstance()->getTimeBasis();
-    int64_t systemDelta = timeAtGVRETSync - lastSystemTimeBasis;
-    int32_t localDelta = buildTimeBasis - systemDelta;
-    timeBasis = -localDelta;
+    if (!haveTimeSync) return; //no time sync answer (yet): frames keep the device's own times
+    //web-savvycan: all in 64 bits (it was int32: a device time past 2^31 µs at the sync gave times 2^32 µs off)
+    const qint64 systemDelta = qint64(timeAtGVRETSync - lastSystemTimeBasis);
+    timeBasis = systemDelta - syncDeviceUs;
+}
+
+/*
+  web-savvycan: the device's 32-bit µs time as 64 bits, so times keep increasing past 2^32 µs (71.6 min) after the
+  device's clock started. The first device time of the session is the anchor; from it and the host's monotonic clock
+  we know roughly where the device clock is now, and the raw time is taken as the 64-bit time nearest to that, within
+  half the 32-bit range (±35.8 min): a time smaller than the expected one by more than half the range is past one
+  more wrap. Measuring from the host's clock (not only from the last frame) keeps it right after a silent bus of any
+  length; the host's and the device's clocks drift apart by far less than 35 min, even over days.
+  Only the app changes: the GVRET protocol and the devices stay as they are.
+*/
+qint64 GVRetSerial::unwrapDeviceTime(quint32 raw)
+{
+    if (!anchorClock.isValid())
+    {
+        anchorDeviceUs = raw;
+        anchorClock.start();
+        return anchorDeviceUs;
+    }
+    const qint64 expected = anchorDeviceUs + anchorClock.nsecsElapsed() / 1000;
+    const quint32 ahead = raw - quint32(expected); //mod 2^32
+    return expected + (ahead < 0x80000000u ? qint64(ahead) : qint64(ahead) - 0x100000000LL);
 }
 
 void GVRetSerial::handleTick()

@@ -104,18 +104,25 @@ levels of all 512 bits (64 of the classic ID) equal those computed from the fram
 30 000 frames of one FD ID (bounded byte graphs, exact counts, time); live fd-mix traffic (the list fills while the
 window is open, analyses equal the trace's frames, twice); Save details to file. Pictures in light and dark.
 
+## Done: logs longer than 71.6 minutes (2026-10-29, Next item 1)
+
+GVRET sends a frame's time as 32-bit µs, so 2^32 µs (71.6 min) after the device's clock started the times began
+again near 0 (upstream SavvyCAN with any GVRET device). Fixed in the app only; the GVRET protocol and rc1's firmware
+are unchanged, so rc1 stays usable with standard SavvyCAN. Goal: whole CCS charging sessions (hours).
+
+| What | How |
+| --- | --- |
+| 64-bit device time | `GVRetSerial::unwrapDeviceTime()`, one per connection (one device clock for all its buses), classic and FD frames and the time sync answer: the session's first device time is the anchor; with the host's monotonic clock since then the app knows roughly where the device clock is now and takes the raw time as the 64-bit time nearest to that (within half the 32-bit range, ±35.8 min). So a time far below the expected one is one more wrap, also after a silent bus of any length; a frame a little older stays a little older. Reset when a session starts (`deviceConnected`) |
+| Time sync in 64 bits | `rebuildLocalTimeBasis()` and `timeBasis` were int32: a device time past 2^31 µs at the sync (36 min) gave times 2^32 µs off. Now 64-bit; without a time sync answer the frames keep the device's own (unwrapped) times |
+| Log loader | `loadNativeCSVFile` took a time shorter than 4 characters as "no time" and made one up: frames in a log's first millisecond ("0".."999") moved. Any number is now the time; made-up times only for an empty or non-numeric field |
+| Tests | `tests/web` `timewrap` spec: the fake's clock 30 s before the wrap (`__rc1.setClock`), a Leaf bus across it: trace (`traceTail` now has `time`), continuous log and a graph in increasing time, spaced exactly as the device stamped them; a CSV with times 0, 523, 999, ... loads with exactly those. `tests/desktop`: `tst_parsers` `gvret_timeWrap`, `gvret_timeSyncBeforeWrap`; `nativecsv_tool shorttimes` |
+
+Not yet seen: a real log of more than 72 min from rc1 (on the rig). `MQTT_BUS` (not in the browser build) has the same
+int32 time basis as upstream's GVRET had.
+
 ## Next (owner 2026-10-29)
 
-1. **Logs longer than 71.6 minutes.** GVRET sends a frame's time as 32-bit microseconds and SavvyCAN's reader keeps
-   it in 32 bits (`GVRetSerial`'s `buildTimestamp`, `uint`): 2^32 µs after the session's start (71.6 min) the times
-   start again near 0. Frames keep coming and are logged, but their times jump back (long logs and graphs out of
-   order). Same in desktop SavvyCAN with any GVRET device. Fix in the app only: count the wraps in the reader
-   (a time smaller than the last one by more than half the range = one wrap) and keep 64-bit µs. **No change to the
-   GVRET protocol or rc1's firmware**, so rc1 stays usable with standard SavvyCAN. Test: the fake rc1 with its clock
-   started near 2^32 µs (a wrap within seconds), frames in order across it in the trace, the log and a graph; on the
-   rig, a log of more than 72 min. Goal: a whole CCS charging session (hours: ~0.25 GB of CSV an hour on the Leaf
-   bus; Chrome keeps logs of 8 GB, Firefox about half the PC's free memory).
-2. **Remember the connection and connect by itself.** The browser keeps the last connection (GVRET or LAWICEL, bus
+1. **Remember the connection and connect by itself.** The browser keeps the last connection (GVRET or LAWICEL, bus
    speed, CAN FD on/off, FD data speed, listen-only) and, when rc1 is already plugged in and allowed
    (`navigator.serial.getPorts()`), connects with it as the page opens, without the connection window. A setting
    to switch it off; nothing happens without a granted rc1.

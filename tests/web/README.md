@@ -62,6 +62,10 @@ Traffic modes (`window.__rc1.setTraffic(mode, {seconds, rate, garbageEvery, dela
 | `errors` | `leaf` plus an error frame every 100 ms (warning, passive, bus-off, restart, ACK, RX overflow) |
 | + `garbageEvery: n` | junk bytes (never 0xF1) after every n-th GVRET frame |
 
+The device's µs clock (GVRET frame times and the time sync answer, 32 bits, wrapping at 2^32 µs = 71.6 min as rc1's):
+device option `clockStartUs`, or `window.__rc1.setClock(us)` (the clock reads `us` now and runs on; set it before
+connecting), `__rc1.clockUs()` reads it. With `record` each recorded frame has its GVRET time `tsUs`.
+
 Error and disconnect cases (`fakeOptions.serial`): `device.refuseOpen` (gs_usb owns the CAN channel), `chooser:
 'cancel'`, `disconnectAfterMs` (unplugged: reads fail with NetworkError "The device has been lost.", a `disconnect`
 event), `__rc1.unplug()` / `replug()`, `granted` (getPorts() already lists rc1), `requireGesture` (default on, as
@@ -90,7 +94,7 @@ window.webSavvyCAN = {
     logging, logFile, logFramesWritten,
   }; },                 // invariant checked: framesReceived = framesInTrace + framesEvicted + framesDropped (+ queued)
   theme() { return 'light' | 'dark'; },
-  traceTail(n) { return [{id, ext, fd, brs, data: [bytes]}]; },   // the last n frames in the trace, oldest first
+  traceTail(n) { return [{id, ext, fd, brs, esi, bus, time, data: [bytes]}]; },   // the last n frames in the trace, oldest first; time in µs
 };
 ```
 
@@ -137,6 +141,7 @@ window with that graph, or one more graph in the newest window); `graphState()` 
 | frameinfo | RE Tools > Frame Data Analysis with CAN FD: a log of classic, 12-byte and 64-byte FD frames with known bit patterns: the heatmap's counts, the bit histogram and the heat levels of all 512 bits (64 of a classic ID) as computed from the frames, the grid's size, a byte graph per byte, the details; 30 000 frames of one FD ID (byte graphs bounded, counts exact, time); live fd-mix: the ID list fills while the window is open, each analysis = the trace's frames of the ID; Save details to file (a download); pictures light and dark. Hook: `webSavvyCAN.frameInfo()` (its ID list, the analysed ID: frames, lengths, per bit (512) changes, sets and heat level, grid size, byte graphs, the details' first level), `frameInfoSelect(id)` (as a click on the ID) |
 | smoke | the page as a visitor gets it (no fake): Qt starts, the main window is drawn, the About dialog (`exec()`, Asyncify) opens and closes with Enter, no failed request; a GVRET CSV from the computer (File > Load Log File) loads every frame and graphs every point |
 | graph | a live Leaf bus: a graph of 0x1DA grows and its x range follows the newest point (Follow End of Graph); two live graphs of one ID at 8 000 frames/s far past the cap (1.5x): stored points within the cap, every frame taken in, the first time and value and every extreme kept, the envelope halved, the wasm heap level after the first fold (< 4 MB), Reset View spans the session (`graph-bounded.json`, pictures light and dark); a 600 000-frame log: within the cap, the whole file, the heap in use grows by the graph's container only (`graph-bigfile.json`); CAN FD: byte 40 of 64-byte frames (start bit 320) graphs exactly, Add New Graph's bit grid shows 64 bytes for the ID and its Motorola start bit 327 graphs the same byte (pictures light and dark) |
+| timewrap | logs longer than 71.6 min: the fake's clock 30 s before its 32-bit µs wrap, a Leaf bus across the wrap: every frame in the trace and the continuous log in increasing time, spaced exactly as the device stamped them, log = trace, the graph goes on past the wrap; a GVRET CSV with times "0", "523", "999", ... loads with exactly those times |
 | download (`download`, `firefox`) | the logging module alone: rows written in batches, one download named by the start time, byte for byte SavvyCAN's own rows (`nativecsv_tool gen`) and loaded by SavvyCAN's parser; `_blob()` while logging; the name given at stop; an empty log; a second log; "leave site?" while logging |
 | fullload `@long` | 60 s at 8 000 classic / 6 900 FD64 frames/s: accounting, rc1-side loss < 0.1 %, 10 ms timer lateness p95 < 50 ms, no stall > 1 s; `results/fullload-*.json` |
 | large `@large` | gigabytes of rows through the logging module, one download: size and SHA-256, JS heap, browser PSS and profile size every 256 MB; `results/large-*.json` |

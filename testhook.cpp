@@ -61,6 +61,8 @@ static QJsonArray traceTail(int n)
         row.insert("brs", f.hasBitrateSwitch());
         row.insert("esi", f.hasErrorStateIndicator());
         row.insert("bus", f.getBus());
+        // the trace's time in µs (exact in a double up to 2^53 µs, 285 years)
+        row.insert("time", double(f.timeStamp().seconds() * 1000000LL + f.timeStamp().microSeconds()));
         row.insert("data", data);
         rows.append(row);
     }
