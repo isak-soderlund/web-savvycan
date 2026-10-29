@@ -214,7 +214,7 @@ test('live CAN FD (fd-mix): the ID list fills while the window is open, an ID\'s
   await settle(page);
   const first = await check('first 4 s');
   // More traffic: new frames, the same IDs; analysed again with the newer frames.
-  await fake.setTraffic(page, 'fd-mix', { seconds: 2, seqStart: 2000 });
+  await fake.setTraffic(page, 'fd-mix', { seconds: 2 });
   await page.waitForTimeout(2500);
   await settle(page);
   expect(await check('2 s more'), 'the trace grew').toBeGreaterThan(first);

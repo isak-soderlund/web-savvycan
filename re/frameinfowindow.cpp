@@ -9,6 +9,7 @@
 #include "theme.h"
 #include <QBuffer>
 #include <QFileDialog>
+#include <QScreen>
 #include <QScrollArea>
 #include <algorithm>
 #include <cmath>
@@ -39,6 +40,9 @@ FrameInfoWindow::FrameInfoWindow(const FrameListView *frames, QWidget *parent) :
     // web-savvycan: as the connection and graphing windows: a Qt::Window is frameless and covers the main window's
     // menus in the browser; as a dialog it has Qt's title bar and close button and can be moved aside.
     setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+    // the .ui's size (the dialog opened at its smaller size hint, too narrow for a 64-byte heatmap), within the page
+    if (QScreen *s = QGuiApplication::primaryScreen())
+        resize(QSize(1142, 651).boundedTo(s->availableGeometry().size() - QSize(20, 40)));
 #else
     setWindowFlags(Qt::Window);
 #endif
@@ -65,7 +69,6 @@ FrameInfoWindow::FrameInfoWindow(const FrameListView *frames, QWidget *parent) :
     QScrollArea *byteArea = new QScrollArea(this);
     byteArea->setWidgetResizable(true);
     byteArea->setFrameShape(QFrame::NoFrame);
-    byteArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     QWidget *byteWidget = new QWidget(byteArea);
     QGridLayout *byteGrid = new QGridLayout(byteWidget);
     byteGrid->setContentsMargins(0, 0, 0, 0);
@@ -853,6 +856,8 @@ void FrameInfoWindow::updateDetailsWindow(QString newID)
         baseNode->addChild(dataBase);
         // web-savvycan: the grid as large as the longest frame (8 bytes: 8x8; 12/16: 16x8; 20-32: 16x16; 48/64: 32x16)
         heatmap->setBytesToDraw(qMax(8, maxLen));
+        ui->gridUpper->setColumnStretch(0, maxLen > 16 ? 3 : 1); // a 32 or 16 bit wide grid: more room than the histogram
+        ui->gridUpper->setColumnStretch(1, maxLen > 16 ? 2 : 1);
         heatmap->setHeat(lastAnalysis.heat);
 
         QHash<QString, QHash<QString, int>>::const_iterator it = signalInstances.constBegin();

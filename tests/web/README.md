@@ -94,6 +94,10 @@ window.webSavvyCAN = {
 };
 ```
 
+Also (`testhook.cpp`): `addGraph(...)`, `graphState()` (graphs), `frameInfo()` (the Frame Data Analysis window: its ID
+list, the analysed ID's frames, lengths, per bit (512) the changes, sets and heat level, grid size, byte graphs, the
+details' first level) and `frameInfoSelect(id)` (selects an ID in its list, as a click).
+
 ## How the app driver works (`lib/harness.mjs` `AppDriver`)
 
 - Qt 6.12 puts its windows in a shadow root (`#qt-shadow-container`): `document.querySelector('canvas')` sees
@@ -126,6 +130,7 @@ window.webSavvyCAN = {
 | theme | light first, dark visibly darker (screenshot luminance), remembered after reload; a dark system: followed on a first visit, overridden and followed again |
 | smoke | the page as a visitor gets it (no fake): Qt starts, the main window is drawn, the About dialog (`exec()`, Asyncify) opens and closes with Enter, no failed request; a GVRET CSV from the computer (File > Load Log File) loads every frame and graphs every point |
 | graph | a live Leaf bus: a graph of 0x1DA grows and its x range follows the newest point (Follow End of Graph) |
+| frameinfo | RE Tools > Frame Data Analysis with CAN FD: a log of classic, 12-byte and 64-byte FD frames with known bit patterns: the heatmap's counts, the bit histogram and the heat levels of all 512 bits (64 of a classic ID) as computed from the frames, the grid's size, a byte graph per byte, the details; 30 000 frames of one FD ID (byte graphs bounded, counts exact, time); live fd-mix: the ID list fills while the window is open, each analysis = the trace's frames of the ID; Save details to file (a download); pictures light and dark |
 | download (`download`, `firefox`) | the logging module alone: rows written in batches, one download named by the start time, byte for byte SavvyCAN's own rows (`nativecsv_tool gen`) and loaded by SavvyCAN's parser; `_blob()` while logging; the name given at stop; an empty log; a second log; "leave site?" while logging |
 | fullload `@long` | 60 s at 8 000 classic / 6 900 FD64 frames/s: accounting, rc1-side loss < 0.1 %, 10 ms timer lateness p95 < 50 ms, no stall > 1 s; `results/fullload-*.json` |
 | large `@large` | gigabytes of rows through the logging module, one download: size and SHA-256, JS heap, browser PSS and profile size every 256 MB; `results/large-*.json` |
