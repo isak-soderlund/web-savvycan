@@ -248,8 +248,8 @@ private:
     uint32_t getMessageIDFromPosition(QPoint pos);
     void copySelection();
     void handleSaveDecodedMethod(bool csv);
-    void saveDecodedTextFile(QString);
-    void saveDecodedTextFileAsColumns(QString);
+    void saveDecodedTextFile(QIODevice *out);
+    void saveDecodedTextFileAsColumns(QIODevice *out);
     void addFrameToDisplay(CommFrame &, bool);
     void updateFileStatus();
     void closeEvent(QCloseEvent *event);
