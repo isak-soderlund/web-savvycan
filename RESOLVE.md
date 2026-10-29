@@ -65,7 +65,7 @@ Switched on so far (`enabledfeatures.h`): **Graphs** and, brought forward from s
 | --- | --- |
 | RE Tools > New Graphing Window | SavvyCAN's graphing window. In the browser a framed dialog (title bar, close button), as the connection window: a `Qt::Window` would be frameless over the main window's menus |
 | Live graphs | A graph of a frame ID grows as frames arrive and **follows the newest data** by default (View > Follow End of Graph in the graph window, as SavvyCAN has it, now on from the start). While following, the value axis grows to take in new values (never shrinks) |
-| A log file from the computer | File > Load Log File opens the browser's own file picker (Chrome: `showOpenFilePicker`); the file type is detected from the contents (SavvyCAN's autodetect: GVRET CSV, candump, PCAN, Vector ASC/BLF, ...). The bytes go to the in-memory file system for SavvyCAN's loaders and are deleted after. **Up to 100 MB** (~1.5 M frames of GVRET CSV): a loaded frame costs ~1.4 KB of the page's memory (wasm32, 4 GB; measured 2026-10-29), so a longer log has to wait for the leaner loader ("Next" 1) |
+| A log file from the computer | File > Load Log File opens the browser's own file picker (Chrome: `showOpenFilePicker`); the file type is detected from the contents (SavvyCAN's autodetect: GVRET CSV, candump, PCAN, Vector ASC/BLF, ...). SavvyCAN's own GVRET CSV is parsed straight from the bytes the browser hands over (the leaner loader, below); other formats go to the in-memory file system for SavvyCAN's loaders and are deleted after. **GVRET CSV up to 1000 MB** (~14 M frames: 36 s, 0.8 GB of the page's memory after, 2.1 GB at the peak); **other formats up to 200 MB** (SavvyCAN's loaders: a 1 M-frame candump log, 46 MB, 18 s and 254 MB at the peak) |
 | Time axis | In the app's time style (File > Preferences: microseconds by default, or seconds, or clock) |
 | **Bounded graph storage** (G6) | A graph's points live once, in the plot's own container (no `GraphParams` x/y copy, no copy of the matching frames). **Cap: 400 000 points a graph, 6.4 MB** (16 bytes a point; the container is allocated once at 412 500 points, 6.6 MB, so it never grows after the first fold). The newest **200 000 samples are kept exactly** (a 100 Hz signal: 33 min; rc1's full 8 000 frames/s on one ID: 25 s); older ones are folded, 50 000 at a time, into a **min/max envelope** of at most 150 000 points: two per bucket, at the bucket's first and last time, carrying its smallest and largest value in the order they came, so the buckets tile the time axis and the session's first and last time and every extreme stay. When the envelope is full, neighbouring buckets merge (buckets of 4, 8, 16, ... samples). A 10-hour session of a 100 Hz signal: buckets of 64 samples (0.64 s), finer than a pixel when the whole session is on screen. Live updates stay O(new points): a fold copies at most the cap once per 50 000 new samples. `re/graphingwindow.cpp` `boundGraph()` |
 | Min/max envelope on screen (G8) | QCustomPlot's adaptive sampling (on, as QCustomPlot's default; now set explicitly) draws each pixel column's min and max once a graph has 2 or more points per pixel (`QCPGraph::getOptimizedLineData`); with the stored envelope that picture is exact for the whole session. Zoomed into a folded part you see its envelope (extremes at most one bucket off in time), not the samples; Save Spreadsheet writes what is stored (envelope rows there) |
@@ -76,7 +76,7 @@ Switched on so far (`enabledfeatures.h`): **Graphs** and, brought forward from s
 
 Measured (headless Chromium, `graph.spec`, 2026-10-29): two live graphs of one ID at 8 000 frames/s for 75 s (614 000 samples each, 1.5x the cap, the envelope halved once to buckets of 8): at most 370 000 points stored each; the wasm heap in use level from the first fold on (47.2 -> at most 47.4 MB over the last 40 s, with the trace set to 100 000 frames), memory 86 MB. A 600 000-frame log (600 s at 1 ms) graphed: 300 000 points (100 000 envelope, buckets of 8), the heap in use +6.3 MB for the graph (its container; before: 32 bytes a point plus a copy of every matching frame, ~40 MB here). Zoomed out over the whole session a sawtooth is the full band; zoomed into the folded part it is still the sawtooth at 1 ms buckets (`results/graph-bounded-*.png`).
 
-Left for later: files larger than memory: graphing straight from the file (only the graphed signals kept), not loading every frame (loading a 1 M-frame, 56 MB log took 108 s and left ~1.5 GB of the heap in use, 600 000 frames 64 s and 850 MB: ~1.4 KB a frame, the loader and the trace, not the graph: worth a look). Decoding off the UI thread and replotting at most at the screen rate (G7).
+Left for later: files larger than memory (over ~1 GB of CSV): graphing straight from the file (only the graphed signals kept), not loading every frame. Decoding off the UI thread and replotting at most at the screen rate (G7).
 
 Tests: `tests/web` smoke spec (in CI) loads a GVRET CSV through the file picker and graphs it (every frame, every point); `graph.spec` graphs a live Leaf bus (grows, follows, value axis takes in 0..255), a live graph past its cap (bounded, whole session kept, heap level), a 600 000-frame log (bounded, whole file, heap), and CAN FD signals past byte 8 (the test hook and the Add New Graph dialog with its 64-byte grid, light and dark).
 
@@ -137,7 +137,7 @@ Brought forward from stage 4 (owner 2026-10-29): RE Tools > Temporal Graph, whic
 Tests: `tests/web` `temporal.spec`: a 1-hour log of 600 000 frames (30 IDs: Leaf, J1939-style 29-bit, 11- and
 29-bit CAN FD 64 bytes with BRS; one ID only in the second half hour) loaded and the window opened: every ID with its
 frame count, the whole hour on the time axis, 0x7E8 from the second half, one plottable, < 1 MB; it opens in
-0.4 s with no event-loop gap over 253 ms (the 40 MB file itself takes ~70 s to load through File > Load Log File in the test). Live: a Leaf bus, then 20 s of 64-byte FD at
+0.4 s with no event-loop gap over 253 ms (the 40 MB file itself loads in ~1.5 s through File > Load Log File since the leaner loader; ~70 s before). Live: a Leaf bus, then 20 s of 64-byte FD at
 16 000 frames/s with a 50 000-frame trace ring: every frame counted exactly once across the ring's wraps (323 344
 frames, 275 000 of them evicted from the trace), 45 IDs, memory flat (0.35-0.40 MB for counts and map). Pictures in light and dark.
 A native harness of the same code (Qt 6.4, offscreen) built the 600 000 frames in 77 ms and counted 1.19 M live frames
@@ -145,13 +145,33 @@ across 1.14 M ring evictions exactly.
 
 ## Next (owner 2026-10-29)
 
-1. **A faster, leaner log loader.** Measured 2026-10-29 in the browser (graph-bounds and temporal-graph tests):
-   File > Load Log File of a 600 000-frame GVRET CSV (40 MB) takes 64-67 s and leaves ~850 MB of heap in use
-   (~1.4 KB a frame); 1 M frames (56 MB) 108 s and ~1.5 GB. So the 500 MB file limit (`loadBrowserFile`) was far
-   too high (now 100 MB): a file well under it can exhaust the page's 4 GB. The cost is the loader and the trace (the frame
-   copies, `QVector<CommFrame>` twice, per-frame `QByteArray` payloads, the filters), not the graphs or the
-   Temporal Graph (0.4 s on the same file). Goal: an hour-plus Leaf log (3+ M frames) in seconds and within a
-   few hundred bytes a frame; until then the limit is 100 MB (~1.5 M frames of GVRET CSV, ~2 GB loaded).
+Done: **a faster, leaner log loader** (branch `fast-loader`, owner's item 1 of 2026-10-29). Measured in headless
+Chromium (tests/web `loader.spec`, `results/loader-*.json`), before (main a9c210a) -> after:
+
+| GVRET CSV | Load time | Heap in use after, a frame | Peak while loading (in use / wasm memory) |
+| --- | --- | --- | --- |
+| 600 000 frames, 41-45 MB | 54 s (18 s without the screen reader layer) -> **1.3 s** | 1 470 B (130 B without) -> **66 B** | >= 0.89 / 0.97 GB (without: >= 85 MB / 0.27 GB) -> **75 MB / 155 MB** |
+| 3 000 000 frames, 207 MB | refused (over 100 MB; would not have fit) -> **6.0-6.3 s** | -> **59 B** (185 MB) | -> **0.34-0.39 GB / 0.5 GB** |
+| 14 000 000 frames, 976 MB (`@large`) | -> **36 s** | -> **57 B** (0.81 GB) | -> **1.6 GB / 2.1 GB** |
+
+On the 3 M log, Temporal Graph opens in 0.7 s, a graph of one ID takes 0.5 s, Frame Data Analysis of the 64-byte FD ID
+3 s (14 M: 3 s, 2.3 s, 8.4 s; the heap 0.86 GB with all three). Where it went, and the fixes:
+- **The screen reader layer** (on in every browser test; for a real screen reader user too): when a child of the trace's
+  table (its scroll bar) is shown, Qt's browser accessibility goes over every child of the table, and Qt's table interface
+  makes and keeps an interface for each cell: ~1.3 KB and ~60 µs a frame. The trace, its headers and viewport are plain
+  accessible widgets now (`traceAccessible`, `mainwindow.cpp`, browser only): one "Frames" element, no cells.
+- **The CSV parser:** `readLine`, `simplified`, `split(',')` and `toInt` per field, ~75 allocations a row (malloc was a
+  third of the time natively), and `processEvents` every 100 rows, which in the browser suspends to the page each time
+  (Asyncify). Now parsed in place from the bytes (`FrameFileIO::loadNativeCSVData`, the same frames bit for bit as the old
+  loader, checked on fuzzed files natively: 2.1 s -> 0.12 s for 600 000 rows), and every loader's `processEvents` at
+  most every 100 ms (`FrameFileIO::keepUiAlive`, which also moves the progress dialog, shown after a second).
+- **Copies:** the file in the in-memory file system as well as in the heap, a `QVector<CommFrame>` of every frame
+  (growing by copying), then the trace's copy. Now the bytes the browser handed over are parsed into a compact staging
+  store, which goes into the trace chunk by chunk, each chunk freed as it goes in. Detection reads the first two lines.
+- **The frame store:** a `CommFrame` (64 bytes in wasm32) plus its own `QByteArray` payload (32-96 bytes with malloc's
+  overhead) a frame. `FrameStore` now keeps compact records (time, ID/type/flags, bus, length, payload inline; 36 bytes a
+  classic frame, 92 a 64-byte FD one, `framestore.h`); every reader still gets `CommFrame`s, made on access.
+Other formats keep SavvyCAN's loaders (a vector of whole frames, the file system copy), hence their 200 MB limit.
 
 Done: **remember the connection and connect by itself** (branch `autoconnect`, owner's item 2 of 2026-10-29). The
 browser saves the connections as soon as one is made or its bus is set (SavvyCAN's own `connections/*` settings,

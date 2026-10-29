@@ -1733,25 +1733,38 @@ void MainWindow::handleLoadFile()
 // A file picked in the browser. SavvyCAN's own GVRET CSV (what the browser version logs) is parsed straight from the
 // bytes the browser handed over (loadNativeCSVData); other formats are written to the in-memory file system for
 // SavvyCAN's loaders (they read by file name), loaded as a dropped file is, and deleted again. Everything lives in the
-// page's memory (wasm32: at most 4 GB), so files over kMaxBrowserFileBytes are refused with a message. Measured
-// 2026-10-29 (headless Chromium, loader.spec): a GVRET CSV of 3 000 000 frames (~200 MB) loads in ~N s; a loaded
-// frame then takes ~NN bytes of the page's memory; while loading the file's bytes, the frames staged and the trace
-// are in memory together. Other formats still load through vectors of whole frames (more memory a frame, slower).
+// page's memory (wasm32: at most 4 GB), so larger files are refused with a message. Measured 2026-10-29 (headless
+// Chromium, tests/web loader.spec): a GVRET CSV of 14 M frames (976 MB) loads in 36 s and then takes 0.8 GB of the
+// heap (57 bytes a frame); while loading the file's bytes, the frames staged and the trace are in memory together:
+// 1.6 GB in use at the peak, the wasm memory 2.1 GB (3 M frames, 207 MB: 6 s, 0.19 GB, peak 0.34 GB). So up to
+// kMaxBrowserFileBytes (~14 M frames, hours of a busy bus), with room left for the graphs and RE tools. Other formats
+// go through SavvyCAN's loaders and a vector of whole frames, plus the file's copy in the file system: a 1 M-frame
+// candump log (46 MB) took 18 s and 254 MB of the heap at its peak, so they are kept to kMaxBrowserOtherFileBytes.
 void MainWindow::loadBrowserFile(const QString &name, const QByteArray &content)
 {
-    constexpr qint64 kMaxBrowserFileBytes = 1000LL * 1000 * 1000;
+    constexpr qint64 kMaxBrowserFileBytes = 1000LL * 1000 * 1000;     // SavvyCAN's GVRET CSV
+    constexpr qint64 kMaxBrowserOtherFileBytes = 200LL * 1000 * 1000; // the other formats
     const QString shown = QFileInfo(name).fileName();
-    if (content.size() > kMaxBrowserFileBytes) {
+    auto tooLarge = [&]() {
         QMessageBox::warning(this, tr("File too large"),
-                             tr("%1 is %2 MB. The browser version loads files up to %3 MB (a web page has at "
-                                "most 4 GB of memory). Crop or split the log, or use the desktop version.")
-                                 .arg(shown).arg(content.size() / 1000000).arg(kMaxBrowserFileBytes / 1000000));
+                             tr("%1 is %2 MB. The browser version loads SavvyCAN's GVRET CSV logs up to %3 MB and "
+                                "other formats up to %4 MB (a web page has at most 4 GB of memory). Crop or split "
+                                "the log, or use the desktop version.")
+                                 .arg(shown).arg(content.size() / 1000000).arg(kMaxBrowserFileBytes / 1000000)
+                                 .arg(kMaxBrowserOtherFileBytes / 1000000));
+    };
+    if (content.size() > kMaxBrowserFileBytes) {
+        tooLarge();
         return;
     }
     //the autodetect order: Vector BLF ("LOGG") first, then the native CSV
     if (!content.startsWith("LOGG") && FrameFileIO::isNativeCSVData(content)
         && loadNativeCSVData(shown, QByteArrayView(content)))
         return;
+    if (content.size() > kMaxBrowserOtherFileBytes) {
+        tooLarge();
+        return;
+    }
     QDir().mkpath(QStringLiteral("/tmp/web-savvycan"));
     const QString path = QStringLiteral("/tmp/web-savvycan/") + shown;
     {

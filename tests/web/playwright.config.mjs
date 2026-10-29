@@ -4,7 +4,7 @@
 //   firefox   the same in Firefox
 // Opt-in tags (WSC_RUN=long,large,screenshots; run.sh --long / --large / --screenshots):
 //   @long         the 60 s full-load replays
-//   @large        a multi-GB log in the logging module (heavy: run.sh puts it through heavy.sh)
+//   @large        a multi-GB log in the logging module, loader.spec's ~1 GB GVRET CSV (heavy: run.sh puts them through heavy.sh)
 //   @screenshots  pictures of the app in light and dark (results/screenshots/)
 import { defineConfig } from '@playwright/test';
 
