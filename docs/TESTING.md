@@ -113,7 +113,7 @@ replaced (a bridge to rc1's tty, because Chromium's own Web Serial loses USB ser
   every frame, in order, none dropped, no stall;
 - a live graph (every frame of its ID), Temporal Graph (every frame of every ID), Frame Data Analysis of 64-byte FD
   IDs (every bit's changes and sets as sent);
-- a log longer than 71.6 min (rc1's clock wrap): see RESOLVE.md.
+- a log of 75 min (450 000 frames) past rc1's clock wrap at 71.6 min: every row, times increasing across the wrap.
 
 ## What only the fake has checked
 

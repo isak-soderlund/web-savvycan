@@ -42,9 +42,14 @@ test.describe('rig: past rc1\'s clock wrap @long', () => {
     const rows = readFileSync(file, 'latin1').split('\n').slice(1).filter(Boolean);
     const ts = rows.map((r) => Number(r.split(',')[0]));
     const seqs = rows.map((r) => { const c = r.split(','); return parseInt(c[6], 16) | (parseInt(c[7], 16) << 8) | (parseInt(c[8], 16) << 16); });
-    const steps = ts.slice(1).map((t, i) => t - ts[i]);
+    // A loop, not Math.min(...steps): 450 000 arguments overflow the stack.
+    let minStepUs = Infinity, maxStepUs = 0;
+    for (let i = 1; i < ts.length; i++) {
+      minStepUs = Math.min(minStepUs, ts[i] - ts[i - 1]);
+      maxStepUs = Math.max(maxStepUs, ts[i] - ts[i - 1]);
+    }
     const result = { minutes: MINUTES, frames: count, rows: rows.length, firstUs: ts[0], lastUs: ts[ts.length - 1],
-      spanMin: (ts[ts.length - 1] - ts[0]) / 60e6, minStepUs: Math.min(...steps), maxStepUs: Math.max(...steps),
+      spanMin: (ts[ts.length - 1] - ts[0]) / 60e6, minStepUs, maxStepUs,
       probe, memory };
     saveResult('rig-timewrap', result);
     expect(rows.length, 'every frame in the log').toBe(count);

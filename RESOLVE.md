@@ -119,7 +119,10 @@ are unchanged, so rc1 stays usable with standard SavvyCAN. Goal: whole CCS charg
 | Log loader | `loadNativeCSVFile` took a time shorter than 4 characters as "no time" and made one up: frames in a log's first millisecond ("0".."999") moved. Any number is now the time; made-up times only for an empty or non-numeric field |
 | Tests | `tests/web` `timewrap` spec: the fake's clock 30 s before the wrap (`__rc1.setClock`), a Leaf bus across it: trace (`traceTail` now has `time`), continuous log and a graph in increasing time, spaced exactly as the device stamped them; a CSV with times 0, 523, 999, ... loads with exactly those. `tests/desktop`: `tst_parsers` `gvret_timeWrap`, `gvret_timeSyncBeforeWrap`; `nativecsv_tool shorttimes` |
 
-Not yet seen: a real log of more than 72 min from rc1 (on the rig). `MQTT_BUS` (not in the browser build) has the same
+Seen with the real rc1 on the rig (2026-10-29, 8a5145d, `tests/web/rig` timewrap): 75 min of logging at 100 frames/s
+from the Kvaser, 450 000 rows in the download, all in order, none missing; times from 11.7 s to 4 511.6 s (past 2^32 µs
+= 4 295.0 s), 10 000 µs apart across the wrap as before it, never going back (steps 0.2-19.9 ms: the peer's timing).
+`MQTT_BUS` (not in the browser build) has the same
 int32 time basis as upstream's GVRET had.
 
 ## Temporal Graph (stage 4, switched on 2026-10-29)

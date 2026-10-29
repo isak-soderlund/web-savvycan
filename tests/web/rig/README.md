@@ -51,7 +51,9 @@ Settings (env): `WSC_RC1_TTY` (default: the first `/dev/serial/by-id/usb-resolve
 
 2026-10-29, main 8a5145d (dist from CI), rc1 firmware 0.1.3: connect, fd, autoconnect, unplug, rate and tools passed
 (12 tests). Full rate measured: classic 1 Mbit/s 7 512 frames/s, FD64 BRS 500k/4M 4 577 frames/s, nothing dropped;
-the page's 10 ms timer p95 2.3 / 34.5 ms. timewrap: see RESOLVE.md.
+the page's 10 ms timer p95 2.3 / 34.5 ms. timewrap (75 min): the download's 450 000 rows every frame in order, times
+increasing straight across rc1's wrap at 2^32 µs (checked from the saved CSV: that run's own check failed on a test bug,
+`Math.min(...)` over 450 000 steps, fixed after; its memory figures were lost with it).
 
 `chrome_check.mjs` (Chromium 141, its own Web Serial, headed and headless): `getPorts()` lists rc1 and `open()`
 succeeds, but the first read fails "The device has been lost". strace: Chromium's first `read()` on the tty returns 0
