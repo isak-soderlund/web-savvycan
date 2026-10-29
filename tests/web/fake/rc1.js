@@ -634,7 +634,8 @@
    * Frames of the full-load modes carry a sequence number (data[0..3], little-endian) for loss checks.
    *   idle            nothing
    *   leaf            the Leaf table, 500 kbit/s classic, ~836 frames/s
-   *   classic-full    rc1's measured full rate, classic 8 bytes at 1 Mbit/s: 8 000 frames/s (`rate` to change)
+   *   classic-full    rc1's measured full rate, classic 8 bytes at 1 Mbit/s: 8 000 frames/s (`rate` to change; IDs
+   *                   0x100.. in turn, `ids` of them, default 16)
    *   fd64-full       rc1's measured full rate, FD 64 bytes with BRS at 500k/8M: 6 900 frames/s (`rate`)
    *   fd-mix          every FD length 0..64, BRS on/off, 11/29-bit IDs, classic and remote frames in between: 500/s
    *   errors          the Leaf table plus an error frame every 100 ms (warning, passive, bus-off, restart, ACK, overflow)
@@ -654,12 +655,13 @@
       const rate = o.rate || (fd ? 6900 : 8000);
       const len = fd ? 64 : 8;
       const extEvery = o.extendedEvery || 0;
+      const ids = o.ids || 16; // standard IDs 0x100.. in turn
       return {
         name: mode, rate,
         next() {
           const t = (seq * 1000) / rate;
           const ext = extEvery > 0 && seq % extEvery === extEvery - 1;
-          const f = frame({ id: ext ? 0x18db33f1 : 0x100 + (seq % 16), ext, fd, brs: fd, data: seqData(len) });
+          const f = frame({ id: ext ? 0x18db33f1 : 0x100 + (seq % ids), ext, fd, brs: fd, data: seqData(len) });
           f.seq = seq++;
           return { t, frame: f };
         },

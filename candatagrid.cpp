@@ -1,5 +1,6 @@
 #include "candatagrid.h"
 #include "ui_candatagrid.h"
+#include "theme.h"
 
 #include <QPainter>
 #include <QDebug>
@@ -241,10 +242,14 @@ void CANDataGrid::paintCommonBeginning()
     painter = new QPainter(this);
     viewport = painter->viewport();
 
+    // web-savvycan: dark theme: dark empty cells, light set bits, grey outlines (light: SavvyCAN's white, black, black)
+    darkTheme = Theme::isDark();
+    whiteBrush = QBrush(darkTheme ? QColor(0x2a, 0x2a, 0x2a) : QColor(Qt::white));
+    blackBrush = QBrush(darkTheme ? QColor(0xd0, 0xd0, 0xd0) : QColor(Qt::black));
+    lineColor = darkTheme ? QColor(0x80, 0x80, 0x80) : QColor(Qt::black);
+
     neededXDivisions = 8;
     neededYDivisions = 8;
-
-    int textRestrict = qMax(neededXDivisions, neededYDivisions);
 
     if (bytesToDraw > 8)
     {
@@ -260,25 +265,29 @@ void CANDataGrid::paintCommonBeginning()
         neededXDivisions = 32;
     }
 
+    // web-savvycan: text sizes from the size of a cell (as before for the 8x8 grid: the smaller side / 8); the CAN FD
+    // layouts (16 to 64 bytes) have smaller cells, so their text takes a larger share of a cell (bit numbers up to 511).
+    const double cell = qMin(viewport.size().width() / double(neededXDivisions), viewport.size().height() / double(neededYDivisions));
+    const double share = (neededXDivisions > 8 || neededYDivisions > 8) ? 0.7 : 1.0;
     if (gridMode != GridMode::SIGNAL_VIEW)
     {
-        bigTextSize = qMin(viewport.size().height(), viewport.size().width()) / (textRestrict * 3.25);
-        smallTextSize = qMin(viewport.size().height(), viewport.size().width()) / (textRestrict * 4.0);
+        bigTextSize = cell / (3.25 * share);
+        smallTextSize = cell / (4.0 * share);
     }
     else
     {
-        bigTextSize = qMin(viewport.size().height(), viewport.size().width()) / (textRestrict * 3.50);
-        smallTextSize = qMin(viewport.size().height(), viewport.size().width()) / (textRestrict * 5.5);
+        bigTextSize = cell / (3.50 * share);
+        smallTextSize = cell / (5.5 * share);
     }
-    sigNameTextSize = qMin(viewport.size().height(), viewport.size().width()) / (textRestrict * 5.0);
+    sigNameTextSize = cell / (5.0 * share);
 
     painter->setPen(QPen(QApplication::palette().color(QPalette::Text)));
-    mainFont.setPixelSize(bigTextSize);
+    mainFont.setPixelSize(qMax(1, int(bigTextSize)));
     painter->setFont(mainFont);
-    smallFont.setPixelSize(smallTextSize);
-    boldFont.setPixelSize(bigTextSize);
+    smallFont.setPixelSize(qMax(1, int(smallTextSize)));
+    boldFont.setPixelSize(qMax(1, int(bigTextSize)));
     boldFont.setBold(true);
-    sigNameFont.setPixelSize(sigNameTextSize);
+    sigNameFont.setPixelSize(qMax(1, int(sigNameTextSize)));
 
     smallMetric = new QFontMetrics(sigNameFont);
     largeMetric = new QFontMetrics(mainFont);
@@ -330,7 +339,7 @@ void CANDataGrid::paintCommonBeginning()
         painter->drawText(QRect(viewport.left() + 2, nearY + (ySector * y), xOffset, ySector), Qt::AlignCenter, QString::number(y * skip));
     }
 
-    painter->setPen(QPen(Qt::black));
+    painter->setPen(QPen(lineColor));
     painter->setFont(mainFont);
 }
 
@@ -417,12 +426,13 @@ void CANDataGrid::paintGridCells()
             switch (textStates[byteIdx][bitIdx])
             {
             case GridTextState::NORMAL:
-                if (thisBit && prevBit) painter->setPen(QPen(Qt::gray));
+                if (darkTheme) painter->setPen(QPen(textOn(painter->brush())));
+                else if (thisBit && prevBit) painter->setPen(QPen(Qt::gray));
                 else painter->setPen(QPen(Qt::black));
                 painter->setFont(mainFont);
                 break;
             case GridTextState::BOLD_BLUE:
-                painter->setPen(QPen(Qt::blue));
+                painter->setPen(QPen(darkTheme ? QColor(0x50, 0x90, 0xff) : QColor(Qt::blue)));
                 painter->setFont(boldFont);
                 break;
             case GridTextState::INVERT:
@@ -441,7 +451,7 @@ void CANDataGrid::paintGridCells()
                 painter->drawText(QRect(nearX + (x * xSector), nearY + (y * ySector), xSector, ySector), Qt::AlignLeft, QString::number(bit)); //upper left of grid
 
             painter->setFont(mainFont);
-            painter->setPen(QPen(Qt::black));
+            painter->setPen(QPen(lineColor));
         }
     }
 
@@ -454,6 +464,7 @@ void CANDataGrid::paintGridCells()
     if ( gridMode == GridMode::SIGNAL_VIEW )
     {
         painter->setFont(sigNameFont);
+        painter->setPen(QPen(Qt::black)); // on the signals' bright colours, in both themes
 
         for (y = 0; y < neededYDivisions; y++)
         {
@@ -511,6 +522,14 @@ void CANDataGrid::paintGridCells()
             }
         }
     }
+}
+
+// web-savvycan (dark theme): text that reads on a cell: dark on light solid colours, light on dark ones and on the
+// gradients and the hatch (drawn over the dark background).
+QColor CANDataGrid::textOn(const QBrush &brush) const
+{
+    if (brush.style() == Qt::SolidPattern && brush.color().lightness() >= 128) return QColor(0x20, 0x20, 0x20);
+    return QColor(0xd0, 0xd0, 0xd0);
 }
 
 //starting at the given coords, go right / increment X until either we hit the end of the signal or the end of the row, whichever is first.
@@ -611,7 +630,7 @@ void CANDataGrid::updateData(unsigned char *newData, bool bUpdate = true)
     int bytesToTransfer = (bytesToDraw + 7) & 0xF8; //force copying in 8 byte increments
     memcpy(data, newData, bytesToTransfer);
     //clear all data past that point just to be sure we don't have garbage left over
-    if (bytesToTransfer < 64) memset(refData + bytesToTransfer, 0, 64 - bytesToTransfer);
+    if (bytesToTransfer < 64) memset(data + bytesToTransfer, 0, 64 - bytesToTransfer); // web-savvycan: was refData
     if (bUpdate) this->update();
 }
 
@@ -620,7 +639,7 @@ void CANDataGrid::setUsed(unsigned char *newData, bool bUpdate = false)
     int bytesToTransfer = (bytesToDraw + 7) & 0xF8; //force copying in 8 byte increments
     memcpy(usedData, newData, bytesToTransfer);
     //clear all data past that point just to be sure we don't have garbage left over
-    if (bytesToTransfer < 64) memset(refData + bytesToTransfer, 0, 64 - bytesToTransfer);
+    if (bytesToTransfer < 64) memset(usedData + bytesToTransfer, 0, 64 - bytesToTransfer); // web-savvycan: was refData
     if (bUpdate) this->update();
 }
 

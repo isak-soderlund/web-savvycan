@@ -1,6 +1,8 @@
 #include "newgraphdialog.h"
 #include "ui_newgraphdialog.h"
+#include <QApplication>
 #include <QColorDialog>
+#include <QPushButton>
 #include "theme.h"
 #include <QRandomGenerator>
 #include "utility.h"
@@ -18,17 +20,9 @@ NewGraphDialog::NewGraphDialog(DBCHandler *handler, QWidget *parent) :
     connect(ui->fillSwatch, SIGNAL(clicked(bool)), this, SLOT(fillSwatchClick()));
     connect(ui->btnAddGraph, SIGNAL(clicked(bool)), this, SLOT(addButtonClicked()));
 
-    QPalette p = ui->colorSwatch->palette();
-    //using 160 instead of 255 so that colors are always at least a little dark
     // web-savvycan: a random line colour that shows on the plot: dark ones on light, light ones on dark
-    const int lo = Theme::isDark() ? 96 : 0;
-    p.setColor(QPalette::Button, QColor(lo + QRandomGenerator::global()->bounded(160), lo + QRandomGenerator::global()->bounded(160),
-                                        lo + QRandomGenerator::global()->bounded(160)));
-    ui->colorSwatch->setPalette(p);
-
-    QPalette p2 = ui->fillSwatch->palette();
-    p2.setColor(QPalette::Button, QColor(128,128,128,0)); //light gray, no opacity so it is disabled by default
-    ui->fillSwatch->setPalette(p2);
+    setSwatchColor(ui->colorSwatch, GraphParams::randomLineColor());
+    setSwatchColor(ui->fillSwatch, QColor(128,128,128,0)); //light gray, no opacity so it is disabled by default
 
     ui->coPointStyle->addItem("None");
     ui->coPointStyle->addItem("Dot");
@@ -55,6 +49,9 @@ NewGraphDialog::NewGraphDialog(DBCHandler *handler, QWidget *parent) :
     connect(ui->cbIntel, SIGNAL(toggled(bool)), this, SLOT(drawBitfield()));
     connect(ui->btnCopySignal, SIGNAL(clicked(bool)), this, SLOT(copySignalToParamsUI()));
     connect(ui->cbSignals, SIGNAL(currentIndexChanged(int)), this, SLOT(drawBitfield()));
+    // web-savvycan: the bit grid follows the frame's length (CAN FD: up to 64 bytes)
+    connect(ui->txtID, SIGNAL(textChanged(QString)), this, SLOT(handleIdUpdate()));
+    connect(ui->editFrameLen, SIGNAL(textChanged(QString)), this, SLOT(drawBitfield()));
 
     startBit = 0;
     dataLen = 1;
@@ -103,22 +100,29 @@ void NewGraphDialog::addButtonClicked()
     accept();
 }
 
+// web-savvycan: a colour swatch shows its colour, with its "CHANGE" in black or white, whichever reads on it (a light
+// line colour in the dark theme had light text on it); a transparent swatch keeps the theme's text colour.
+void NewGraphDialog::setSwatchColor(QPushButton *swatch, const QColor &color)
+{
+    QPalette p = swatch->palette();
+    p.setColor(QPalette::Button, color);
+    if (color.alpha() >= 128) p.setColor(QPalette::ButtonText, color.lightness() >= 128 ? QColor(Qt::black) : QColor(Qt::white));
+    else p.setColor(QPalette::ButtonText, QApplication::palette().color(QPalette::ButtonText));
+    swatch->setPalette(p);
+}
+
 void NewGraphDialog::colorSwatchClick()
 {
     QColor newColor = QColorDialog::getColor(ui->colorSwatch->palette().button().color());
-
-    QPalette p = ui->colorSwatch->palette();
-    p.setColor(QPalette::Button, newColor);
-    ui->colorSwatch->setPalette(p);
+    if (!newColor.isValid()) return; // cancelled
+    setSwatchColor(ui->colorSwatch, newColor);
 }
 
 void NewGraphDialog::fillSwatchClick()
 {
     QColor newColor = QColorDialog::getColor(ui->fillSwatch->palette().button().color(), nullptr, "Pick A Color", QColorDialog::ShowAlphaChannel);
-
-    QPalette p = ui->fillSwatch->palette();
-    p.setColor(QPalette::Button, newColor);
-    ui->fillSwatch->setPalette(p);
+    if (!newColor.isValid()) return; // cancelled
+    setSwatchColor(ui->fillSwatch, newColor);
 }
 
 //check whether the current values on the left match the signal selected on the right
@@ -222,12 +226,8 @@ void NewGraphDialog::setParams(GraphParams &params)
     ui->txtName->setText(params.graphName);
     ui->editBus->setText(QString::number(params.bus));
     ui->editFrameLen->setText(QString::number(params.frameLen));
-    QPalette p = ui->colorSwatch->palette();
-    p.setColor(QPalette::Button, params.lineColor);
-    ui->colorSwatch->setPalette(p);
-    QPalette p2 = ui->fillSwatch->palette();
-    p2.setColor(QPalette::Button, params.fillColor);
-    ui->fillSwatch->setPalette(p2);
+    setSwatchColor(ui->colorSwatch, params.lineColor);
+    setSwatchColor(ui->fillSwatch, params.fillColor);
     ui->cbOnlyPoints->setChecked(params.drawOnlyPoints);
     ui->spinLineWidth->setValue(params.lineWidth);
     ui->coPointStyle->setCurrentIndex(params.pointType);
@@ -446,15 +446,17 @@ void NewGraphDialog::handleStartBitUpdate()
 void NewGraphDialog::drawBitfield()
 {
     qDebug() << "Draw Bitfield";
-    uint8_t bitField[64];
+    uint8_t bitField[64];  // 512 bits: a CAN FD frame
+    uint8_t refField[64];  // the start bit only, so the grid sets it apart
     int endBit, sBit;
 
     memset(bitField, 0, 64);
+    memset(refField, 0, 64);
+    startBit = qBound(0, startBit, 511); // web-savvycan: a loaded definition can say anything
 
     //make the start bit a different color to set it apart
+    refField[Utility::getByteFromBitPosition(startBit)] |= 1 << Utility::getBitFromBitPosition(startBit);
     bitField[Utility::getByteFromBitPosition(startBit)] |= 1 << Utility::getBitFromBitPosition(startBit);
-
-    ui->gridData->setReference((unsigned char *)&bitField, false);
 
     if (ui->cbIntel->isChecked())
     {
@@ -483,9 +485,51 @@ void NewGraphDialog::drawBitfield()
         }
     }
 
+    int highestByte = 0;
+    for (int b = 0; b < 64; b++) if (bitField[b]) highestByte = b;
+    fitGrid(highestByte);
+
+    ui->gridData->setReference((unsigned char *)&refField, false);
     ui->gridData->updateData((unsigned char *)&bitField, true);
 
     checkSignalAgreement();
+}
+
+// web-savvycan: the bit grid covers the frame: the newest frame of this ID in the trace, the Frame Length field, the
+// DBC message and the bits picked, whichever is longest; 8 bytes at least (SavvyCAN's grid), up to CAN FD's 64.
+void NewGraphDialog::fitGrid(int highestByte)
+{
+    int bytes = qMax(8, qMax(frameLenHint, highestByte + 1));
+    bytes = qMax(bytes, qMin(64, ui->editFrameLen->text().toInt()));
+    bytes = bytes <= 8 ? 8 : bytes <= 16 ? 16 : bytes <= 32 ? 32 : 64; // the grid's layouts (CANDataGrid)
+    if (ui->gridData->getBytesToDraw() == bytes) return;
+    ui->gridData->setBytesToDraw(bytes);
+    const int cols = bytes > 32 ? 32 : bytes > 8 ? 16 : 8, rows = bytes > 16 ? 16 : 8;
+    ui->gridData->setMinimumSize(qMax(280, cols * 20 + 24), qMax(280, rows * 20 + 24));
+}
+
+// The frame length of the ID typed in: its newest frame among the last 100 000 in the trace, or its DBC message.
+void NewGraphDialog::handleIdUpdate()
+{
+    frameLenHint = 0;
+    const QString text = ui->txtID->text().trimmed();
+    if (!text.isEmpty())
+    {
+        const uint32_t id = uint32_t(Utility::ParseStringToNum(text));
+        if (dbcHandler)
+            if (DBC_MESSAGE *msg = dbcHandler->findMessage(id)) frameLenHint = int(qMin(64u, msg->len));
+        const qsizetype count = modelFrames ? modelFrames->count() : 0;
+        for (qsizetype i = count - 1; i >= 0 && i >= count - 100000; i--)
+        {
+            const CommFrame frame = modelFrames->at(i);
+            if (frame.frameId() == id && frame.isDataFrame())
+            {
+                frameLenHint = qMax(frameLenHint, int(frame.payload().length()));
+                break;
+            }
+        }
+    }
+    drawBitfield();
 }
 
 void NewGraphDialog::handleDataLenUpdate()

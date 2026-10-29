@@ -1213,7 +1213,7 @@ void MainWindow::setupSendToLatestGraphWindow()
             param.startBit = sig->startBit;
             param.stride = 1;
             param.graphName = sig->name;
-            param.lineColor = QColor(QRandomGenerator::global()->bounded(160), QRandomGenerator::global()->bounded(160), QRandomGenerator::global()->bounded(160));
+            param.lineColor = GraphParams::randomLineColor(); // web-savvycan: shows in light and dark
             param.lineWidth = 1;
             param.fillColor = QColor(128, 128, 128, 0);
             param.mask = 0xFFFFFFFFFFFFFFFFull;
