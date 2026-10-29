@@ -180,10 +180,22 @@ export class AppDriver {
     await this.page.waitForFunction(() => !window.webSavvyCAN.stats().logging, null, { timeout: 10000 });
     return d;
   }
-  /** View > Dark Theme / Light Theme (whichever the app isn't showing). */
+  /** Light or dark, whichever the app isn't showing, as File > Preferences > Theme sets it (the app has no View menu
+   * since 2026-10-29: Qt's combo boxes aren't reachable by role, so through the test hook). */
   async toggleTheme() {
     const dark = (await this.page.evaluate(() => window.webSavvyCAN.theme())) === 'dark';
-    await this.menu('View', dark ? 'Light Theme' : 'Dark Theme');
+    await this.setTheme(dark ? 'light' : 'dark');
+  }
+  /** 'system', 'light' or 'dark' (File > Preferences > Theme). */
+  async setTheme(mode) {
+    await this.page.evaluate((m) => window.webSavvyCAN.setTheme(m), mode);
+  }
+  /** File > Load Log File with `file` chosen in the browser's file picker; waits until its `frames` are in the trace. */
+  async loadFile(file, frames) {
+    const chooser = this.page.waitForEvent('filechooser', { timeout: 15000 });
+    await this.menu('File', 'Load Log File');
+    await (await chooser).setFiles(file);
+    await this.page.waitForFunction((n) => window.webSavvyCAN.stats().framesReceived >= n, frames, { timeout: 30000 });
   }
   async themeShot() {
     return this.page.screenshot();

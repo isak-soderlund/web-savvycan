@@ -4,6 +4,9 @@
 #include "can_structs.h"
 #include <QDateTime>
 #include <QFileDialog>
+#include <QMessageBox>
+#include <QFileInfo>
+#include <QDir>
 #include <QtSerialPort/QSerialPortInfo>
 #include "connections/canconmanager.h"
 #include "connections/connectionwindow.h"
@@ -227,16 +230,11 @@ MainWindow::MainWindow(QWidget *parent) :
     }
 
     lbStatusConnected.setText(tr("Connected to 0 buses"));
-    lbHelp.setText(tr("Press F1 on any screen for help"));
-    lbHelp.setAlignment(Qt::AlignCenter);
-    QFont boldFont;
-    boldFont.setBold(true);
-    lbHelp.setFont(boldFont);
+    // web-savvycan: no "Press F1 on any screen for help" (owner 2026-10-29: the help pages aren't part of this build)
     updateFileStatus();
     //lbStatusDatabase.setText(tr("No DBC database loaded"));
     ui->statusBar->insertWidget(0, &lbStatusConnected, 1);
     ui->statusBar->insertWidget(1, &lbStatusFilename, 1);
-    ui->statusBar->insertWidget(2, &lbHelp, 1);
     //web-savvycan: frames lost because the GUI fell behind the bus (counted by the connections)
     lbStatusDropped.setToolTip(tr("Frames received from the device but discarded because the trace fell behind. "
                                   "Reset by Clear Frames."));
@@ -432,6 +430,8 @@ void MainWindow::applyFeatures()
             if (!a->isSeparator() && a->isVisible()) any = true;
         menu->menuAction()->setVisible(any);
     }
+    // No View menu (owner 2026-10-29): the theme is chosen in File > Preferences > Theme.
+    ui->menuView->menuAction()->setVisible(false);
 
     // The main window's own controls.
     ui->cbInterpret->setVisible(Features::on(Feature::DBC));
@@ -1651,6 +1651,15 @@ void MainWindow::handleCropLog()
 void MainWindow::handleLoadFile()
 {
     if (!Features::on(Features::Feature::LoadLog)) return; // web-savvycan: enabledfeatures.h
+#ifdef Q_OS_WASM
+    // web-savvycan: in the browser the file comes from the visitor's computer through the browser's
+    // own file picker (Qt's dialog would only see the page's empty in-memory file system). The type is
+    // detected from the contents, as SavvyCAN's "Autodetect File Type".
+    QFileDialog::getOpenFileContent(QString(), [this](const QString &name, const QByteArray &content) {
+        if (!name.isEmpty()) loadBrowserFile(name, content); // empty: the picker was cancelled
+    });
+    return;
+#endif
     QString filename;
     QVector<CommFrame> tempFrames;
 
@@ -1685,6 +1694,41 @@ void MainWindow::handleLoadFile()
         emit framesUpdated(-1);
     }
 }
+
+#ifdef Q_OS_WASM
+// A file picked in the browser: its bytes are written to the in-memory file system for the loaders
+// (they read by file name), loaded as a dropped file is, and deleted again. Everything lives in the
+// page's memory (wasm32: at most 4 GB): the bytes twice, the frames twice while they are handed to the
+// trace (about 150 bytes a frame), so files over kMaxBrowserFileBytes are refused with a message.
+void MainWindow::loadBrowserFile(const QString &name, const QByteArray &content)
+{
+    constexpr qint64 kMaxBrowserFileBytes = 500LL * 1000 * 1000;
+    const QString shown = QFileInfo(name).fileName();
+    if (content.size() > kMaxBrowserFileBytes) {
+        QMessageBox::warning(this, tr("File too large"),
+                             tr("%1 is %2 MB. The browser version loads files up to %3 MB (a web page has at "
+                                "most 4 GB of memory). Crop or split the log, or use the desktop version.")
+                                 .arg(shown).arg(content.size() / 1000000).arg(kMaxBrowserFileBytes / 1000000));
+        return;
+    }
+    QDir().mkpath(QStringLiteral("/tmp/web-savvycan"));
+    const QString path = QStringLiteral("/tmp/web-savvycan/") + shown;
+    {
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(content) != content.size()) {
+            QFile::remove(path);
+            QMessageBox::warning(this, tr("Error Loading"), tr("%1 could not be read.").arg(shown));
+            return;
+        }
+    }
+    handleDroppedFile(path);
+    QFile::remove(path);
+    if (loadedFileName == path) {
+        loadedFileName = shown;
+        updateFileStatus();
+    }
+}
+#endif
 
 void MainWindow::handleDroppedFile(const QString &filename)
 {

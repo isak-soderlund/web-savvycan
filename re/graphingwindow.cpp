@@ -4,6 +4,7 @@
 #include "mainwindow.h"
 #include "helpwindow.h"
 #include "utility.h"
+#include "theme.h"
 #include <QDebug>
 
 #include <algorithm>
@@ -111,7 +112,7 @@ GraphingWindow::GraphingWindow(const FrameListView *frames, QWidget *parent) :
     }
 
     needScaleSetup = true;
-    followGraphEnd = false;
+    followGraphEnd = true; // web-savvycan: live graphs follow the newest data (owner 2026-10-29); View > Follow End of Graph
 
     setupMenuBar();
 }
@@ -1673,7 +1674,7 @@ GraphParams::GraphParams()
     strideSoFar = 1;
     bus = -1;
     frameLen = -1;
-    lineColor = QColor(0,0,0);
+    lineColor = Theme::isDark() ? QColor(0xe0, 0xe0, 0xe0) : QColor(0, 0, 0); // web-savvycan: readable in dark
     fillColor = QColor(255,255,255,0);
     lineWidth = 1;
     drawOnlyPoints = false;
