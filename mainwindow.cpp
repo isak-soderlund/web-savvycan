@@ -1734,9 +1734,9 @@ void MainWindow::handleLoadFile()
 // bytes the browser handed over (loadNativeCSVData); other formats are written to the in-memory file system for
 // SavvyCAN's loaders (they read by file name), loaded as a dropped file is, and deleted again. Everything lives in the
 // page's memory (wasm32: at most 4 GB), so larger files are refused with a message. Measured 2026-10-29 (headless
-// Chromium, tests/web loader.spec): a GVRET CSV of 14 M frames (976 MB) loads in 36 s and then takes 0.8 GB of the
+// Chromium, tests/web loader.spec): a GVRET CSV of 14 M frames (976 MB) loads in 27-36 s, then takes 0.8 GB of the
 // heap (57 bytes a frame); while loading the file's bytes, the frames staged and the trace are in memory together:
-// 1.6 GB in use at the peak, the wasm memory 2.1 GB (3 M frames, 207 MB: 6 s, 0.19 GB, peak 0.34 GB). So up to
+// 1.6 GB in use at the peak, the wasm memory 2.1 GB (3 M frames, 207 MB: 6 s, 0.19 GB, peak 0.34-0.39 GB). So up to
 // kMaxBrowserFileBytes (~14 M frames, hours of a busy bus), with room left for the graphs and RE tools. Other formats
 // go through SavvyCAN's loaders and a vector of whole frames, plus the file's copy in the file system: a 1 M-frame
 // candump log (46 MB) took 18 s and 254 MB of the heap at its peak, so they are kept to kMaxBrowserOtherFileBytes.
