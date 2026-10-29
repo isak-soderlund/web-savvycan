@@ -143,8 +143,7 @@ window is open, analyses equal the trace's frames, twice); Save details to file.
   - Frame Info: done 2026-10-29 (byte graph colours per theme); Flow view: `graphColors[8]` with
     `Qt::black`, black text pen (`re/flowviewwindow.cpp`); Range state: black graph pen
     (`re/rangestatewindow.cpp`); Discrete state: fixed label palettes (`re/discretestatewindow.cpp`);
-  - `candatagrid.cpp` (bit grid colours, used by the DBC editor, New graph, sender): dark on branch `graph-bounds`,
-    the heatmap's bit numbers on `frame-analysis`;
+  - `candatagrid.cpp` (bit grid colours, used by the DBC editor, New graph, sender);
   - Scripting: `jsedit.cpp` syntax colours, line numbers, cursor and bracket colours.
 
 ## Hosting (decide before the first public build)
