@@ -86,6 +86,8 @@ public:
     //Frames taken in (live or loaded) since the last clear, including those wrapped out since.
     quint64 framesIngested() const { return mIngested; }
     qsizetype storeCapacity() const;
+    // web-savvycan: frames stored but not yet announced (framesUpdated(n) on the next GUI tick, sendBulkRefresh)
+    int unannouncedFrames() const { return lastUpdateNumFrames; }
     const QMap<int, bool> *getFiltersReference() const; //this neither
     const QMap<int, bool> *getBusFiltersReference() const; //this neither
     const QMap<int, bool> *getDirFiltersReference() const;

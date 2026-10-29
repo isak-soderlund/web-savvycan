@@ -67,12 +67,18 @@ Switched on so far (`enabledfeatures.h`): **Graphs** and, brought forward from s
 | Live graphs | A graph of a frame ID grows as frames arrive and **follows the newest data** by default (View > Follow End of Graph in the graph window, as SavvyCAN has it, now on from the start). While following, the value axis grows to take in new values (never shrinks) |
 | A log file from the computer | File > Load Log File opens the browser's own file picker (Chrome: `showOpenFilePicker`); the file type is detected from the contents (SavvyCAN's autodetect: GVRET CSV, candump, PCAN, Vector ASC/BLF, ...). The bytes go to the in-memory file system for SavvyCAN's loaders and are deleted after. **Up to 500 MB**: everything lives in the page's memory (wasm32, 4 GB): the bytes, their copy and about 150 bytes a frame twice while they go into the trace. A 1-hour Leaf log (~3 M frames, ~200 MB as CSV) fits; an 8-hour one doesn't |
 | Time axis | In the app's time style (File > Preferences: microseconds by default, or seconds, or clock) |
-| Colours | Default line light grey in dark; the Add New Graph dialog's random colour from the light half in dark |
+| **Bounded graph storage** (G6) | A graph's points live once, in the plot's own container (no `GraphParams` x/y copy, no copy of the matching frames). **Cap: 400 000 points a graph, 6.4 MB** (16 bytes a point; the container is allocated once at 412 500 points, 6.6 MB, so it never grows after the first fold). The newest **200 000 samples are kept exactly** (a 100 Hz signal: 33 min; rc1's full 8 000 frames/s on one ID: 25 s); older ones are folded, 50 000 at a time, into a **min/max envelope** of at most 150 000 points: two per bucket, at the bucket's first and last time, carrying its smallest and largest value in the order they came, so the buckets tile the time axis and the session's first and last time and every extreme stay. When the envelope is full, neighbouring buckets merge (buckets of 4, 8, 16, ... samples). A 10-hour session of a 100 Hz signal: buckets of 64 samples (0.64 s), finer than a pixel when the whole session is on screen. Live updates stay O(new points): a fold copies at most the cap once per 50 000 new samples. `re/graphingwindow.cpp` `boundGraph()` |
+| Min/max envelope on screen (G8) | QCustomPlot's adaptive sampling (on, as QCustomPlot's default; now set explicitly) draws each pixel column's min and max once a graph has 2 or more points per pixel (`QCPGraph::getOptimizedLineData`); with the stored envelope that picture is exact for the whole session. Zoomed into a folded part you see its envelope (extremes at most one bucket off in time), not the samples; Save Spreadsheet writes what is stored (envelope rows there) |
+| Other graph fixes | Value-table brackets bounded to the newest 500 a graph (G5); Follow End of Graph follows the newest point of any graph, not the last graph's (G9); frames not yet announced to the windows are left to the next tick (a graph made on a live bus had its newest frames twice, and every open graph took a loaded file twice); remote/error frames not graphed live (as from the trace); a window made before its frames came scales to them; Reset View from the plot's data; the graph window's menu bar shows its menus in the browser (at its 20 px everything went into "»") |
+| CAN FD bit picker | Add New Graph's bit grid covers the frame: 8, 16, 32 or 64 bytes (CANDataGrid's layouts), from the ID's newest frame in the trace (the last 100 000 frames), the Frame Length field, the ID's DBC message and the bits picked, whichever is longest; never less than SavvyCAN's 8. Start bit 0..511, length 1..64 (as before; `processIntegerSignal` reads up to bit 511). The grid's text is sized by its cells (unchanged at 8 bytes) |
+| Colours | Default line light grey in dark; random line colours (Add New Graph, the trace's "Add to graph") from the light half in dark; the colour swatches' "CHANGE" black or white by the colour; the selected graph's pen, the position text "X: Y:" and the tracer themed; the bit grid in dark (dark empty cells, light set bits, grey outlines, text by cell colour) |
 | Owner's other changes | No View menu (the theme is in File > Preferences > Theme); no "Press F1 on any screen for help" (the help pages aren't in this build) |
 
-Left for stage 2 (fork plan): the min/max envelope and **bounded graph storage** (G5–G8: a graph keeps every point today, ~32 bytes each, so a graph of a 100 Hz signal grows ~11 MB an hour), the FD bit picker in Add New Graph (its bit grid has 64 bits; FD signals past byte 8 by typed start bit only), the remaining hard-coded colours. Then files larger than memory: graphing straight from the file (only the graphed signals kept), not loading every frame.
+Measured (headless Chromium, `graph.spec`, 2026-10-29): two live graphs of one ID at 8 000 frames/s for 75 s (614 000 samples each, 1.5x the cap, the envelope halved once to buckets of 8): at most 370 000 points stored each; the wasm heap in use level from the first fold on (47.2 -> at most 47.4 MB over the last 40 s, with the trace set to 100 000 frames), memory 86 MB. A 600 000-frame log (600 s at 1 ms) graphed: 300 000 points (100 000 envelope, buckets of 8), the heap in use +6.3 MB for the graph (its container; before: 32 bytes a point plus a copy of every matching frame, ~40 MB here). Zoomed out over the whole session a sawtooth is the full band; zoomed into the folded part it is still the sawtooth at 1 ms buckets (`results/graph-bounded-*.png`).
 
-Tests: `tests/web` smoke spec (in CI) loads a GVRET CSV through the file picker and graphs it (every frame, every point); `graph.spec` graphs a live Leaf bus (grows, follows, value axis takes in 0..255).
+Left for later: files larger than memory: graphing straight from the file (only the graphed signals kept), not loading every frame (loading a 1 M-frame, 56 MB log took 108 s and left ~1.5 GB of the heap in use, 600 000 frames 64 s and 850 MB: ~1.4 KB a frame, the loader and the trace, not the graph: worth a look). Decoding off the UI thread and replotting at most at the screen rate (G7).
+
+Tests: `tests/web` smoke spec (in CI) loads a GVRET CSV through the file picker and graphs it (every frame, every point); `graph.spec` graphs a live Leaf bus (grows, follows, value axis takes in 0..255), a live graph past its cap (bounded, whole session kept, heap level), a 600 000-frame log (bounded, whole file, heap), and CAN FD signals past byte 8 (the test hook and the Add New Graph dialog with its 64-byte grid, light and dark).
 
 ## Next (owner 2026-10-29)
 
@@ -108,9 +114,10 @@ Tests: `tests/web` smoke spec (in CI) loads a GVRET CSV through the file picker 
   Qt's wasm `IniFormat` is a temporary file, lost on reload).
 - Dark covers the palette, the trace's per-ID row colours (`kRowPaletteDark` in `utility.h`) and every
   `QCustomPlot` (themed when shown and on every switch: background, axes, ticks, grid, legend, titles).
+- Graphs (stage 2): every colour above themed (`GraphParams::randomLineColor()`, the swatches, the selected pen; the
+  plot's items in `Theme::applyToPlot`: text, tracer and brackets left in the default black follow the theme);
+  `candatagrid.cpp`'s bit grid (New graph, and the DBC editor and sender once they are on).
 - **Hard-coded colours left for later stages** (fix when the window is switched on):
-  - graphs (stage 2): `GraphParams` line colour black (`re/graphingwindow.cpp` l. ~1676), random dark line colours
-    from the trace's context menu (`mainwindow.cpp` "Add to graph") and `re/newgraphdialog.cpp` (button palette);
   - DBC (stage 3): message colours from the DBC (`GenMsgBackgroundColor`/`Foreground`, `dbc/dbchandler.cpp`), shown
     as row colours in the trace when "Interpret Frames" is on (white background in dark); DBC editors' colour
     pickers;
@@ -119,7 +126,7 @@ Tests: `tests/web` smoke spec (in CI) loads a GVRET CSV through the file picker 
   - Frame Info: `graphColors` with `Qt::black` (`re/frameinfowindow.cpp`); Flow view: `graphColors[8]` with
     `Qt::black`, black text pen (`re/flowviewwindow.cpp`); Range state: black graph pen
     (`re/rangestatewindow.cpp`); Discrete state: fixed label palettes (`re/discretestatewindow.cpp`);
-  - `candatagrid.cpp` (bit grid colours, used by the DBC editor, New graph, sender);
+  - `candatagrid.cpp`: the DBC editor's signal colours (`signalColors`) are bright in both themes (names in black);
   - Scripting: `jsedit.cpp` syntax colours, line numbers, cursor and bracket colours.
 
 ## Hosting (decide before the first public build)

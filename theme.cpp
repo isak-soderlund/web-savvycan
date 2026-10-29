@@ -240,4 +240,27 @@ void Theme::applyToPlot(QCustomPlot *plot)
         if (QCPTextElement *text = qobject_cast<QCPTextElement *>(plot->plotLayout()->elementAt(i)))
             text->setTextColor(fg);
     }
+
+    // Graph lines in the other theme's default line colour (GraphParams: black on light, light grey on dark) follow
+    // the switch; lines of a colour of their own keep it.
+    const QColor line = s_dark ? QColor(0xe0, 0xe0, 0xe0) : QColor(Qt::black);
+    const QColor otherLine = s_dark ? QColor(Qt::black) : QColor(0xe0, 0xe0, 0xe0);
+    for (int i = 0; i < plot->graphCount(); ++i) {
+        QCPGraph *graph = plot->graph(i);
+        if (graph->pen().color() == otherLine) { QPen pen = graph->pen(); pen.setColor(line); graph->setPen(pen); }
+    }
+
+    // Items left in the default black (or this theme's other foreground): the graph window's position text, its
+    // tracer, value-table brackets. Items given a colour of their own keep it.
+    const QColor otherFg = s_dark ? QColor(Qt::black) : QColor(0xd0, 0xd0, 0xd0);
+    for (int i = 0; i < plot->itemCount(); ++i) {
+        QCPAbstractItem *item = plot->item(i);
+        if (QCPItemText *text = qobject_cast<QCPItemText *>(item)) {
+            if (text->color() == otherFg) text->setColor(fg);
+        } else if (QCPItemTracer *tracer = qobject_cast<QCPItemTracer *>(item)) {
+            if (tracer->pen().color() == otherFg) { QPen pen = tracer->pen(); pen.setColor(fg); tracer->setPen(pen); }
+        } else if (QCPItemBracket *bracket = qobject_cast<QCPItemBracket *>(item)) {
+            if (bracket->pen().color() == otherFg) { QPen pen = bracket->pen(); pen.setColor(fg); bracket->setPen(pen); }
+        }
+    }
 }

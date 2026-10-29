@@ -40,8 +40,16 @@ public:
     QString graphName;
     DBC_SIGNAL *associatedSignal;
 
+    // web-savvycan: a random line colour that shows on the plot in the theme in effect (dark lines on light, light
+    // ones on dark); the Add New Graph dialog and the trace's "Add to graph" use it.
+    static QColor randomLineColor();
+
     //the below stuff is used for internal purposes only - code should be refactored so these can be private
-    QVector<double> x, y;
+    // web-savvycan: the points live only in the plot's own container (ref->data()); no copy here (G6). Bounded by
+    // GraphingWindow::boundGraph(): [envelope of the older samples | the newest samples exactly].
+    int envelopePoints;      // points at the start of ref->data() that are the envelope (2 per bucket)
+    int bucketSamples;       // samples per envelope bucket (doubles whenever the envelope is halved)
+    double samples;          // samples taken in since the graph was (re)made (the tests' check of the bound)
     double xbias;
     int64_t prevValTable;
     QPointF prevValLocation;
@@ -96,10 +104,23 @@ private slots:
 signals:
     void sendCenterTimeID(uint32_t ID, double timestamp);
 
+public:
+    // web-savvycan: the bound of every graph's points (G6, RESOLVE.md stage 2). The newest kRecentPoints samples are
+    // kept exactly; older ones are folded, kFoldPoints at a time, into a min/max envelope of at most
+    // kEnvelopePoints points (two per bucket: the bucket's first and last time, carrying its extremes in the order
+    // they came), whose buckets double in size whenever it is full, so the whole session stays on the graph.
+    static constexpr int kRecentPoints = 200000;
+    static constexpr int kFoldPoints = 50000;
+    static constexpr int kEnvelopePoints = 150000;
+    static constexpr int kFirstBucketSamples = 4;
+    static constexpr int kMaxPoints = kRecentPoints + kFoldPoints + kEnvelopePoints; // 400 000 points, 6.4 MB
+    static constexpr int kMaxBrackets = 500; // value-table brackets kept per graph (G5), the newest
+
+    const QList<GraphParams> &graphs() const { return graphParams; } // for the test hook
+
 private:
     Ui::GraphingWindow *ui;
     DBCHandler *dbcHandler;
-    QList<CommFrame> frameCache;
     const FrameListView *modelFrames;
     QList<GraphParams> graphParams;
     QPen selectedPen;
@@ -117,6 +138,8 @@ private:
     QAction *actFollowEnd;
 
     void setupMenuBar();
+    void boundGraph(GraphParams &params);
+    void trimBrackets(GraphParams &params);
     void showParamsDialog(int idx);
     void closeEvent(QCloseEvent *event);
     void readSettings();

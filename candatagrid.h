@@ -62,6 +62,7 @@ public:
     GridMode getMode();
     void setMode(GridMode mode);
     void setBytesToDraw(int num);
+    int getBytesToDraw() const { return bytesToDraw; }
 
 protected:
     void mousePressEvent(QMouseEvent *event) Q_DECL_OVERRIDE;
@@ -83,6 +84,9 @@ private:
     GridMode gridMode;
     QBrush blackBrush, whiteBrush, redBrush, greenBrush, grayBrush;
     QBrush greenHashBrush, blackHashBrush;
+    QColor lineColor = Qt::black;  // web-savvycan: cell outlines; with white/black brush set per theme at each paint
+    bool darkTheme = false;
+    QColor textOn(const QBrush &brush) const;
     QPainter *painter;
     QRect viewport;
     int xSpan;

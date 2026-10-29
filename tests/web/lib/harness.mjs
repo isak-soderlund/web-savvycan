@@ -4,7 +4,7 @@
 import { test as base, expect } from '@playwright/test';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -193,21 +193,25 @@ export class AppDriver {
   /**
    * File > Load Log File with `file` picked; waits until its `frames` are in the trace. Qt opens Chrome's
    * showOpenFilePicker() (File System Access), which Playwright can't answer, so the page's showOpenFilePicker is
-   * replaced for this one call by one that hands over the file, as the user's pick would.
+   * replaced for this one call by one that hands over the file, as the user's pick would. A file under tests/web
+   * (results/) is fetched from the test server (big files); others go over as base64.
    */
-  async loadFile(file, frames) {
-    const bytes = readFileSync(file);
-    await this.page.evaluate(([name, b64]) => {
+  async loadFile(file, frames, { timeout = 30000 } = {}) {
+    const rel = relative(WEB, file);
+    const url = !rel.startsWith('..') && !isAbsolute(rel) ? '/__harness/' + rel.split(sep).join('/') : null;
+    const b64 = url ? null : readFileSync(file).toString('base64');
+    await this.page.evaluate(([name, src, data64]) => {
       const real = window.showOpenFilePicker;
       window.showOpenFilePicker = async () => {
         window.showOpenFilePicker = real;
-        const data = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-        const f = new File([data], name);
+        const f = src
+          ? new File([await (await fetch(src)).blob()], name)
+          : new File([Uint8Array.from(atob(data64), (c) => c.charCodeAt(0))], name);
         return [{ kind: 'file', name, getFile: async () => f }];
       };
-    }, [basename(file), bytes.toString('base64')]);
+    }, [basename(file), url, b64]);
     await this.menu('File', 'Load Log File');
-    await this.page.waitForFunction((n) => window.webSavvyCAN.stats().framesReceived >= n, frames, { timeout: 30000 });
+    await this.page.waitForFunction((n) => window.webSavvyCAN.stats().framesReceived >= n, frames, { timeout });
   }
   async themeShot() {
     return this.page.screenshot();

@@ -5,6 +5,8 @@
 #include "graphingwindow.h"
 #include "dbc/dbchandler.h"
 
+class QPushButton;
+
 namespace Ui {
 class NewGraphDialog;
 }
@@ -20,6 +22,8 @@ public:
     void getParams(GraphParams &);
     void setParams(GraphParams &);
     void clearParams();
+    // web-savvycan: the frames of the graphing window, so the bit grid can cover the ID's frame length (CAN FD)
+    void setFrames(const FrameListView *frames) { modelFrames = frames; }
 
 private slots:
     void addButtonClicked();
@@ -33,16 +37,21 @@ private slots:
     void handleDataLenUpdate();
     void drawBitfield();
     void copySignalToParamsUI();
+    void handleIdUpdate();
 
 private:
     bool eventFilter(QObject *obj, QEvent *event);
     void checkSignalAgreement();
+    void fitGrid(int highestByte);
+    static void setSwatchColor(QPushButton *swatch, const QColor &color);
 
     Ui::NewGraphDialog *ui;
     DBCHandler *dbcHandler;
     DBC_SIGNAL *assocSignal;
     int startBit, dataLen;
-    bool shownFromPlotEdit;
+    bool shownFromPlotEdit = false;
+    const FrameListView *modelFrames = nullptr;
+    int frameLenHint = 0; // bytes in the newest frame of the ID in the trace (0: none seen)
 };
 
 #endif // NEWGRAPHDIALOG_H

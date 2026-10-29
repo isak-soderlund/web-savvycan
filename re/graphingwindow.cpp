@@ -6,8 +6,11 @@
 #include "utility.h"
 #include "theme.h"
 #include <QDebug>
+#include <QRandomGenerator>
 
 #include <algorithm>
+#include <cmath>
+#include <iterator>
 #include <limits>
 
 GraphingWindow::GraphingWindow(const FrameListView *frames, QWidget *parent) :
@@ -98,7 +101,7 @@ GraphingWindow::GraphingWindow(const FrameListView *frames, QWidget *parent) :
 
     selectedPen.setWidth(3);
     selectedPen.setStyle(Qt::DashLine);
-    selectedPen.setColor(Qt::blue);
+    selectedPen.setColor(Theme::isDark() ? QColor(0x50, 0x90, 0xff) : QColor(Qt::blue)); // web-savvycan: shows on dark
 
     //ui->graphingView->setAttribute(Qt::WA_AcceptTouchEvents);
 
@@ -231,7 +234,8 @@ void GraphingWindow::updatedFrames(int numFrames)
             for (int i = modelFrames->count() - numFrames; i < modelFrames->count(); i++)
             {
                 thisFrame = modelFrames->at(i);
-                if ( graphParams[j].ID == thisFrame.frameId() && ( (graphParams[j].bus == -1) || (graphParams[j].bus == thisFrame.getBus()) ) && ( (graphParams[j].frameLen == -1) || (graphParams[j].frameLen == thisFrame.payload().length()) ) )
+                if ( graphParams[j].ID == thisFrame.frameId() && thisFrame.isDataFrame() // web-savvycan: as createGraph
+                     && ( (graphParams[j].bus == -1) || (graphParams[j].bus == thisFrame.getBus()) ) && ( (graphParams[j].frameLen == -1) || (graphParams[j].frameLen == thisFrame.payload().length()) ) )
                 {
                     appendToGraph(graphParams[j], thisFrame, x, y);
                     appendedToGraph = true;
@@ -240,6 +244,7 @@ void GraphingWindow::updatedFrames(int numFrames)
             if (appendedToGraph)
             {
                 graphParams[j].ref->addData(x, y);
+                boundGraph(graphParams[j]); // web-savvycan: amortised O(new points); see boundGraph()
                 needReplot = true;
                 for (double v : y) { newMin = qMin(newMin, v); newMax = qMax(newMax, v); }
             }
@@ -247,20 +252,28 @@ void GraphingWindow::updatedFrames(int numFrames)
 
         if (needReplot)
         {
-            if (followGraphEnd)
+            if (needScaleSetup) // web-savvycan: the first points of a window whose graphs were made before their frames came
+            {
+                needScaleSetup = false;
+                ui->graphingView->rescaleAxes();
+                ui->graphingView->axisRect()->setupFullAxesBox();
+            }
+            else if (followGraphEnd)
             {
                 //find the current X span and maintain that span but move the end of it over to match the new end
                 //of the actual graph. This causes the view to move with the data to always show the end
                 QCPRange range = ui->graphingView->xAxis->range();
                 double size = range.size();
-                bool foundRange;
-                QCPRange keyRange = ui->graphingView->graph()->getKeyRange(foundRange);
-                if (foundRange)
+                // web-savvycan: the newest point of any graph, not only of the last one (G9); the data is sorted
+                double end = -std::numeric_limits<double>::infinity();
+                for (int g = 0; g < ui->graphingView->graphCount(); g++)
                 {
-                    double end, start;
-                    end = keyRange.upper;
-                    start = end - size;
-                    ui->graphingView->xAxis->setRange(start, end);
+                    const QSharedPointer<QCPGraphDataContainer> data = ui->graphingView->graph(g)->data();
+                    if (!data->isEmpty()) end = qMax(end, (data->constEnd() - 1)->key);
+                }
+                if (std::isfinite(end))
+                {
+                    ui->graphingView->xAxis->setRange(end - size, end);
                 }
                 // web-savvycan: the value axis grows to take in new values (never shrinks, so it doesn't jump);
                 // without this a live signal runs off the range it had when the graph was made.
@@ -531,21 +544,24 @@ bool GraphingWindow::eventFilter(QObject *obj, QEvent *event)
 
 void GraphingWindow::resetView()
 {
-    double yminval=10000000.0, ymaxval = -1000000.0;
-    double xminval=100000000000, xmaxval = -10000000000.0;
-    for (int i = 0; i < graphParams.count(); i++)
+    // web-savvycan: from the plot's own data (the envelope keeps every extreme, so the ranges are the session's)
+    QCPRange keys, values;
+    bool any = false;
+    for (int i = 0; i < ui->graphingView->graphCount(); i++)
     {
-        for (int j = 0; j < graphParams[i].x.count(); j++)
-        {
-            if (graphParams[i].x[j] < xminval) xminval = graphParams[i].x[j];
-            if (graphParams[i].x[j] > xmaxval) xmaxval = graphParams[i].x[j];
-            if (graphParams[i].y[j] < yminval) yminval = graphParams[i].y[j];
-            if (graphParams[i].y[j] > ymaxval) ymaxval = graphParams[i].y[j];
-        }
+        bool foundKeys = false, foundValues = false;
+        const QCPRange k = ui->graphingView->graph(i)->getKeyRange(foundKeys);
+        const QCPRange v = ui->graphingView->graph(i)->getValueRange(foundValues);
+        if (!foundKeys || !foundValues) continue;
+        if (any) { keys.expand(k); values.expand(v); }
+        else { keys = k; values = v; any = true; }
     }
 
-    ui->graphingView->xAxis->setRange(xminval, xmaxval);
-    ui->graphingView->yAxis->setRange(yminval, ymaxval);
+    if (any)
+    {
+        ui->graphingView->xAxis->setRange(keys);
+        ui->graphingView->yAxis->setRange(values);
+    }
     ui->graphingView->axisRect()->setupFullAxesBox();
 
     ui->graphingView->replot();
@@ -697,7 +713,9 @@ void GraphingWindow::setupMenuBar()
     QMenuBar *menuBar = new QMenuBar(this);
     menuBar->setNativeMenuBar(false);
     menuBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+#ifndef Q_OS_WASM
     menuBar->setMaximumHeight(20);
+#endif // web-savvycan: in the browser 20 px is less than the menu bar's font needs: every menu went into its "»"
 
     // Graph menu
     QMenu *graphMenu = menuBar->addMenu(tr("Graph"));
@@ -860,82 +878,69 @@ void GraphingWindow::saveSpreadsheet()
          * and a reference for which graph it came from. This is better than nothing.
         */
 
-        double xMin = std::numeric_limits<double>::max(),
-               xMax = std::numeric_limits<double>::min();
-        int maxCount = 0;
-        int numGraphs = graphParams.length();
-        for (auto && graph : graphParams) {
-            xMin = std::min(xMin, graph.x[0]);
-            xMax = std::max(xMax, graph.x[graph.x.count() - 1]);
-            maxCount = std::max((qsizetype)maxCount, graph.x.count());
+        // web-savvycan: from the plot's own data (there is no second copy of the points any more). Older parts of a
+        // long graph are its min/max envelope (boundGraph()), so their rows are the envelope's. Graphs with fewer
+        // than two points are left out (they crashed this before).
+        struct Series { QString name; QSharedPointer<QCPGraphDataContainer> data; int index; };
+        QList<Series> series;
+        for (const GraphParams &graph : graphParams)
+            if (graph.ref && graph.ref->data()->size() >= 2) series.append(Series{graph.graphName, graph.ref->data(), 0});
+        if (series.isEmpty())
+        {
+            outFile.close();
+            return;
         }
-        qDebug() << "xMin: " << xMin;
-        qDebug() << "xMax: " << xMax;
-        qDebug() << "MaxCount: " << maxCount;
+
+        double xMin = std::numeric_limits<double>::max(),
+               xMax = std::numeric_limits<double>::lowest();
+        int maxCount = 0;
+        for (const Series &s : series) {
+            xMin = std::min(xMin, s.data->constBegin()->key);
+            xMax = std::max(xMax, (s.data->constEnd() - 1)->key);
+            maxCount = std::max(maxCount, s.data->size());
+        }
         //The idea now is to iterate from xMin to xMax slicing all graphs up into MaxCount slices.
         //But, actually, don't visit actual xMin or xMax, inset from there by one slice. Then, if
         //a given graph doesn't exist there use the value from the nearest place that does exist.
         double xSize = xMax - xMin;
         double sliceSize = xSize / ((double)maxCount);
         double equivValue = sliceSize / 100.0;
-        QList<int> indices;
-        indices.reserve(numGraphs);
 
         outFile.write("TimeStamp");
-        for (auto && graph : graphParams) {
-            indices.append(0);
+        for (const Series &s : series) {
             outFile.putChar(',');
-            outFile.write(graph.graphName.toUtf8());
+            outFile.write(s.name.toUtf8());
         }
         outFile.write("\n");
 
         for (int j = 1; j < (maxCount - 1); j++)
         {
             double currentX = xMin + (j * sliceSize);
-            qDebug() << "X: " << currentX;
             outFile.write(QString::number(currentX, 'f').toUtf8());
-            for (int k = 0; k < numGraphs; k++)
+            for (Series &s : series)
             {
+                const int count = s.data->size();
+                auto key = [&s](int i) { return s.data->at(i)->key; };
+                auto val = [&s](int i) { return s.data->at(i)->value; };
                 double value = 0.0;
 
                 // move cursor to last sample before currentX
-                while (graphParams[k].x[indices[k]+1] < currentX)
-                {
-                    indices[k]++;
-                }
+                while (s.index + 1 < count && key(s.index + 1) < currentX) s.index++;
+                const int i = s.index;
 
-                //five possibilities.
                 //1: we're at the beginning for this graph but the slice is before this graph even starts
-                if (indices[k] == 0 && graphParams[k].x[indices[k]] > currentX)
-                {
-                    value = graphParams[k].y[indices[k]];
-                }
+                if (i == 0 && key(0) > currentX) value = val(0);
                 //2: The opposite, we're at the end of this graph but the slices keep going
-                else if (indices[k] == (graphParams[k].x.count() - 1) && graphParams[k].x[indices[k]] < currentX)
-                {
-                    value = graphParams[k].y[indices[k]];
-                }
+                else if (i >= count - 1) value = val(count - 1);
                 //3: the slice is right near the current value we're at for this graph
-                else if (fabs(graphParams[k].x[indices[k]] - currentX) < equivValue)
-                {
-                    value = graphParams[k].y[indices[k]];
-                }
+                else if (fabs(key(i) - currentX) < equivValue) value = val(i);
                 //4: the slice is right next to the next value for this graph
-                else if (fabs(graphParams[k].x[indices[k] + 1] - currentX) < equivValue)
-                {
-                    value = graphParams[k].y[indices[k] + 1];
-                }
+                else if (fabs(key(i + 1) - currentX) < equivValue) value = val(i + 1);
                 //5: it's somewhere in between two values for this graph
-                //the two values will be indices[k] and indices[k] + 1
                 else
                 {
-                    // find index, where x >= currentX
-                    int cursor = indices[k];
-                    double span = graphParams[k].x[cursor+1] - graphParams[k].x[cursor];
-                    double progress = (currentX - graphParams[k].x[cursor]) / span;
-                    Q_ASSERT(progress >= 0.0 && progress <= 1.0);
-                    value = Utility::Lerp(graphParams[k].y[cursor], graphParams[k].y[cursor+1], progress);
-                    qDebug() << "Span: " << span << " Prog: " << progress << " Value: " << value;
+                    const double span = key(i + 1) - key(i);
+                    value = span > 0 ? Utility::Lerp(val(i), val(i + 1), (currentX - key(i)) / span) : val(i);
                 }
                 outFile.putChar(',');
                 outFile.write(QString::number(value).toUtf8());
@@ -1300,6 +1305,7 @@ void GraphingWindow::showParamsDialog(int idx = -1)
     dbcHandler = DBCHandler::getReference();
 
     NewGraphDialog *thisDialog = new NewGraphDialog(dbcHandler, this);
+    thisDialog->setFrames(modelFrames); // web-savvycan: the bit grid covers the ID's frame length (CAN FD)
 
     if (idx > -1)
     {
@@ -1360,10 +1366,9 @@ void GraphingWindow::appendToGraph(GraphParams &params, CommFrame &frame, QVecto
         }
         else yVal = (tempVal * params.scale) + params.bias;
 
-        params.x.append(xVal);
-        params.y.append(yVal);
         x.append(xVal);
         y.append(yVal);
+        params.samples++;
 
         //now see if we've got to do anything with the brackets and labels for value table stuff
         QString tempStr;
@@ -1375,7 +1380,7 @@ void GraphingWindow::appendToGraph(GraphParams &params, CommFrame &frame, QVecto
                 //we have a graph with associated signal and we could interpret it. So, see what we need to do
                 if (tempStr == params.prevValStr) //still same value, update bracket only
                 {
-                    params.lastBracket->right->setCoords(xVal, params.prevValLocation.y());
+                    if (params.lastBracket) params.lastBracket->right->setCoords(xVal, params.prevValLocation.y());
                 }
                 else //changed. See if this is the first value or if we're merely starting another one
                 {
@@ -1407,6 +1412,7 @@ void GraphingWindow::appendToGraph(GraphParams &params, CommFrame &frame, QVecto
                         qDebug() << "JiggaWatts: " << tempStr;
                         valueText->setFont(QFont(font().family(), 10));
                         params.bracketTexts.append(valueText);
+                        trimBrackets(params);
                     }
                 }
             }
@@ -1414,9 +1420,85 @@ void GraphingWindow::appendToGraph(GraphParams &params, CommFrame &frame, QVecto
     }
 }
 
+// web-savvycan: one bucket of the envelope from the points [from, to) (samples, or buckets being merged): two points,
+// at the first and the last time of the range, carrying its smallest and largest value in the order they came. So the
+// buckets tile the time axis exactly (the first and last time of the session stay) and every extreme stays on the graph.
+static void appendBucket(QVector<QCPGraphData> &out, QCPGraphDataContainer::const_iterator from,
+                         QCPGraphDataContainer::const_iterator to)
+{
+    QCPGraphDataContainer::const_iterator lo = from, hi = from;
+    for (QCPGraphDataContainer::const_iterator it = from + 1; it < to; ++it)
+    {
+        if (it->value < lo->value) lo = it;
+        if (it->value > hi->value) hi = it;
+    }
+    const bool lowFirst = lo <= hi;
+    out.append(QCPGraphData(from->key, lowFirst ? lo->value : hi->value));
+    out.append(QCPGraphData((to - 1)->key, lowFirst ? hi->value : lo->value));
+}
+
+/*
+ * web-savvycan: bounded graph storage (G6, RESOLVE.md stage 2). A graph's points are, in time order,
+ *   [ envelope: params.envelopePoints points, 2 per bucket of params.bucketSamples samples | the newest samples ]
+ * Once more than kRecentPoints + kFoldPoints samples are exact, the oldest of them (whole buckets) are folded into
+ * the envelope, leaving the newest kRecentPoints exact. When the envelope would pass kEnvelopePoints, neighbouring
+ * buckets are merged (half the points, buckets of twice the samples) first. So a graph never holds more than
+ * kMaxPoints points (plus one update's worth) and still spans the whole session. Each fold copies at most kMaxPoints
+ * points once per kFoldPoints new samples: amortised O(1) per sample. Zoomed out, QCustomPlot's adaptive sampling
+ * draws the min and max of each pixel column from these points (QCPGraph::getOptimizedLineData).
+ */
+void GraphingWindow::boundGraph(GraphParams &params)
+{
+    if (!params.ref) return;
+    QSharedPointer<QCPGraphDataContainer> data = params.ref->data();
+    const int size = data->size();
+    const int env = qBound(0, params.envelopePoints, size) & ~1;
+    const int excess = size - env - kRecentPoints; // exact samples older than the newest kRecentPoints
+    if (excess < kFoldPoints) return;
+
+    int per = qMax(params.bucketSamples, kFirstBucketSamples);
+    int group = 1; // old buckets that become one
+    int buckets = env / 2;
+    while (buckets + excess / per > kEnvelopePoints / 2 && per < (1 << 28))
+    {
+        buckets = (buckets + 1) / 2;
+        per *= 2;
+        group *= 2;
+    }
+    const int fold = (excess / per) * per; // whole buckets only; the rest stays exact
+    if (fold == 0 && group == 1) return;
+
+    QVector<QCPGraphData> out;
+    out.reserve(kMaxPoints + kFoldPoints / 4); // room for the appends until the next fold: no reallocation
+    const QCPGraphDataContainer::const_iterator begin = data->constBegin();
+    for (int i = 0; i < env; i += 2 * group)
+        appendBucket(out, begin + i, begin + qMin(env, i + 2 * group));
+    for (int i = env; i < env + fold; i += per)
+        appendBucket(out, begin + i, begin + i + per);
+    const int envelope = int(out.size());
+    std::copy(begin + env + fold, data->constEnd(), std::back_inserter(out));
+
+    data->set(out, true);
+    params.envelopePoints = envelope;
+    params.bucketSamples = per;
+}
+
+// web-savvycan: a value-table signal adds a bracket and a label (two QCustomPlot items, drawn on every replot) at each
+// change of its value; keep the newest kMaxBrackets (G5).
+void GraphingWindow::trimBrackets(GraphParams &params)
+{
+    while (params.brackets.count() > kMaxBrackets)
+    {
+        QCPItemBracket *bracket = params.brackets.takeFirst();
+        if (!params.bracketTexts.isEmpty()) ui->graphingView->removeItem(params.bracketTexts.takeFirst()); // anchored to it
+        if (params.lastBracket == bracket) params.lastBracket = nullptr;
+        ui->graphingView->removeItem(bracket);
+    }
+}
+
 void GraphingWindow::createGraph(GraphParams &params, bool createGraphParam)
 {
-    int64_t tempVal; //64 bit temp value.
+    int64_t tempVal = 0; //64 bit temp value.
     double yminval=10000000.0, ymaxval = -1000000.0;
     double xminval=10000000000.0, xmaxval = -10000000000.0;
     GraphParams *refParam = &params;
@@ -1430,88 +1512,72 @@ void GraphingWindow::createGraph(GraphParams &params, bool createGraphParam)
     qDebug() << "Signed: " << params.isSigned;
     qDebug() << "Mask: " << params.mask;
 
-    frameCache.clear();
-    for (int i = 0; i < modelFrames->count(); i++)
-    {
-        CommFrame thisFrame = modelFrames->at(i);
-        if ( (thisFrame.frameId() == params.ID) && thisFrame.isDataFrame()
-            &&  ( ( params.bus == -1) ||  (params.bus == thisFrame.getBus()) )
-            &&  ( ( params.frameLen == -1) ||  (params.frameLen == thisFrame.payload().length()) ) ) frameCache.append(thisFrame);
-    }
+    // web-savvycan: one pass over the frame list, without copying the matching frames (the old frameCache, kept until
+    // the next graph) or the points (the old GraphParams x/y): the points go into the plot's own container and
+    // boundGraph() bounds them (G6). Every stride-th matching frame is graphed.
+    const int stride = qMax(1, params.stride);
+    auto matches = [&params](const CommFrame &f) {
+        return f.frameId() == params.ID && f.isDataFrame()
+            && (params.bus == -1 || params.bus == f.getBus())
+            && (params.frameLen == -1 || params.frameLen == f.payload().length());
+    };
+    const qsizetype frameCount = modelFrames->count();
+    // web-savvycan: the newest frames the window hasn't been told about yet are graphed by updatedFrames() when the
+    // next GUI tick announces them (framesUpdated(n): the last n frames); taking them here too graphed them twice
+    // (a graph made on a live bus; every graph open when a file is loaded).
+    const CommFrameModel *model = MainWindow::getReference() ? MainWindow::getReference()->getCommFrameModel() : nullptr;
+    const qsizetype announced = qMax<qsizetype>(0, frameCount - (model ? model->unannouncedFrames() : 0));
+    // value-table brackets only for a graph of more than one point (as before)
+    qsizetype matched = 0;
+    if (params.associatedSignal)
+        for (qsizetype i = 0; i < announced && matched < 2 * stride; i++)
+            if (matches(modelFrames->at(i))) matched++;
+    const bool valueBrackets = params.associatedSignal && matched >= 2 * stride;
 
-    //to fix weirdness where a graph that has no data won't be able to be edited, selected, or deleted properly
-    //we'll check for the condition that there is nothing to graph and add a single dummy frame to the cache
-    //that has all data bytes = 0. This allows the graph to be edited and deleted. No idea why you can't otherwise.
-    if (frameCache.count() == 0)
-    {
-        CommFrame dummy;
-        dummy.setFrameId(params.ID);
-        dummy.setBus(0);
-        dummy.setPayload(QByteArray(8, 0));
-        dummy.setFrameType(CommFrame::CANDataFrame);
-        frameCache.append(dummy);
-    }
-
-    int numEntries = frameCache.count() / params.stride;
-    if (numEntries < 1) numEntries = 1; //could happen if stride is larger than frame count
-
-    params.x.clear();
-    params.y.clear();
-    params.x.reserve(numEntries);
-    params.y.reserve(numEntries);
-    //params.x.fill(0, numEntries);
-    //params.y.fill(0, numEntries);
+    QVector<QCPGraphData> points;
+    params.envelopePoints = 0;
+    params.bucketSamples = kFirstBucketSamples;
 
     int sBit = params.startBit;
     int bits = params.numBits;
     bool intelFormat = params.intelFormat;
     bool isSigned = params.isSigned;
 
-    for (int j = 0; j < numEntries; j++)
+    auto addPoint = [&](const CommFrame &frame)
     {
-        int k = j * params.stride;
         if (params.associatedSignal)
         {
             //skip all the rest of the stuff in this loop and don't add this to the graph if this signal isn't in this frame
-            if (!params.associatedSignal->isSignalInMessage(frameCache[k]))
-            {
-                qDebug() << "Signal was not in this frame";
-                continue;
-            }
-            else qDebug() << "Signal in the frame!";
+            if (!params.associatedSignal->isSignalInMessage(frame)) return;
         }
-        tempVal = Utility::processIntegerSignal(frameCache[k].payload(), sBit, bits, intelFormat, isSigned); //& params.mask;
-        //qDebug() << tempVal;
+        tempVal = Utility::processIntegerSignal(frame.payload(), sBit, bits, intelFormat, isSigned); //& params.mask;
 
         if (params.associatedSignal)
         {
             //if for some reason the processAsDouble fails we'll fall back on manual approach
-            if (!params.associatedSignal->processAsDouble(frameCache[k], y))
+            if (!params.associatedSignal->processAsDouble(frame, y))
                 y = (tempVal * params.scale) + params.bias;
         }
         else y = (tempVal * params.scale) + params.bias;
 
-        params.y.append( y );
-
         if (Utility::timeStyle == TS_SECONDS)
         {
-            x = (frameCache[k].timeStamp().microSeconds()) / 1000000.0;
+            x = (frame.timeStamp().microSeconds()) / 1000000.0;
         }
         else if (Utility::timeStyle == TS_CLOCK)
         {
-            QDateTime dt = QDateTime::fromMSecsSinceEpoch((frameCache[k].timeStamp().microSeconds() / 1000) - params.xbias);
+            QDateTime dt = QDateTime::fromMSecsSinceEpoch((frame.timeStamp().microSeconds() / 1000) - params.xbias);
             x = (dt.time().msecsSinceStartOfDay() / 1000.0);
         }
         else
         {
-            x = frameCache[k].timeStamp().microSeconds();
+            x = frame.timeStamp().microSeconds();
         }
 
-        params.x.append( x );
+        points.append(QCPGraphData(x, y));
 
-        if (params.associatedSignal && numEntries > 1)
+        if (valueBrackets)
         {
-
             bool isValid = params.associatedSignal->getValueString(tempVal, tempStr);
             if (isValid)
             {
@@ -1522,8 +1588,6 @@ void GraphingWindow::createGraph(GraphParams &params, bool createGraphParam)
                 }
                 if (tempVal != params.prevValTable)
                 {
-                    qDebug() << "New Value: " << tempStr;
-
                     //Adding a bracket is a neat idea but you can't do that unless:
                     //1. you wait until the value changes again so you can put the bracket where it belongs or
                     //2. you constantly update the bracket in size then relocate the text too to match.
@@ -1547,6 +1611,7 @@ void GraphingWindow::createGraph(GraphParams &params, bool createGraphParam)
                     params.prevValLocation = QPointF(x, y);
                     params.prevValStr = tempStr;
                     params.lastBracket = bracket;
+                    trimBrackets(params);
                 }
                 params.prevValTable = tempVal;
             }
@@ -1556,7 +1621,32 @@ void GraphingWindow::createGraph(GraphParams &params, bool createGraphParam)
         if (y > ymaxval) ymaxval = y;
         if (x < xminval) xminval = x;
         if (x > xmaxval) xmaxval = x;
+    };
+
+    qsizetype n = 0;
+    for (qsizetype i = 0; i < announced; i++)
+    {
+        const CommFrame thisFrame = modelFrames->at(i);
+        if (!matches(thisFrame)) continue;
+        if (n++ % stride == 0) addPoint(thisFrame);
     }
+    for (qsizetype i = announced; i < frameCount && n == 0; i++) // frames on their way count as data
+        if (matches(modelFrames->at(i))) n++;
+
+    //to fix weirdness where a graph that has no data won't be able to be edited, selected, or deleted properly
+    //we'll check for the condition that there is nothing to graph and add a single dummy frame
+    //that has all data bytes = 0. This allows the graph to be edited and deleted. No idea why you can't otherwise.
+    if (n == 0)
+    {
+        CommFrame dummy;
+        dummy.setFrameId(params.ID);
+        dummy.setBus(0);
+        dummy.setPayload(QByteArray(8, 0));
+        dummy.setFrameType(CommFrame::CANDataFrame);
+        addPoint(dummy);
+    }
+    const int numEntries = int(points.size());
+    params.samples = numEntries;
 
     if (params.prevValLocation != QPointF(0,0))
     {
@@ -1609,7 +1699,14 @@ void GraphingWindow::createGraph(GraphParams &params, bool createGraphParam)
     ui->graphingView->graph()->setName(params.graphName);
     ui->graphingView->graph()->setProperty("id", params.ID);
 
-    ui->graphingView->graph()->setData(refParam->x,refParam->y);
+    // frames come in arrival order: sorted unless the times jumped back
+    const bool sorted = std::is_sorted(points.cbegin(), points.cend(),
+                                       [](const QCPGraphData &a, const QCPGraphData &b) { return a.key < b.key; });
+    ui->graphingView->graph()->data()->set(points, sorted);
+    points = QVector<QCPGraphData>(); // the container holds the only reference now
+    boundGraph(*refParam);
+    trimBrackets(*refParam);
+    ui->graphingView->graph()->setAdaptiveSampling(true); // QCustomPlot's per-pixel min/max when zoomed out (the default)
 
     ui->graphingView->graph()->setScatterStyle(QCPScatterStyle((QCPScatterStyle::ScatterShape)params.pointType));
 
@@ -1648,7 +1745,7 @@ void GraphingWindow::createGraph(GraphParams &params, bool createGraphParam)
     qDebug() << "ymin: " << yminval;
     qDebug() << "ymax: " << ymaxval;
 
-    if (needScaleSetup)
+    if (needScaleSetup && numEntries > 0) // web-savvycan: no points yet (its frames are on their way): see updatedFrames()
     {
         needScaleSetup = false;
         ui->graphingView->xAxis->setRange(xminval, xmaxval);        
@@ -1700,9 +1797,22 @@ GraphParams::GraphParams()
     ref = nullptr;
     associatedSignal = nullptr;
     graphName = "default";
+    envelopePoints = 0;
+    bucketSamples = GraphingWindow::kFirstBucketSamples;
+    samples = 0;
     xbias = 0;
     prevValTable = 9999999999;
     prevValLocation = QPointF(0,0);
     prevValStr = "";
     lastBracket = nullptr;
+}
+
+QColor GraphParams::randomLineColor()
+{
+    //using 160 instead of 255 so that colors are always at least a little dark
+    // web-savvycan: ... on light; from the light half on dark, so a line always shows on the plot
+    const int lo = Theme::isDark() ? 96 : 0;
+    auto channel = [lo] { return lo + QRandomGenerator::global()->bounded(160); };
+    const int r = channel(), g = channel(), b = channel();
+    return QColor(r, g, b);
 }
