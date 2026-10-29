@@ -4,9 +4,24 @@
 #include "helpwindow.h"
 #include "filterutility.h"
 #include "qcpaxistickerhex.h"
+#include "theme.h"
+#include <QBuffer>
 
-const QColor FlowViewWindow::graphColors[8] = {Qt::blue, Qt::green, Qt::black, Qt::red, //0 1 2 3
-                                               Qt::gray, Qt::darkYellow, Qt::cyan, Qt::darkMagenta}; //4 5 6 7
+/*
+ * web-savvycan (stage 4): RE Tools > Flow View with CAN FD, bounded, live on the ring-buffer trace.
+ * - The selected ID's frames are kept compactly (ReTools::IdFrames: time, length, payload in rows of the ID's longest
+ *   frame), at most kMaxFrames (the newest; was a QList<CommFrame> of every frame, without end on a busy bus).
+ * - The graphs hold only the frames around the current one (the view is always the current frame +- the chart
+ *   range, no drag or zoom), rebuilt when the view leaves them: was every frame of the ID in each of up to 64 graphs,
+ *   twice (x/y vectors and the plot's own copy), and live frames all went to one x (x[k] was never appended).
+ * - Live: new frames are found by the newest frame taken (ReTools::NewFrames), not by an index: the trace is a ring.
+ * - CAN FD: trigger bits past byte 7 (the 64-bit chunks were indexed by byte * 8: bytes 8.. read past the frame);
+ *   a frame longer than the ID's earlier ones gets its rows and graphs; a changed Ref cell sets the reference byte
+ *   (it set the seek value).
+ * - No crash with no frames (Stop, Live Mode, the timeline on an empty ID read frame 0 or -1).
+ * - Theme: the byte colours per theme (light: SavvyCAN's), the "+" mark's border in the plot's text colour.
+ * - In the browser a framed dialog; "Save image to file" downloads a PNG.
+ */
 
 
 FlowViewWindow::FlowViewWindow(const FrameListView *frames, QWidget *parent) :
@@ -14,7 +29,13 @@ FlowViewWindow::FlowViewWindow(const FrameListView *frames, QWidget *parent) :
     ui(new Ui::FlowViewWindow)
 {
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    // web-savvycan: as the other windows: a Qt::Window is frameless and covers the main window's menus in the
+    // browser; as a dialog it has Qt's title bar and close button and can be moved aside.
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+#else
     setWindowFlags(Qt::Window);
+#endif
 
     readSettings();
 
@@ -30,7 +51,7 @@ FlowViewWindow::FlowViewWindow(const FrameListView *frames, QWidget *parent) :
     memset(refBytes, 0, 64);
     memset(currBytes, 0, 64);
     memset(triggerValues, -1, sizeof(int) * 64);
-    for (int i = 0; i < 8; i++) triggerBits[i] = 0;
+    for (int i = 0; i < 64; i++) triggerBits[i] = 0;
     for (int i = 0; i < 64; i++) graphRef[i] = nullptr;
 
     //ui->graphView->setInteractions();
@@ -51,7 +72,8 @@ FlowViewWindow::FlowViewWindow(const FrameListView *frames, QWidget *parent) :
     textLabel->position->setCoords(0.5, .5);
     textLabel->setText("+");
     textLabel->setFont(QFont(font().family(), 16)); // make font a bit larger
-    textLabel->setPen(QPen(Qt::black)); // show black border around text
+    textLabel->setPen(QPen(Theme::isDark() ? QColor(0xd0, 0xd0, 0xd0) : QColor(Qt::black))); // a border around the text
+    centerMark = textLabel;
 
     ui->graphView->xAxis->setLabel("Time Axis");
     if (useHexTicker) ui->graphView->yAxis->setLabel("Value Axis (HEX)");
@@ -136,6 +158,46 @@ FlowViewWindow::FlowViewWindow(const FrameListView *frames, QWidget *parent) :
     ui->listFrameID->horizontalScrollBar()->setEnabled(false);
 
     playbackTimer->setInterval(ui->spinPlayback->value()); //set the timer to the default value of the control
+
+    connect(ui->cbTimeGraph, &QCheckBox::toggled, this, [this]() { graphsDirty = true; updateGraphLocation(); });
+    connect(Theme::instance(), &Theme::changed, this, &FlowViewWindow::themeChanged);
+}
+
+QCustomPlot *FlowViewWindow::plot() const
+{
+    return ui->graphView;
+}
+
+// The byte colours and the "+" border follow the theme (Theme re-themes axes and background itself).
+void FlowViewWindow::themeChanged()
+{
+    if (centerMark) centerMark->setPen(QPen(Theme::isDark() ? QColor(0xd0, 0xd0, 0xd0) : QColor(Qt::black)));
+    for (int i = 0; i < 64; i++)
+        if (graphRef[i]) graphRef[i]->setPen(QPen(ReTools::byteColor(i), 1));
+    inhibitChangeCallback = true;
+    for (int i = 0; i < ui->tableBytes->rowCount(); i++)
+        if (QTableWidgetItem *item = ui->tableBytes->item(i, TABLE_BYTE::GRAPH_COLOR))
+            item->setBackground(QBrush(ReTools::byteColor(i)));
+    inhibitChangeCallback = false;
+    ui->graphView->replot();
+}
+
+void FlowViewWindow::selectId(quint32 id)
+{
+    for (int j = 0; j < ui->listFrameID->count(); j++)
+    {
+        if (FilterUtility::getIdAsInt(ui->listFrameID->item(j)) == id)
+        {
+            ui->listFrameID->setCurrentRow(j);
+            return;
+        }
+    }
+}
+
+void FlowViewWindow::setTriggerValue(int byte, int value)
+{
+    if (byte < 0 || byte >= ui->tableBytes->rowCount()) return;
+    ui->tableBytes->item(byte, TABLE_BYTE::TRIGGER)->setText(QString::number(value, 16)); // as typed: hex
 }
 
 void FlowViewWindow::showEvent(QShowEvent* event)
@@ -255,6 +317,10 @@ void FlowViewWindow::handleTableCellChange(int row, int col)
     case TABLE_BYTE::CURR:
         break;
     case TABLE_BYTE::REF:
+        // web-savvycan: the reference byte (SavvyCAN set the seek value here too)
+        refBytes[row] = static_cast<unsigned char>(ui->tableBytes->item(row, col)->text().toInt(nullptr, 16)); //always interpreted as hex
+        ui->flowView->setReference(refBytes, true);
+        break;
     case TABLE_BYTE::TRIGGER:
         triggerValues[row] = ui->tableBytes->item(row, col)->text().toInt(nullptr, 16); //always interpreted as hex
         break;
@@ -262,6 +328,7 @@ void FlowViewWindow::handleTableCellChange(int row, int col)
         if (ui->tableBytes->item(row, col)->checkState() == Qt::Checked)
         {
             if (!graphRef[row]) createGraph(row);
+            updateGraphLocation();
         }
         else
         {
@@ -292,9 +359,11 @@ void FlowViewWindow::selectAllGraphs()
             }
         }
         graphRef[i]->setVisible(true);
+        inhibitChangeCallback = true;
         ui->tableBytes->item(i, TABLE_BYTE::GRAPH_EN)->setCheckState(Qt::Checked);
+        inhibitChangeCallback = false;
     }
-    ui->graphView->replot();
+    updateGraphLocation();
 }
 
 void FlowViewWindow::selectNoGraphs()
@@ -306,7 +375,9 @@ void FlowViewWindow::selectNoGraphs()
             ui->graphView->removeGraph(graphRef[i]);
             graphRef[i] = nullptr;
             //graphRef[i]->setVisible(false);
-            ui->tableBytes->item(i, TABLE_BYTE::GRAPH_EN)->setCheckState(Qt::Unchecked);
+            inhibitChangeCallback = true;
+            if (i < ui->tableBytes->rowCount()) ui->tableBytes->item(i, TABLE_BYTE::GRAPH_EN)->setCheckState(Qt::Unchecked);
+            inhibitChangeCallback = false;
         }
     }
     ui->graphView->replot();
@@ -332,7 +403,7 @@ void FlowViewWindow::setupByteTable(int bytes)
         ni->setCheckState(Qt::Checked);
         ui->tableBytes->setItem(i, 4, ni);
         ni = new QTableWidgetItem("");
-        ni->setBackground(QBrush(graphColors[i % 8]));
+        ni->setBackground(QBrush(ReTools::byteColor(i)));
         ui->tableBytes->setItem(i, 5, ni);
     }
     inhibitChangeCallback = false;
@@ -340,6 +411,7 @@ void FlowViewWindow::setupByteTable(int bytes)
 
 void FlowViewWindow::gotCellClick(int bitPosition)
 {
+    if (bitPosition < 0 || bitPosition >= 512) return;
     int chunk = bitPosition / 64;
     int idx = bitPosition & 63;
     triggerBits[chunk] = triggerBits[chunk] ^ (1ull << idx);
@@ -358,7 +430,7 @@ void FlowViewWindow::plottableDoubleClick(QCPAbstractPlottable* plottable, QMous
     int id = 0;
     //apply transforms to get the X axis value where we double clicked
     double coord = plottable->keyAxis()->pixelToCoord(event->position().x());
-    if (frameCache.count() > 0) id = frameCache[0].frameId();
+    if (haveCacheId) id = cacheIdValue;
     if (secondsMode) emit sendCenterTimeID(id, coord);
     else emit sendCenterTimeID(id, coord / 1000000.0);
 }
@@ -371,22 +443,12 @@ void FlowViewWindow::gotCenterTimeID(uint32_t ID, double timestamp)
 
     qDebug() << "timestamp: " << t_stamp;
 
-    changeID(QString::number(ID)); //to be sure we're focused on the proper ID
-
-    for (int j = 0; j < ui->listFrameID->count(); j++)
-    {
-        uint32_t thisNum = FilterUtility::getIdAsInt(ui->listFrameID->item(j));
-        if (thisNum == ID)
-        {
-            ui->listFrameID->setCurrentRow(j);
-            break;
-        }
-    }
+    selectId(ID); //to be sure we're focused on the proper ID (selecting it loads its frames)
 
     int bestIdx = -1;
-    for (int i = 0; i < frameCache.count(); i++)
+    for (int i = 0; i < frameCache.size(); i++)
     {
-        if (frameCache[i].timeStamp().microSeconds() > t_stamp)
+        if (frameCache.timeUs(i) > t_stamp)
         {
             bestIdx = i - 1;
             break;
@@ -401,9 +463,7 @@ void FlowViewWindow::gotCenterTimeID(uint32_t ID, double timestamp)
             memcpy(refBytes, currBytes, 64);
         }
 
-        memset(currBytes, 0, 64); //first zero out all 8 bytes
-
-        memcpy(currBytes, frameCache.at(currentPosition).payload().data(), frameCache.at(currentPosition).payload().length());
+        loadCurrentBytes();
 
         updateDataView();
     }
@@ -431,6 +491,18 @@ void FlowViewWindow::contextMenuRequestGraph(QPoint pos)
 
 void FlowViewWindow::saveFileGraph()
 {
+#ifdef Q_OS_WASM
+    // web-savvycan: in the browser the picture goes to the browser as a download (Qt's save dialog would only see
+    // the page's in-memory file system)
+    {
+        QByteArray png;
+        QBuffer buffer(&png);
+        buffer.open(QIODevice::WriteOnly);
+        ui->graphView->toPixmap(1024, 768).save(&buffer, "PNG");
+        QFileDialog::saveFileContent(png, QStringLiteral("FlowViewGraph.png"));
+        return;
+    }
+#endif
     QString filename;
     QFileDialog dialog(this);
     QSettings settings;
@@ -471,6 +543,16 @@ void FlowViewWindow::saveFileGraph()
 
 void FlowViewWindow::saveFileFlow()
 {
+#ifdef Q_OS_WASM
+    {
+        QByteArray png;
+        QBuffer buffer(&png);
+        buffer.open(QIODevice::WriteOnly);
+        ui->flowView->grab().save(&buffer, "PNG");
+        QFileDialog::saveFileContent(png, QStringLiteral("FlowViewGrid.png"));
+        return;
+    }
+#endif
     QString filename;
     QFileDialog dialog(this);
     QSettings settings;
@@ -505,103 +587,100 @@ void FlowViewWindow::saveFileFlow()
 
 void FlowViewWindow::updatedFrames(int numFrames)
 {
-    QVector<double>newX[64];
-    QVector<double>newY[64];
-    const unsigned char *data;
-    int dataLen = 0;
-
-    const CommFrame *thisFrame;
-    if (numFrames == -1) //all frames deleted. Kill the display
+    if (numFrames == -1) //all frames deleted (or a file loaded in their place). Kill the display
     {
         ui->listFrameID->clear();
         foundID.clear();
+        frameCache.clear();
+        haveCacheId = false;
+        newFrames.reset();
         currentPosition = 0;
         refreshIDList();
-        updateFrameLabel();
         removeAllGraphs();
+        setupByteTable(0);
         memset(refBytes, 0, 64);
         memset(currBytes, 0, 64);
         updateDataView();
+        updateFrameLabel();
     }
-    else if (numFrames == -2) //all new set of frames. Reset
+    else if (numFrames == -2) //all new set of frames. Reset (the selected ID again, if it is still there)
     {
+        const bool had = haveCacheId;
+        const quint32 id = cacheIdValue;
         ui->listFrameID->clear();
         foundID.clear();
+        frameCache.clear();
+        haveCacheId = false;
+        newFrames.reset();
         currentPosition = 0;
         refreshIDList();
-        //if (ui->listFrameID->count() > 0)
-        //{
-         //   changeID(ui->listFrameID->item(0)->text());
-        //    ui->listFrameID->setCurrentRow(0);
-        //}
-        //updateFrameLabel();
+        if (had) selectId(id);
+        updateFrameLabel();
     }
-    else //just got some new frames. See if they are relevant.
+    else if (numFrames > 0) //just got some new frames. See if they are relevant.
     {
-        if (numFrames > modelFrames->count()) return;
-        unsigned int refID;
-        if (frameCache.count() > 0) refID = frameCache[0].frameId();
-            else refID = 0;
-        bool needRefresh = false;
-        for (int i = modelFrames->count() - numFrames; i < modelFrames->count(); i++)
+        // web-savvycan: the trace is a ring: the new frames are those after the newest one taken, not rows
+        // count - numFrames.. (wrong once the ring drops its oldest frames, and numFrames may be more than it keeps)
+        const QVector<CommFrame> fresh = newFrames.take(modelFrames, numFrames);
+        const qint64 droppedBefore = frameCache.dropped();
+        const int before = ui->listFrameID->count();
+        int added = 0;
+        for (const CommFrame &f : fresh)
         {
-            const CommFrame frameCopy = modelFrames->at(i); //the view returns copies
-            thisFrame = &frameCopy;
-            data = reinterpret_cast<const unsigned char *>(thisFrame->payload().constData());
-            dataLen = thisFrame->payload().length();
-
-            if (!foundID.contains(thisFrame->frameId()))
+            if (f.frameType() == CommFrame::ErrorFrame || f.frameType() == CommFrame::InvalidFrame) continue;
+            const quint32 id = f.frameId();
+            if (!foundID.contains(id))
             {
-                foundID.append(thisFrame->frameId());
-                FilterUtility::createFilterItem(thisFrame->frameId(), ui->listFrameID);
+                foundID.insert(id);
+                FilterUtility::createFilterItem(id, ui->listFrameID);
             }
-
-            if (thisFrame->frameId() == refID)
+            if (haveCacheId && id == cacheIdValue)
             {
-                frameCache.append(*thisFrame);
-
-                for (int k = 0; k < dataLen; k++)
+                if (f.payload().size() > frameCache.maxLength() && f.payload().size() > ui->tableBytes->rowCount())
                 {
-                    if (ui->cbTimeGraph->isChecked())
-                    {
-                        if (secondsMode){
-                            newX[k].append((double)(thisFrame->timeStamp().microSeconds()) / 1000000.0);
-                        }
-                        else
-                        {
-                            newX[k].append(thisFrame->timeStamp().microSeconds());
-                        }
-                    }
-                    else
-                    {
-                        newX[k].append(x[k].count());
-                    }
-                    newY[k].append(data[k]);
-                    needRefresh = true;
+                    // a longer frame of this ID (CAN FD): a row and a graph for each new byte
+                    const int oldRows = ui->tableBytes->rowCount();
+                    frameCache.append(f);
+                    growByteTable(oldRows, frameCache.maxLength());
                 }
+                else frameCache.append(f);
+                added++;
             }
         }
-        if (ui->cbLiveMode->checkState() == Qt::Checked)
+        if (ui->listFrameID->count() != before) ui->listFrameID->sortItems();
+        followDrops(droppedBefore);
+        if (added > 0)
         {
-            currentPosition = frameCache.count() - 1;
-            memset(currBytes, 0, 64);
-            memcpy(currBytes, frameCache.at(currentPosition).payload().data(), frameCache.at(currentPosition).payload().length());
-            memcpy(refBytes, currBytes, 64);
-
-        }
-        if (needRefresh)
-        {
-            for (int k = 0; k < dataLen; k++)
+            if (ui->cbLiveMode->checkState() == Qt::Checked)
             {
-                if (graphRef[k] && graphRef[k]->data())
-                    graphRef[k]->addData(newX[k], newY[k]);
+                currentPosition = frameCache.size() - 1;
+                loadCurrentBytes();
+                memcpy(refBytes, currBytes, 64);
             }
-            ui->graphView->replot();
             updateDataView();
-            if (ui->cbSync->checkState() == Qt::Checked) emit sendCenterTimeID(frameCache[currentPosition].frameId(), frameCache[currentPosition].timeStamp().microSeconds() / 1000000.0);
+            if (ui->cbSync->checkState() == Qt::Checked && currentPosition < frameCache.size())
+                emit sendCenterTimeID(cacheIdValue, frameCache.timeUs(currentPosition) / 1000000.0);
         }
     }
     updateFrameLabel();
+}
+
+// Frames went from the front of the ring: the current frame keeps its place among the frames (or is the oldest
+// left), the graphs are rebuilt.
+void FlowViewWindow::followDrops(qint64 droppedBefore)
+{
+    const qint64 gone = frameCache.dropped() - droppedBefore;
+    if (gone <= 0) return;
+    currentPosition = int(qMax<qint64>(0, currentPosition - gone));
+    graphsDirty = true;
+}
+
+// The current frame's bytes (zeros past its length).
+void FlowViewWindow::loadCurrentBytes()
+{
+    memset(currBytes, 0, 64);
+    if (currentPosition < 0 || currentPosition >= frameCache.size()) return;
+    memcpy(currBytes, frameCache.data(currentPosition), size_t(frameCache.length(currentPosition)));
 }
 
 void FlowViewWindow::removeAllGraphs()
@@ -609,134 +688,163 @@ void FlowViewWindow::removeAllGraphs()
     ui->graphView->clearGraphs();
     ui->graphView->replot();
     for (int i = 0; i < 64; i++) graphRef[i] = nullptr;
+    graphFirst = 0;
+    graphLast = -1;
+    graphsDirty = true;
 }
 
+// A graph for one byte, empty: rebuildGraphs() gives it the frames around the current one.
 void FlowViewWindow::createGraph(int byteNum)
 {
-    int tempVal;
-    double minval = 1000000.0, maxval = -100000.0;
-    const unsigned char *data;
-    const CommFrame *frame;
-
-    qDebug() << "Create Graph " << byteNum;
-
-    bool graphByTime = ui->cbTimeGraph->isChecked();
-
-    int numEntries = frameCache.count();
-    qDebug() << "Number of entries:" << numEntries;
-
-    x[byteNum].clear();
-    y[byteNum].clear();
-    x[byteNum].resize(numEntries);
-    y[byteNum].resize(numEntries);
-
-    for (int j = 0; j < numEntries; j++)
-    {
-        frame = &frameCache[j];
-        data = reinterpret_cast<const unsigned char *>(frame->payload().constData());
-        if (byteNum < frameCache[j].payload().length())
-            tempVal = data[byteNum];
-        else
-            tempVal = 0;
-
-        if (graphByTime)
-        {
-            if (secondsMode){
-                x[byteNum][j] = frame->timeStamp().microSeconds() / 1000000.0;
-            }
-            else
-            {
-                x[byteNum][j] = frame->timeStamp().microSeconds();
-            }
-        }
-        else
-        {
-            x[byteNum][j] = j;
-        }
-
-        y[byteNum][j] = tempVal;
-        if (y[byteNum][j] < minval) minval = y[byteNum][j];
-        if (y[byteNum][j] > maxval) maxval = y[byteNum][j];
-    }
-
+    if (byteNum < 0 || byteNum >= 64) return;
     graphRef[byteNum] = ui->graphView->addGraph();
     ui->graphView->graph()->setName(QString("Graph %1").arg(ui->graphView->graphCount()-1));
-    ui->graphView->graph()->setData(x[byteNum],y[byteNum]);
     ui->graphView->graph()->setLineStyle(QCPGraph::lsLine); //connect points with lines
     QPen graphPen;
-    graphPen.setColor(graphColors[byteNum % 8]);
+    graphPen.setColor(ReTools::byteColor(byteNum));
     graphPen.setWidth(1);
     ui->graphView->graph()->setPen(graphPen);
     ui->graphView->axisRect()->setupFullAxesBox();
+    graphsDirty = true;
+}
+
+// A frame's place on the x axis: its time (s or µs as the app's time setting) or its number since the ID was
+// selected (stays the same as old frames leave the ring).
+double FlowViewWindow::graphKey(int i) const
+{
+    if (ui->cbTimeGraph->isChecked())
+        return secondsMode ? frameCache.timeUs(i) / 1000000.0 : double(frameCache.timeUs(i));
+    return double(frameCache.dropped() + i);
+}
+
+void FlowViewWindow::rebuildGraphs(int from, int to)
+{
+    graphFirst = from;
+    graphLast = to;
+    graphDropped = frameCache.dropped();
+    graphsDirty = false;
+    const int n = to >= from ? to - from + 1 : 0;
+    QVector<double> keys(n);
+    for (int j = 0; j < n; j++) keys[j] = graphKey(from + j);
+    for (int k = 0; k < 64; k++)
+    {
+        if (!graphRef[k]) continue;
+        QVector<QCPGraphData> points(n);
+        for (int j = 0; j < n; j++)
+        {
+            const int i = from + j;
+            points[j].key = keys[j];
+            points[j].value = k < frameCache.length(i) ? frameCache.data(i)[k] : 0;
+        }
+        graphRef[k]->data()->set(points, true);
+    }
 }
 
 void FlowViewWindow::refreshIDList()
 {
-    unsigned int id;
-    for (int i = 0; i < modelFrames->count(); i++)
+    // one pass in slices (the view makes a copy of each frame)
+    const qsizetype count = modelFrames->count();
+    for (qsizetype i = 0; i < count; i += 4096)
     {
-        CommFrame thisFrame = modelFrames->at(i);
-        id = static_cast<unsigned int>(thisFrame.frameId());
-        if (!foundID.contains(id))
+        const QVector<CommFrame> chunk = modelFrames->mid(i, 4096);
+        for (const CommFrame &f : chunk)
         {
-            foundID.append(id);
-            FilterUtility::createFilterItem(id, ui->listFrameID);
+            if (f.frameType() == CommFrame::ErrorFrame || f.frameType() == CommFrame::InvalidFrame) continue;
+            const quint32 id = f.frameId();
+            if (!foundID.contains(id))
+            {
+                foundID.insert(id);
+                FilterUtility::createFilterItem(id, ui->listFrameID);
+            }
         }
     }
+    newFrames.markTaken(modelFrames);
     //default is to sort in ascending order
     ui->listFrameID->sortItems();
 }
 
 void FlowViewWindow::updateFrameLabel()
 {
-    if (frameCache.count() > 0)
-        ui->lblNumFrames->setText(QString::number(currentPosition + 1) + tr(" of ") + QString::number(frameCache.count()));
+    if (frameCache.size() > 0)
+        ui->lblNumFrames->setText(QString::number(currentPosition + 1) + tr(" of ") + QString::number(frameCache.size()));
     else ui->lblNumFrames->setText("0 of 0");
 }
 
 void FlowViewWindow::changeID(QString newID)
 {
     qDebug() << "change id " << newID;
+    if (newID.isEmpty()) return;
     //parse the ID and then load up the frame cache with just messages with that ID.
     uint32_t id = (uint32_t)Utility::ParseStringToNum(newID);
     frameCache.clear();
-
-    if (modelFrames->count() == 0) return;
+    haveCacheId = true;
+    cacheIdValue = id;
 
     playbackTimer->stop();
     playbackActive = false;
-    int maxBytes = 0;
-    for (int x = 0; x < modelFrames->count(); x++)
+    // one pass over the trace in slices; frames that come later are found by the newest frame read
+    const qsizetype count = modelFrames->count();
+    for (qsizetype x = 0; x < count; x += 4096)
     {
-        CommFrame thisFrame = modelFrames->at(x);
-        if (thisFrame.frameId() == id)
-        {
-            thisFrame.payload().clear();
-            frameCache.append(thisFrame);
-            if (thisFrame.payload().length() > maxBytes) maxBytes = thisFrame.payload().length();
-        }
+        const QVector<CommFrame> chunk = modelFrames->mid(x, 4096);
+        for (const CommFrame &f : chunk)
+            if (f.frameId() == id && f.frameType() != CommFrame::ErrorFrame && f.frameType() != CommFrame::InvalidFrame)
+                frameCache.append(f);
     }
+    newFrames.markTaken(modelFrames);
+    const int maxBytes = frameCache.maxLength();
     ui->flowView->setBytesToDraw(maxBytes);
     setupByteTable(maxBytes);
 
     currentPosition = 0;
-
-    if (frameCache.count() == 0) return;
-
     removeAllGraphs();
+
+    if (frameCache.size() == 0)
+    {
+        memset(currBytes, 0, 64);
+        memset(refBytes, 0, 64);
+        updateDataView();
+        return;
+    }
+
     //for (uint32_t c = 0; c < frameCache.at(0).len; c++)
     for (int c = 0; c < maxBytes; c++)
     {
         createGraph(c);
     }
 
-    updateGraphLocation();
-
-    memset(currBytes, 0, 64);
-    memcpy(currBytes, frameCache.at(currentPosition).payload().constData(), frameCache.at(currentPosition).payload().length());
+    loadCurrentBytes();
     memcpy(refBytes, currBytes, 64);
 
     updateDataView();
+}
+
+// A longer frame than before (CAN FD): table rows, grid and graphs for bytes oldRows..newRows-1.
+void FlowViewWindow::growByteTable(int oldRows, int newRows)
+{
+    if (newRows <= oldRows) return;
+    inhibitChangeCallback = true;
+    ui->tableBytes->setRowCount(newRows);
+    for (int i = oldRows; i < newRows; i++)
+    {
+        QTableWidgetItem *ni = new QTableWidgetItem(QString::number(i));
+        ni->setFlags(Qt::ItemIsEnabled);
+        ui->tableBytes->setItem(i, 0, ni);
+        ni = new QTableWidgetItem(QString::number(0));
+        ni->setFlags(Qt::ItemIsEnabled);
+        ui->tableBytes->setItem(i, 1, ni);
+        ui->tableBytes->setItem(i, 2, new QTableWidgetItem(QString::number(0)));
+        ui->tableBytes->setItem(i, 3, new QTableWidgetItem(QString::number(-1)));
+        ni = new QTableWidgetItem("");
+        ni->setCheckState(Qt::Checked);
+        ui->tableBytes->setItem(i, 4, ni);
+        ni = new QTableWidgetItem("");
+        ni->setBackground(QBrush(ReTools::byteColor(i)));
+        ui->tableBytes->setItem(i, 5, ni);
+        createGraph(i);
+    }
+    inhibitChangeCallback = false;
+    ui->flowView->setBytesToDraw(newRows);
 }
 
 void FlowViewWindow::btnBackOneClick()
@@ -760,6 +868,7 @@ void FlowViewWindow::btnPauseClick()
 void FlowViewWindow::btnReverseClick()
 {
     ui->cbLiveMode->setChecked(false);
+    if (frameCache.isEmpty()) return;
     playbackActive = true;
     playbackForward = false;
     playbackTimer->start();
@@ -772,8 +881,7 @@ void FlowViewWindow::btnStopClick()
     playbackActive = false;
     currentPosition = 0;
 
-    memset(currBytes, 0, 64);
-    memcpy(currBytes, frameCache.at(currentPosition).payload().constData(), frameCache.at(currentPosition).payload().length());
+    loadCurrentBytes();
     memcpy(refBytes, currBytes, 64);
 
     updateFrameLabel();
@@ -783,6 +891,7 @@ void FlowViewWindow::btnStopClick()
 void FlowViewWindow::btnPlayClick()
 {
     ui->cbLiveMode->setChecked(false);
+    if (frameCache.isEmpty()) return;
     playbackActive = true;
     playbackForward = true;
     playbackTimer->start();
@@ -809,7 +918,7 @@ void FlowViewWindow::changeLooping(bool check)
 
 void FlowViewWindow::timerTriggered()
 {
-    if (!playbackActive || (ui->cbLiveMode->checkState() == Qt::Checked))
+    if (!playbackActive || (ui->cbLiveMode->checkState() == Qt::Checked) || frameCache.isEmpty())
     {
         playbackTimer->stop();
         return;
@@ -828,7 +937,7 @@ void FlowViewWindow::timerTriggered()
     if (!ui->cbLoopPlayback->isChecked())
     {
         if (currentPosition == 0) playbackActive = false;
-        if (currentPosition == (frameCache.count() - 1)) playbackActive = false;
+        if (currentPosition == (frameCache.size() - 1)) playbackActive = false;
     }
 }
 
@@ -846,7 +955,9 @@ void FlowViewWindow::updateDataView()
     ui->flowView->setReference(refBytes, false);
     ui->flowView->updateData(currBytes, true);
 
-    ui->timelineSlider->setMaximum(frameCache.count() - 1);
+    // web-savvycan: never a negative timeline (no frames: 0..0), so it can't send position -1
+    const QSignalBlocker blockSlider(ui->timelineSlider);
+    ui->timelineSlider->setMaximum(qMax(0, frameCache.size() - 1));
     ui->timelineSlider->setValue(currentPosition);
 
     for (int i = 0; i < maxbyte; i++)
@@ -866,36 +977,39 @@ void FlowViewWindow::updateDataView()
 }
 
 void FlowViewWindow::gotoFrame(int frame) {
-    if (frameCache.count() >= frame) currentPosition = frame;
+    if (frameCache.isEmpty()) return;
+    if (frame >= 0 && frame < frameCache.size()) currentPosition = frame;
     else currentPosition = 0;
 
     processNewPosition();
 
     updateDataView();
-    updateGraphLocation();
 }
 
 void FlowViewWindow::updatePosition(bool forward)
 {
+    if (frameCache.isEmpty()) return;
 
     if (forward)
     {
-        if (currentPosition < (frameCache.count() - 1)) currentPosition++;
+        if (currentPosition < (frameCache.size() - 1)) currentPosition++;
         else if (ui->cbLoopPlayback->isChecked()) currentPosition = 0;
     }
     else
     {
         if (currentPosition > 0) currentPosition--;
-        else if (ui->cbLoopPlayback->isChecked()) currentPosition = frameCache.count() - 1;
+        else if (ui->cbLoopPlayback->isChecked()) currentPosition = frameCache.size() - 1;
     }
 
     processNewPosition();
 
+    const QSignalBlocker blockSlider(ui->timelineSlider);
     ui->timelineSlider->setValue(currentPosition);
 }
 
 void FlowViewWindow::processNewPosition()
 {
+    if (currentPosition < 0 || currentPosition >= frameCache.size()) return;
     if (ui->cbAutoRef->isChecked())
     {
         memcpy(refBytes, currBytes, 64);
@@ -905,71 +1019,44 @@ void FlowViewWindow::processNewPosition()
     //get through that then they're changed and a trigger so we stop playback at this frame.
     //This is complicated by the fact that CAN-FD frames might have far more than 64 bits. It is necessary
     //to thus process them 64 bits at a time and just move chunk to chunk until done.
-    for (int chunk = 0; chunk < frameCache.at(currentPosition).payload().length(); chunk += 8)
+    //web-savvycan: chunk is the first byte of 8 (it was used as byte * 8: bytes 8.. read past the frame).
+    const unsigned char *data = frameCache.data(currentPosition);
+    const int len = frameCache.length(currentPosition);
+    for (int chunk = 0; chunk < len; chunk += 8)
     {
         uint64_t changedBits = 0;
-        uint8_t cngByte;
-        int maxVal = qMin(chunk * 8 + 8, frameCache.at(currentPosition).payload().length());
-        for (int i = chunk * 8; i < maxVal; i++)
+        const int maxVal = qMin(chunk + 8, len);
+        for (int i = chunk; i < maxVal; i++)
         {
-            unsigned char thisByte = static_cast<unsigned char>(frameCache.at(currentPosition).payload()[i]);
-            cngByte = currBytes[i] ^ thisByte;
+            const uint8_t cngByte = currBytes[i] ^ data[i];
             changedBits |= (uint64_t)cngByte << (8ull * (i & 7));
         }
-
-        qDebug() << "ChangedBits: " << QString::number(changedBits, 16);
-        qDebug() << "TriggerBits: " << QString::number(triggerBits[chunk / 8], 16);
         changedBits &= triggerBits[chunk / 8];
-        qDebug() << "Final ChangedBits: " << QString::number(changedBits, 16);
         if (changedBits)
         {
             playbackActive = false;
             playbackTimer->stop();
         }
     }
-    memset(currBytes, 0, 64);
-    memcpy(currBytes, frameCache.at(currentPosition).payload().constData(), frameCache.at(currentPosition).payload().length());
+    loadCurrentBytes();
 
-    if (ui->cbSync->checkState() == Qt::Checked) emit sendCenterTimeID(frameCache[currentPosition].frameId(), frameCache[currentPosition].timeStamp().microSeconds() / 1000000.0);
+    if (ui->cbSync->checkState() == Qt::Checked) emit sendCenterTimeID(cacheIdValue, frameCache.timeUs(currentPosition) / 1000000.0);
 }
 
 void FlowViewWindow::updateGraphLocation()
 {
-    if (frameCache.count() == 0) return;
-    int start = currentPosition - ui->graphRangeSlider->value();
+    if (frameCache.size() == 0) return;
+    const int range = ui->graphRangeSlider->value();
+    int start = currentPosition - range;
     if (start < 0) start = 0;
-    int end = currentPosition + ui->graphRangeSlider->value();
-    if (end >= frameCache.count()) end = frameCache.count() - 1;
-    if (ui->cbTimeGraph->isChecked())
-    {
-        if (secondsMode)
-        {
-            ui->graphView->xAxis->setRange(frameCache[start].timeStamp().microSeconds() / 1000000.0, frameCache[end].timeStamp().microSeconds() / 1000000.0);
-            /*
-            ui->graphView->xAxis->setTickStep((frameCache[end].timeStamp().microSeconds() - frameCache[start].timeStamp().microSeconds())/ 3000000.0);
-            ui->graphView->xAxis->setSubTickCount(0);
-            ui->graphView->xAxis->setNumberFormat("f");
-            ui->graphView->xAxis->setNumberPrecision(6);
-            */
-        }
-        else
-        {
-            ui->graphView->xAxis->setRange(frameCache[start].timeStamp().microSeconds(), frameCache[end].timeStamp().microSeconds());
-            /*
-            ui->graphView->xAxis->setTickStep((frameCache[end].timeStamp().microSeconds() - frameCache[start].timeStamp().microSeconds())/ 3.0);
-            ui->graphView->xAxis->setSubTickCount(0);
-            ui->graphView->xAxis->setNumberFormat("f");
-            ui->graphView->xAxis->setNumberPrecision(0); */
-        }
-    }
-    else
-    {
-        ui->graphView->xAxis->setRange(start, end);
-        //ui->graphView->xAxis->setTickStep(5.0);
-        //ui->graphView->xAxis->setSubTickCount(0);
-        ui->graphView->xAxis->setNumberFormat("gb");
-    }
+    int end = currentPosition + range;
+    if (end >= frameCache.size()) end = frameCache.size() - 1;
+    // the graphs hold the frames around the current one: rebuilt when the view leaves them (or new frames should
+    // show, or old ones left the ring)
+    if (graphsDirty || graphDropped != frameCache.dropped() || start < graphFirst || end > graphLast)
+        rebuildGraphs(qMax(0, currentPosition - 2 * range), qMin(frameCache.size() - 1, currentPosition + 2 * range));
+    ui->graphView->xAxis->setRange(graphKey(start), graphKey(end));
+    if (!ui->cbTimeGraph->isChecked()) ui->graphView->xAxis->setNumberFormat("gb");
 
     ui->graphView->replot();
 }
-

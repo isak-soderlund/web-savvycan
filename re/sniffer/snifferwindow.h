@@ -94,6 +94,10 @@ public:
     void showEvent(QShowEvent*);
     void closeEvent(QCloseEvent*);
 
+    // For the test hook (testhook.cpp).
+    const SnifferModel &model() const { return mModel; }
+    QListWidget *idList() const;
+
 public slots:
     void update();
     void notchTick();

@@ -4,6 +4,18 @@
 #include "sniffermodel.h"
 #include "snifferwindow.h"
 #include "SnifferDelegate.h"
+#include "theme.h"
+
+/*
+ * web-savvycan (stage 4): RE Tools > Sniffer.
+ * - Theme: the colours are chosen by the theme in effect when drawn (SavvyCAN read the palette's text colour once,
+ *   when the window was made, so a theme switch left light grey fading on white or black on dark).
+ * - Rows: index() looks the row up in a vector (it walked the map from the start for every cell: O(rows) a cell).
+ * - Error frames are not IDs (they were listed under their error class as an ID); remote frames have no data to
+ *   sniff (one emptied its ID's bytes).
+ * - At most kMaxIds IDs; every frame is counted (framesSeen) for the tests.
+ * CAN FD: SnifferItem has 64 bytes (MAX_BYTES), the window 64 data columns.
+ */
 
 SnifferModel::SnifferModel(QObject *parent)
     : QAbstractItemModel(parent),
@@ -14,12 +26,14 @@ SnifferModel::SnifferModel(QObject *parent)
       mTimeSequence(0),
       mExpireInterval(5000)
 {
-    QColor TextColor = QApplication::palette().color(QPalette::Text);
-    if (TextColor.red() + TextColor.green() + TextColor.blue() < 200)
-    {
-        mDarkMode = false;
-    }
-    else mDarkMode = true;
+}
+
+void SnifferModel::rebuildRows()
+{
+    const QMap<quint32, SnifferItem*>& map = mFilter ? mFilters : mMap;
+    mRows.clear();
+    mRows.reserve(map.size());
+    for (SnifferItem *item : map) mRows.append(item);
 }
 
 SnifferModel::~SnifferModel()
@@ -85,6 +99,7 @@ QVariant SnifferModel::data(const QModelIndex &index, int role) const
         }
         case Qt::ForegroundRole:
         {
+            const bool mDarkMode = Theme::isDark();
             if (!mFadeInactive ||  col < 2) return QApplication::palette().brush(QPalette::Text);
             int v = item->getSeqInterval(col - 2) * 10;
             //qDebug() << "mTS: " << mTimeSequence << " gDT(" << (col - 2) << ") " << item->getDataTimestamp(col - 2);
@@ -103,6 +118,7 @@ QVariant SnifferModel::data(const QModelIndex &index, int role) const
 
         case Qt::BackgroundRole:
         {
+            const bool mDarkMode = Theme::isDark();
             if(tc::ID==col)
             {
                 if(item->elapsed() > 4000)
@@ -171,17 +187,10 @@ QModelIndex SnifferModel::index(int row, int column, const QModelIndex &parent) 
     if (parent.isValid())
         return QModelIndex();
 
-    const QMap<quint32, SnifferItem*>& map = mFilter ? mFilters : mMap;
-
-    if(column>tc::LAST || row>=map.size())
+    if(column>tc::LAST || row < 0 || row>=mRows.size())
         return QModelIndex();
 
-    /* ugly but I can't find best without creating a list to keep indexes */
-    QMap<quint32, SnifferItem*>::const_iterator iter;
-    int i;
-    for(iter = map.begin(), i=0 ; i<row ; ++i, ++iter);
-
-    return createIndex(row, column, iter.value());
+    return createIndex(row, column, mRows[row]);
 }
 
 
@@ -227,6 +236,9 @@ void SnifferModel::clear()
     mMap.clear();
     mFilters.clear();
     mFilter = false;
+    mRows.clear();
+    mFramesSeen = 0;
+    mHiddenFrames = 0;
     endResetModel();
 }
 
@@ -269,6 +281,7 @@ void SnifferModel::refresh()
             /* send notification */
             emit idChange(id, false);
         }
+        rebuildRows();
         endResetModel();
     }
     else
@@ -291,7 +304,8 @@ void SnifferModel::filter(fltType pType, int pId)
         case fltType::ADD:
             /* add filter to list */
             mFilter = true;
-            mFilters[pId] = mMap[pId];
+            // web-savvycan: only an ID that is there (mMap[pId] put a null item into the map for an expired one)
+            if (mMap.contains(pId)) mFilters[pId] = mMap.value(pId);
             break;
         case fltType::REMOVE:
             /* remove filter */
@@ -306,6 +320,7 @@ void SnifferModel::filter(fltType pType, int pId)
             mFilters.clear();
             break;
     }
+    rebuildRows();
     endResetModel();
 }
 
@@ -316,22 +331,37 @@ void SnifferModel::filter(fltType pType, int pId)
 
 void SnifferModel::update(CANConnection*, QVector<CommFrame>& pFrames)
 {
-    foreach(const CommFrame& frame, pFrames)
+    for (const CommFrame& frame : pFrames)
     {
-        if(!mMap.contains(frame.frameId()))
+        // web-savvycan: data frames only (an error frame is no ID, a remote frame has no data)
+        if (frame.frameType() != CommFrame::CANDataFrame && frame.frameType() != CommFrame::CANFDDataFrame) continue;
+        mFramesSeen++;
+        auto it = mMap.find(frame.frameId());
+        if (it == mMap.end())
         {
-            int index = std::distance(mMap.begin(), mMap.lowerBound(frame.frameId()));
+            if (mMap.size() >= kMaxIds)
+            {
+                mHiddenFrames++;
+                continue;
+            }
+            SnifferItem *item = new SnifferItem(frame, mTimeSequence);
+            item->update(frame, mTimeSequence, mMuteNotched);
+            // web-savvycan: a new ID is listed checked, so it is shown also while filtering (SavvyCAN announced the
+            // row in the full map's order while the view showed the filtered one)
+            QMap<quint32, SnifferItem*> &shown = mFilter ? mFilters : mMap;
+            int index = std::distance(shown.begin(), shown.lowerBound(frame.frameId()));
             /* add the frame */
             beginInsertRows(QModelIndex(), index, index);
-            mMap[frame.frameId()] = new SnifferItem(frame, mTimeSequence);
-            mMap[frame.frameId()]->update(frame, mTimeSequence, mMuteNotched);
+            mMap.insert(frame.frameId(), item);
+            if (mFilter) mFilters.insert(frame.frameId(), item);
+            mRows.insert(index, item);
             endInsertRows();
 
             emit idChange(frame.frameId(), true);
         }
         else
             //updateData
-            mMap[frame.frameId()]->update(frame, mTimeSequence, mMuteNotched);
+            it.value()->update(frame, mTimeSequence, mMuteNotched);
     }
 }
 

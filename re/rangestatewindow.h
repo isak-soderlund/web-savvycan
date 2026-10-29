@@ -5,6 +5,10 @@
 #include "framestore.h"
 #include <QMap>
 #include "can_structs.h"
+#include "re/retools.h"
+#include <vector>
+
+class QCustomPlot;
 
 namespace Ui {
 class RangeStateWindow;
@@ -19,6 +23,13 @@ public:
     ~RangeStateWindow();
     void showEvent(QShowEvent*);
 
+    // For the test hook (testhook.cpp).
+    const std::vector<ReTools::RangeCandidate> &candidates() const { return foundSignals; }
+    bool busy() const { return running; }
+    qint64 lastRunMs() const { return runMs; }
+    qint64 lastRunFrames() const { return runFrames; }
+    QCustomPlot *plot() const;
+
 private slots:
     void updatedFrames(int);
     void recalcButton();
@@ -27,17 +38,18 @@ private slots:
 private:
     Ui::RangeStateWindow *ui;
     const FrameListView *modelFrames;
-    QVector<CommFrame> frameCache;
-    QList<int64_t> foundSignals;
+    std::vector<ReTools::RangeCandidate> foundSignals;
     QMap<int, bool> idFilters;
+    bool running = false;
+    qint64 runMs = 0, runFrames = 0;
 
     void refreshFilterList();
     void closeEvent(QCloseEvent *event);
     void readSettings();
     void writeSettings();
-    void signalsFactory();
-    bool processSignal(int startBit, int bitLength, int sensitivity, bool bigEndian, bool isSigned);
-    void createGraph(QVector<int> values);
+    void addFilterId(quint32 id);
+    ReTools::IdFrames framesOf(quint32 id) const;
+    void createGraph(const QVector<double> &values);
     bool eventFilter(QObject *obj, QEvent *event);
 };
 

@@ -7,6 +7,7 @@
 #include "connections/canconmanager.h"
 #include "SnifferDelegate.h"
 #include "utility.h"
+#include "theme.h"
 
 SnifferWindow::SnifferWindow(QWidget *parent) :
     QDialog(parent),
@@ -19,7 +20,12 @@ SnifferWindow::SnifferWindow(QWidget *parent) :
     inhibitSectionResizeEvent = false;
 
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    // web-savvycan: a framed dialog in the browser (a Qt::Window is frameless over the main window's menus)
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+#else
     setWindowFlags(Qt::Window);
+#endif
     ui->treeView->setModel(&mModel);
 
     sniffDel = new SnifferDelegate();
@@ -71,6 +77,13 @@ SnifferWindow::SnifferWindow(QWidget *parent) :
     );
     connect(ui->spinNotchInterval, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int i){mNotchTimer.setInterval(i);});
     connect(ui->spinExpireInterval, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int i){mModel.setExpireInterval(i);});
+    // web-savvycan: the cells are drawn in the theme's colours; a switch redraws them at once
+    connect(Theme::instance(), &Theme::changed, this, [this]() { ui->treeView->viewport()->update(); });
+}
+
+QListWidget *SnifferWindow::idList() const
+{
+    return ui->listWidget;
 }
 
 SnifferWindow::~SnifferWindow()
@@ -146,6 +159,7 @@ void SnifferWindow::closeEvent(QCloseEvent *event)
     Q_UNUSED(event);
     /* stop timer */
     mGUITimer.stop();
+    mNotchTimer.stop();
     /* disconnect reception of frames */
     disconnect(CANConManager::getInstance(), 0, this, 0);
     writeSettings();

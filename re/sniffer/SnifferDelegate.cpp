@@ -4,25 +4,37 @@
 #include <QDebug>
 #include "utility.h"
 #include "re/sniffer/snifferitem.h"
+#include "theme.h"
 
-SnifferDelegate::SnifferDelegate(QWidget *parent) : QItemDelegate(parent)
+// web-savvycan: the bit cells' colours by the theme in effect when drawn (SavvyCAN chose red/green once, from the
+// palette at construction, and drew set bits black and clear ones white in both themes). Light: SavvyCAN's; dark:
+// set bits light, clear ones dark (as the bit grid, candatagrid.cpp), notched mid grey, dark red/green.
+void SnifferDelegate::chooseBrushes() const
 {
-    QColor TextColor = QApplication::palette().color(QPalette::Text);
-    if (TextColor.red() + TextColor.green() + TextColor.blue() < 200)
+    if (mBrushesDark == Theme::isDark() && mBrushesSet) return;
+    mBrushesDark = Theme::isDark();
+    mBrushesSet = true;
+    if (!mBrushesDark)
     {
-        mDarkMode = false;
         redBrush = QBrush(Qt::red);
         greenBrush = QBrush(Qt::green);
+        blackBrush = QBrush(Qt::black);
+        whiteBrush = QBrush(Qt::white);
+        grayBrush = QBrush(QColor(230,230,230));
     }
     else
     {
-        mDarkMode = true;
         redBrush = QBrush(QColor(128,0,0));
         greenBrush = QBrush(QColor(0,128,0));
+        blackBrush = QBrush(QColor(0xd0, 0xd0, 0xd0));  // a set bit
+        whiteBrush = QBrush(QColor(0x2a, 0x2a, 0x2a));  // a clear bit
+        grayBrush = QBrush(QColor(0x60, 0x60, 0x60));   // notched
     }
-    blackBrush = QBrush(Qt::black);
-    whiteBrush = QBrush(Qt::white);
-    grayBrush = QBrush(QColor(230,230,230));
+}
+
+SnifferDelegate::SnifferDelegate(QWidget *parent) : QItemDelegate(parent)
+{
+    chooseBrushes();
     mainFont.setPointSize(10);
     mainFontInfo = new QFontInfo(mainFont);
     mFadeInactive = false;
@@ -59,6 +71,7 @@ void SnifferDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     int notchPattern = item->getNotchPattern(idx);
     int maskPattern;
     if (val < 0) return;
+    chooseBrushes();
 
     QRect viewport = option.rect;
 
@@ -109,6 +122,7 @@ void SnifferDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         }
         if (mFadeInactive) painter->setOpacity((255 - v) / 255.0);
         else painter->setOpacity(1.0);
+        painter->setPen(mBrushesDark ? QColor(0x80, 0x80, 0x80) : QColor(Qt::black)); // cell outlines
         painter->drawRect(viewport.left() + x * xSector, viewport.top() + yOffset, xSector, xSector);
     }
 
