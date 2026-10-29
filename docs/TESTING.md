@@ -1,8 +1,10 @@
-# Testing stage 1 with a real rc1 (owner)
+# Testing web-savvycan with a real rc1 (owner)
 
-Stage 1 (RESOLVE.md "MVP"): connect to rc1 from Chrome, watch the frames, log them to a file, light/dark theme.
-Everything below has passed in headless Chromium against a **fake** rc1 (see "What only the fake has checked"); this
-is the check with the real device, the real Chrome and a real bus.
+Stage 1 (RESOLVE.md "MVP"): connect to rc1 from Chrome, watch the frames, log them to a file, light/dark theme. Then
+what came after (steps 9-14): auto-connect, graphs, loading a log file, Temporal Graph and Frame Data Analysis (the
+heatmap).
+Everything below has passed in headless Chromium against a **fake** rc1, and with the **real** rc1 and a real bus on
+the rig (see "What the rig has checked"); this is the check with your Chrome, your OS and your car.
 
 ## What you need
 
@@ -17,7 +19,8 @@ is the check with the real device, the real Chrome and a real bus.
 
 ### Serving the app
 
-From the rig, without copying anything (the page runs in your Chrome, rc1 is plugged into your PC):
+Easiest: the hosted page **https://resolve-ev.com/resolve-can/savvycan** (the website's build of main; its About box
+names the commit). To test a build that isn't hosted, from the rig, without copying anything (the page runs in your Chrome, rc1 is plugged into your PC):
 
 ```
 ssh -L 8000:127.0.0.1:8000 hil 'node ~/src/web-savvycan/tests/web/server.mjs --port 8000 --dist ~/src/web-savvycan/dist'
@@ -35,8 +38,8 @@ second line `dirty` means uncommitted changes were in it).
 
 ## The test
 
-1. **Start.** The page loads (a few seconds: ~9 MB). SavvyCAN's main window: File, View, Connection, Help;
-   only stage-1 entries are enabled.
+1. **Start.** The page loads (a few seconds: ~9 MB). SavvyCAN's main window: File, RE Tools, Connection, Help;
+   only the switched-on stages' entries are there (RESOLVE.md `enabledfeatures.h`).
 2. **Connect over GVRET.** Connection > Open Connection Window > Add New Device Connection > **Serial Connection
    (GVRET)** > **Choose device...** > pick *resolve-can-1* in Chrome's list > Connect > **Create New Connection**.
    - The list shows GVRET / WebSerial ... / Connected after ~3-4 s (SavvyCAN's ESP32 start: DTR/RTS low, 3 s wait,
@@ -55,18 +58,62 @@ second line `dirty` means uncommitted changes were in it).
    - Optional: File > *Choose the Log's Name When Logging Stops...*, then Start / Cease: it asks for the name;
      *Keep Logging* goes on logging.
    - Closing the tab while logging asks first; a crash or a closed tab loses the log (accepted for the MVP).
-5. **Theme.** View > **Dark Theme**: the whole window goes dark (trace rows too). Reload the page (Cmd-R / F5):
-   still dark. View > **Light Theme**, View > **Follow System Theme** (then it follows the OS setting).
+5. **Theme.** File > **Preferences** > Theme: **Dark**: the whole window goes dark (trace rows too). Reload the page
+   (Cmd-R / F5): still dark. **Light**, then **Follow system** (then it follows the OS setting).
 6. **Unplug.** While connected and receiving, pull rc1's USB cable: the connection shows as disconnected, the page
-   keeps working (no error page, no freeze). Plug it back in, Add New Device Connection again (rc1 is listed without
-   the chooser now) and Create New Connection: frames come again.
-7. **Returning visit.** Close the tab, open the page again: the theme is kept, and rc1 is listed in the New
-   Connection dialog without Choose device... (Chrome remembers the permission).
+   keeps working (no error page, no freeze). Plug it back in: it connects again by itself (auto-connect, step 9), or
+   Add New Device Connection again (rc1 is listed without the chooser now) and Create New Connection: frames come again.
+7. **Returning visit.** Close the tab, open the page again: the theme is kept, and the page connects to rc1 by itself
+   (step 9; Chrome remembers the permission).
 8. **Optional: LAWICEL.** Same as 2 with **LAWICEL / SLCAN Serial**: set CAN Bus Speed (and CAN-FD, its data rate)
    in the New Connection dialog before Create New Connection; there are no Bus Details to save.
 
+9. **Auto-connect.** With a connection made (step 2), reload the page: within ~5 s the trace fills again, without the
+   connection window or the chooser, with the same bus (speed, CAN FD, data rate: Connection > Open Connection Window
+   shows it). Also with LAWICEL. File > Preferences > **Connect to the last device when the page opens** off, reload:
+   not connected; on again, reload: connects. rc1 unplugged while the page opens: nothing happens, no error; plugged in
+   later: it connects when you reload.
+10. **Graphs.** With frames coming: right-click a row of the trace > **Add to graph** (or RE Tools > New Graphing
+    Window > Graph > **Add New Graph**: ID, start bit, length; the bit grid shows 64 bytes for an FD ID). The graph
+    grows and its right edge follows the newest value (View > Follow End of Graph in the graph window, on by default);
+    zoom with the mouse wheel, drag to pan; R or View > Reset View shows the whole session. Try a byte past byte 8 of an
+    FD frame. Leave a graph running a long time (an hour): the page stays smooth and its memory doesn't keep growing
+    (Chrome's Task Manager, Shift-Esc). Dark theme: lines and axes readable.
+11. **Loading a log file.** File > **Load Log File**: Chrome's file picker; pick a log you saved in step 4 (or one from
+    the desktop SavvyCAN, candump, PCAN, Vector ASC/BLF). Every frame is in the trace (*Total Frames Captured* = the
+    file's rows), in order, CAN FD rows with their lengths. A big SavvyCAN CSV (hundreds of MB, up to 1000 MB) loads in
+    seconds to a minute with a progress dialog; other formats are refused over 200 MB with a message. Then graph a
+    signal of the file (step 10).
+12. **Temporal Graph.** RE Tools > **Temporal Graph**, on a loaded log and on a live bus: one row per ID (hex, 11- and
+    29-bit apart), colour = how many frames per time slice; the summary line gives IDs, frames and span. Live it grows
+    and follows the newest frames; zoom/pan; R: the whole capture again. On a long log (an hour) it opens in seconds.
+13. **Frame Data Analysis (heatmap).** RE Tools > **Frame Data Analysis**: pick an ID in the list: the bit-change
+    heatmap (grid as large as the frame: 8 to 64 bytes), the bit histogram, the details tree (lengths, intervals, per
+    byte), a graph per byte. On a live bus new IDs join the list; click an ID again for its newer frames. **Save details
+    to file**: a download `FrameDetails.txt`. Check an FD ID with 64-byte frames and a classic one.
+14. **A long log.** Log (step 4) for more than 72 min (a charging session): the file's times keep increasing past
+    71.6 min (rc1's clock is 32-bit µs; the app makes it 64-bit), no jump back to 0.
+
 Please note for each step: works / doesn't (what you saw, a screenshot), Chrome's version and the OS, and for any
 problem the browser console (View > Developer > JavaScript Console): copy its red lines.
+
+## What the rig has checked (real rc1, real bus)
+
+`tests/web/run.sh --rig` (tests/web/rig/README.md) runs the app in headless Chromium against the **real** rc1
+(firmware 0.1.3) with the rig's Kvaser Leaf v3 as a second node on rc1's bus; only Chrome's serial transport is
+replaced (a bridge to rc1's tty, because Chromium's own Web Serial loses USB serial ports on the rig's Linux:
+`read()` returning 0 right after open, which Chromium takes as "device lost"). Passed 2026-10-29 on main 8a5145d:
+- GVRET and LAWICEL, classic 500 kbit/s: 2000 frames exactly (order, IDs, data); CAN FD 500k/2M: every FD length,
+  BRS on/off, 11/29-bit, classic and remote frames exactly;
+- a continuous log of 2000 FD frames: the download's rows exactly as sent, rc1's µs times spanning the 2 s;
+- auto-connect after a reload (GVRET and LAWICEL, FD): same bus, no chooser, no connection window, frames arrive;
+- rc1 unplugged for real (its USB port's data and 5 V off) mid-stream: disconnected, page alive; back on: reconnected,
+  frames again;
+- full rate: 40 000 classic frames at 1 Mbit/s (~7 500/s) and 20 000 64-byte FD BRS frames at 500k/4M (~4 600/s):
+  every frame, in order, none dropped, no stall;
+- a live graph (every frame of its ID), Temporal Graph (every frame of every ID), Frame Data Analysis of 64-byte FD
+  IDs (every bit's changes and sets as sent);
+- a log longer than 71.6 min (rc1's clock wrap): see RESOLVE.md.
 
 ## What only the fake has checked
 
@@ -74,14 +121,10 @@ The automated suite (`tests/web/run.sh`) runs the real app build in headless Chr
 and the bus are simulated (`tests/web/fake/rc1.js`, a port of the firmware's serial code; RESOLVE.md "Tests"). Not
 checked by it, so checked only by this test:
 
-- **Chrome's real Web Serial**: the chooser dialog, the permission remembered across visits, real USB timing and
-  buffering, real unplug events (the suite uses a `navigator.serial` mock that follows Chrome's documented behaviour).
-- **rc1's real firmware**: the fake is ported from firmware 0.1.3; differences in the real device (GVRET handshake
-  timing, DTR/RTS handling, `SETUP_CANBUS`/`SETUP_FD`, slcan commands) only show here.
-- **A real CAN bus**: bit rates, FD data phase, ACKs, error frames and bus-off are only "set up" in the fake (it
-  records the commands); frames come from a generator, not a bus.
-- **Throughput**: the suite sends rc1's measured full rates (8 000 classic / 6 900 FD64 frames/s) through the mock;
-  real USB full-speed transfers and a real busy car bus are not covered.
+- **Chrome's real Web Serial**: the chooser dialog, the permission remembered across visits, Chrome's own USB timing
+  and buffering and unplug events (the rig's run goes through a bridge to rc1's tty instead; the mock follows Chrome's
+  documented behaviour).
+- **A car's bus**: error frames, bus-off, a busy bus with many nodes (the rig's bus has rc1 and the Kvaser only).
 - **The download**: headless Chromium's download event; Chrome's own download UI ("Ask where to save each file"),
   your downloads folder and multi-GB logs on your PC are not (multi-GB was measured on the rig: RESOLVE.md "Tests").
 - **The theme on a real OS**: the suite emulates `prefers-color-scheme`; switching the OS theme while the page is
@@ -89,7 +132,7 @@ checked by it, so checked only by this test:
 - **Settings across browser restarts**: the suite reloads the page; quitting Chrome is not tested.
 - **Other browsers**: the app was only run in Chromium.
 
-## Known issues (2026-10-28, branch `integration`)
+## Known issues (2026-10-29)
 
 - With a **screen reader** (Qt's accessibility layer switched on), unplugging rc1 makes Qt 6.12 throw an error in its
   accessibility code and the window stops drawing; reload the page. Without a screen reader unplugging is fine.

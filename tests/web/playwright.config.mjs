@@ -2,6 +2,8 @@
 //   app       the built app from dist/ (WSC_DIST) with the fake rc1: every spec but the logging module's own
 //   download  the logging module (wasm/disklog/disklog.js) on its own page, Chromium
 //   firefox   the same in Firefox
+//   rig       (WSC_RIG=1, run.sh --rig) tests/web/rig: the app with the REAL rc1 and a CAN peer on the rig, instead
+//             of the fake (rig/README.md); only this project then
 // Opt-in tags (WSC_RUN=long,large,screenshots; run.sh --long / --large / --screenshots):
 //   @long         the 60 s full-load replays
 //   @large        a multi-GB log in the logging module, loader.spec's ~1 GB GVRET CSV (heavy: run.sh puts them through heavy.sh)
@@ -26,7 +28,10 @@ export default defineConfig({
     viewport: { width: 1280, height: 800 },
     trace: 'retain-on-failure',
   },
-  projects: [
+  projects: process.env.WSC_RIG ? [
+    { name: 'rig', testDir: './rig', timeout: 180_000,
+      use: { browserName: 'chromium', launchOptions: { args: ['--enable-experimental-web-platform-features'] } } },
+  ] : [
     { name: 'app', testIgnore: MODULE,
       use: { browserName: 'chromium', launchOptions: { args: ['--enable-experimental-web-platform-features'] } } },
     { name: 'download', testMatch: MODULE, use: { browserName: 'chromium' } },
