@@ -1,0 +1,31 @@
+# Temporary (delete with this branch): copies the wasm build of run 40788584146 (main c0f8122)
+# onto the branch dist/c0f8122 so it can be fetched with git (the artifact host isn't reachable
+# from where the website is synced).
+name: publish dist (temporary)
+on:
+  push:
+    branches: [tmp/publish-dist-c0f8122]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-savvycan-wasm
+          run-id: 40788584146
+          github-token: ${{ github.token }}
+          path: art
+      - name: Commit dist to dist/c0f8122
+        run: |
+          set -e
+          ls -la art art/dist
+          test "$(cat art/dist/SOURCE_COMMIT)" = c0f81227bf32e0adfc4738e7a5762d43a17f8533 || { cat art/dist/SOURCE_COMMIT; exit 1; }
+          (cd art/dist && sha256sum $(find . -type f | sort)) > SHA256SUMS
+          mkdir out && cd out && git init -q -b dist/c0f8122
+          cp -r ../art/dist dist && cp ../SHA256SUMS .
+          git -c user.name="web-savvycan CI" -c user.email="actions@github.com" add -A
+          git -c user.name="web-savvycan CI" -c user.email="actions@github.com" commit -q -m "dist of c0f8122 (run 40788584146), temporary"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:refs/heads/dist/c0f8122
