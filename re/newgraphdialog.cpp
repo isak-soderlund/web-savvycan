@@ -101,13 +101,13 @@ void NewGraphDialog::addButtonClicked()
 }
 
 // web-savvycan: a colour swatch shows its colour, with its "CHANGE" in black or white, whichever reads on it (a light
-// line colour in the dark theme had light text on it); a transparent swatch keeps the theme's text colour.
+// line colour in the dark theme had light text on it); a transparent swatch keeps the theme's text colour (a palette
+// with only the roles set here: the others follow the theme, also when it is switched).
 void NewGraphDialog::setSwatchColor(QPushButton *swatch, const QColor &color)
 {
-    QPalette p = swatch->palette();
+    QPalette p;
     p.setColor(QPalette::Button, color);
     if (color.alpha() >= 128) p.setColor(QPalette::ButtonText, color.lightness() >= 128 ? QColor(Qt::black) : QColor(Qt::white));
-    else p.setColor(QPalette::ButtonText, QApplication::palette().color(QPalette::ButtonText));
     swatch->setPalette(p);
 }
 
@@ -504,8 +504,8 @@ void NewGraphDialog::fitGrid(int highestByte)
     bytes = bytes <= 8 ? 8 : bytes <= 16 ? 16 : bytes <= 32 ? 32 : 64; // the grid's layouts (CANDataGrid)
     if (ui->gridData->getBytesToDraw() == bytes) return;
     ui->gridData->setBytesToDraw(bytes);
-    const int cols = bytes > 32 ? 32 : bytes > 8 ? 16 : 8, rows = bytes > 16 ? 16 : 8;
-    ui->gridData->setMinimumSize(qMax(280, cols * 20 + 24), qMax(280, rows * 20 + 24));
+    const int cols = bytes > 32 ? 32 : bytes > 8 ? 16 : 8;
+    ui->gridData->setMinimumSize(qMax(280, cols * 20 + 24), 280); // wider, not taller: the dialog is as tall as the page
 }
 
 // The frame length of the ID typed in: its newest frame among the last 100 000 in the trace, or its DBC message.

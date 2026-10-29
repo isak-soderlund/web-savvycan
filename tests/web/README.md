@@ -56,7 +56,7 @@ Traffic modes (`window.__rc1.setTraffic(mode, {seconds, rate, garbageEvery, dela
 | --- | --- |
 | `idle` | nothing |
 | `leaf` | the Leaf AZE0 EV-CAN as resolve-hil's `scenarios/leaf_bus.yaml` (28 IDs, DBC lengths, 10-500 ms), ~836 frames/s |
-| `classic-full` | rc1's measured full classic rate: 8-byte frames at 1 Mbit/s, 8 000/s; sequence number in data[0..3] |
+| `classic-full` | rc1's measured full classic rate: 8-byte frames at 1 Mbit/s, 8 000/s; sequence number in data[0..3]; IDs 0x100.. in turn (`ids`, default 16; `ids: 1`: one ID at the full rate) |
 | `fd64-full` | rc1's measured full FD rate: 64-byte BRS frames at 500k/8M, 6 900/s; sequence number |
 | `fd-mix` | every FD length (BRS on/off, 11/29-bit), classic and remote frames, 500/s |
 | `errors` | `leaf` plus an error frame every 100 ms (warning, passive, bus-off, restart, ACK, RX overflow) |
@@ -94,6 +94,15 @@ window.webSavvyCAN = {
 };
 ```
 
+Graphs (stage 2), also on `window.webSavvyCAN`: `addGraph(id, startBit, numBits, intel, sameWindow)` (a new graphing
+window with that graph, or one more graph in the newest window); `graphState()` of the newest window: `graphs`,
+`points`, `lastKey`, the visible `xLower/xUpper/yLower/yUpper`, `cap` (the most points a graph keeps), `heapUsed`
+(bytes malloc has handed out, `mallinfo`) and `heapSize` (the wasm memory), and per graph `series[]`: `startBit`,
+`numBits`, `stored` points, `bytes`, `envelope` points, `bucket` samples, `samples` taken in, `firstKey/lastKey`,
+`firstValue/lastValue`, `minValue/maxValue`; `openGraphDialog()` (Graph > Add New Graph), `graphDialog()` (open,
+`gridBytes`, the text fields), `setGraphDialogField('id' | 'startBit' | 'bits' | 'frameLen', n)` (as typed);
+`setMaxFrames(n)` (Preferences' maximum frames in the trace; reload after).
+
 ## How the app driver works (`lib/harness.mjs` `AppDriver`)
 
 - Qt 6.12 puts its windows in a shadow root (`#qt-shadow-container`): `document.querySelector('canvas')` sees
@@ -103,7 +112,8 @@ window.webSavvyCAN = {
 - Names as the app has them (case-insensitive prefix match): Connection > Open Connection Window, Add New Device
   Connection, radio "Serial Connection (GVRET)" / "LAWICEL / SLCAN Serial", **Choose device...**, Create New
   Connection, Save Bus Settings, Disconnect Selected Device, File > Start Continuous Logging / **Cease Continuous
-  Logging**, File > **Load Log File** (the browser's file picker: `loadFile`), Help > **About**. The theme is set
+  Logging**, File > **Load Log File** (the browser's file picker: `loadFile`; a file under `tests/web` goes over by
+  URL, so big ones load too), Help > **About**. The theme is set
   through the test hook (`setTheme`: File > Preferences > Theme is a combo box). A widget that isn't there skips the
   test with its name.
 - Combo boxes are mirrored without a usable box: the driver gives a neighbouring checkbox the focus with two real
@@ -125,7 +135,7 @@ window.webSavvyCAN = {
 | logging | File > Start Continuous Logging / Cease: one download named `SavvyCAN_<start time>.csv`, SavvyCAN's native GVRET CSV, its rows equal to what the fake sent (FD rows, BRS), loaded by SavvyCAN's parser (when `nativecsv_tool` is built); an empty log is the header; Choose the Log's Name When Logging Stops: Keep Logging goes on, the typed name is the download's |
 | theme | light first, dark visibly darker (screenshot luminance), remembered after reload; a dark system: followed on a first visit, overridden and followed again |
 | smoke | the page as a visitor gets it (no fake): Qt starts, the main window is drawn, the About dialog (`exec()`, Asyncify) opens and closes with Enter, no failed request; a GVRET CSV from the computer (File > Load Log File) loads every frame and graphs every point |
-| graph | a live Leaf bus: a graph of 0x1DA grows and its x range follows the newest point (Follow End of Graph) |
+| graph | a live Leaf bus: a graph of 0x1DA grows and its x range follows the newest point (Follow End of Graph); two live graphs of one ID at 8 000 frames/s far past the cap (1.5x): stored points within the cap, every frame taken in, the first time and value and every extreme kept, the envelope halved, the wasm heap level after the first fold (< 4 MB), Reset View spans the session (`graph-bounded.json`, pictures light and dark); a 600 000-frame log: within the cap, the whole file, the heap in use grows by the graph's container only (`graph-bigfile.json`); CAN FD: byte 40 of 64-byte frames (start bit 320) graphs exactly, Add New Graph's bit grid shows 64 bytes for the ID and its Motorola start bit 327 graphs the same byte (pictures light and dark) |
 | download (`download`, `firefox`) | the logging module alone: rows written in batches, one download named by the start time, byte for byte SavvyCAN's own rows (`nativecsv_tool gen`) and loaded by SavvyCAN's parser; `_blob()` while logging; the name given at stop; an empty log; a second log; "leave site?" while logging |
 | fullload `@long` | 60 s at 8 000 classic / 6 900 FD64 frames/s: accounting, rc1-side loss < 0.1 %, 10 ms timer lateness p95 < 50 ms, no stall > 1 s; `results/fullload-*.json` |
 | large `@large` | gigabytes of rows through the logging module, one download: size and SHA-256, JS heap, browser PSS and profile size every 256 MB; `results/large-*.json` |

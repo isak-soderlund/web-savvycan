@@ -138,6 +138,16 @@ test('a live graph far past its cap stays bounded, spans the whole session, and 
   await app.setTheme('dark');
   await page.waitForTimeout(1000);
   await page.screenshot({ path: join(RESULTS, 'graph-bounded-dark.png') });
+  // Byte 0's sawtooth (0..255 every 32 ms): the whole session is a band from 0 to 255 (envelope, then samples); the
+  // oldest 0.1 s are the envelope (buckets of 8 samples); the newest 0.1 s the samples themselves.
+  const view = async (from, to, name) => {
+    expect(await page.evaluate(([l, u]) => window.webSavvyCAN.setGraphView(l, u, -10, 265), [from, to]), name).toBe(true);
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: join(RESULTS, `graph-bounded-${name}.png`) });
+  };
+  await view(a.firstKey, a.lastKey, 'session');
+  await view(a.firstKey, a.firstKey + 100000, 'oldest');
+  await view(a.lastKey - 100000, a.lastKey, 'newest');
 });
 
 test('a big log file graphs within the cap and spans the whole file', async ({ app, page }) => {

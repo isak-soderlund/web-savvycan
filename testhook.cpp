@@ -199,6 +199,17 @@ EMSCRIPTEN_KEEPALIVE int wsc_open_graph_dialog()
     GraphingWindow *win = graphWindow();
     return win && QMetaObject::invokeMethod(win, "addNewGraph", Qt::QueuedConnection) ? 1 : 0;
 }
+// The visible ranges of the newest graphing window, as dragging and zooming set them.
+EMSCRIPTEN_KEEPALIVE int wsc_set_graph_view(double xLower, double xUpper, double yLower, double yUpper)
+{
+    GraphingWindow *win = graphWindow();
+    QCustomPlot *plot = win ? win->findChild<QCustomPlot *>() : nullptr;
+    if (!plot) return 0;
+    plot->xAxis->setRange(xLower, xUpper);
+    plot->yAxis->setRange(yLower, yUpper);
+    plot->replot();
+    return 1;
+}
 EMSCRIPTEN_KEEPALIVE const char *wsc_graph_dialog() { return keep(QJsonDocument(graphDialogState()).toJson(QJsonDocument::Compact)); }
 // The trace's size (frames kept) as File > Preferences stores it (QSettings Main/MaximumFrames, the page's
 // localStorage); read at start: reload after.
@@ -231,6 +242,7 @@ EM_JS(void, wsc_install_hook, (), {
         graphState: () => JSON.parse(UTF8ToString(_wsc_graph_state())),
         graphDialog: () => JSON.parse(UTF8ToString(_wsc_graph_dialog())),
         openGraphDialog: () => _wsc_open_graph_dialog() === 1,
+        setGraphView: (xLower, xUpper, yLower, yUpper) => _wsc_set_graph_view(xLower, xUpper, yLower, yUpper) === 1,
         setGraphDialogField: (name, value) =>
             _wsc_graph_dialog_set({ id: 0, startBit: 1, bits: 2, frameLen: 3 }[name] ?? -1, value | 0) === 1,
         setMaxFrames: (frames) => _wsc_set_max_frames(frames | 0),
