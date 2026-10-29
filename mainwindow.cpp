@@ -238,7 +238,7 @@ MainWindow::MainWindow(QWidget *parent) :
     //web-savvycan: frames lost because the GUI fell behind the bus (counted by the connections)
     lbStatusDropped.setToolTip(tr("Frames received from the device but discarded because the trace fell behind. "
                                   "Reset by Clear Frames."));
-    ui->statusBar->insertWidget(3, &lbStatusDropped, 0);
+    ui->statusBar->insertWidget(2, &lbStatusDropped, 0);
     updateDroppedStatus();
     //ui->statusBar->addWidget(&lbStatusDatabase);
     ui->lblRemoteConn->setVisible(false);

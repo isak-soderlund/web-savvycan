@@ -94,6 +94,8 @@ static QJsonObject graphState()
     o.insert("lastKey", lastKey);
     o.insert("xLower", plot->xAxis->range().lower);
     o.insert("xUpper", plot->xAxis->range().upper);
+    o.insert("yLower", plot->yAxis->range().lower);
+    o.insert("yUpper", plot->yAxis->range().upper);
     return o;
 }
 

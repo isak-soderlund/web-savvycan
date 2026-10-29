@@ -1,5 +1,5 @@
 // Smoke test of the wasm build (scripts/smoke-wasm.sh, CI): Qt starts, the main window is drawn, a modal dialog run
-// with QDialog::exec() (Asyncify) opens and closes, nothing fails to load, no console error. No fake rc1 here: the
+// with QDialog::exec() (Asyncify) opens and closes (its Close button), nothing fails to load, no console error. No fake rc1 here: the
 // page as a visitor gets it. Pictures: results/smoke.png, results/smoke-dialog.png.
 // Also: a log file from the visitor's computer (File > Load Log File, the browser's file picker) loads and graphs
 // (results/smoke-graph.png).
@@ -39,15 +39,15 @@ test('the app starts, draws its main window, and a modal exec() dialog opens and
   expect(await page.textContent('#qtstatus').catch(() => '')).not.toMatch(/exit/i);
   const main = await page.screenshot({ path: join(RESULTS, 'smoke.png') });
   expect((await measure(page, [main])).colours, 'main window drawn (distinct colours on screen)').toBeGreaterThanOrEqual(20);
-  // Help > About web-savvycan: a dialog run with exec(); Enter closes it.
+  // Help > About web-savvycan: a dialog run with exec(), closed with its Close button.
   await app.menu('Help', 'About');
   await page.waitForTimeout(1500);
   const dialog = await page.screenshot({ path: join(RESULTS, 'smoke-dialog.png') });
-  await page.keyboard.press('Enter');
+  await app.click('button', /^Close$/i, 'button "Close"'); // the accessibility layer has the keyboard focus
   await page.waitForTimeout(1500);
   const { changed: [shown, left] } = await measure(page, [main, dialog, await page.screenshot()]);
   expect(shown, 'the About dialog appeared (pixels changed)').toBeGreaterThan(5000);
-  expect(left, 'the About dialog closed with Enter (pixels still different)').toBeLessThan(2000);
+  expect(left, 'the About dialog closed (pixels still different)').toBeLessThan(2000);
   test.info().annotations.push({ type: 'result', description: `Qt loaded after ${loaded.toFixed(1)} s` });
   expect(consoleErrors, 'console errors, failed requests').toEqual([]);
 });
@@ -73,7 +73,8 @@ test('a log file from the computer loads (File > Load Log File) and graphs', asy
   expect(await page.evaluate(() => window.webSavvyCAN.addGraph(0x1da, 0, 8, true)), 'graph created').toBe(true);
   await expect.poll(() => page.evaluate(() => window.webSavvyCAN.graphState().points), { message: 'every frame plotted' }).toBe(frames);
   const g = await page.evaluate(() => window.webSavvyCAN.graphState());
-  expect(g.lastKey, 'the last point at the file\'s last time stamp (s)').toBeCloseTo(19.99, 1);
+  // x is time in the app's time style (File > Preferences; microseconds unless set to seconds or clock).
+  expect(g.lastKey, 'the last point at the file\'s last time stamp (µs)').toBe(19990000);
   await page.waitForTimeout(1000);
   await page.screenshot({ path: join(RESULTS, 'smoke-graph.png') });
   expect(consoleErrors, 'console errors').toEqual([]);

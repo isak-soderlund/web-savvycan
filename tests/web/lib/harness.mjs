@@ -4,7 +4,7 @@
 import { test as base, expect } from '@playwright/test';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -190,11 +190,23 @@ export class AppDriver {
   async setTheme(mode) {
     await this.page.evaluate((m) => window.webSavvyCAN.setTheme(m), mode);
   }
-  /** File > Load Log File with `file` chosen in the browser's file picker; waits until its `frames` are in the trace. */
+  /**
+   * File > Load Log File with `file` picked; waits until its `frames` are in the trace. Qt opens Chrome's
+   * showOpenFilePicker() (File System Access), which Playwright can't answer, so the page's showOpenFilePicker is
+   * replaced for this one call by one that hands over the file, as the user's pick would.
+   */
   async loadFile(file, frames) {
-    const chooser = this.page.waitForEvent('filechooser', { timeout: 15000 });
+    const bytes = readFileSync(file);
+    await this.page.evaluate(([name, b64]) => {
+      const real = window.showOpenFilePicker;
+      window.showOpenFilePicker = async () => {
+        window.showOpenFilePicker = real;
+        const data = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const f = new File([data], name);
+        return [{ kind: 'file', name, getFile: async () => f }];
+      };
+    }, [basename(file), bytes.toString('base64')]);
     await this.menu('File', 'Load Log File');
-    await (await chooser).setFiles(file);
     await this.page.waitForFunction((n) => window.webSavvyCAN.stats().framesReceived >= n, frames, { timeout: 30000 });
   }
   async themeShot() {

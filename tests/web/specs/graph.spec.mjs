@@ -15,9 +15,13 @@ test('a live graph grows with the bus and follows its end', async ({ app, page }
   await page.waitForTimeout(3000);
   const later = await state();
   expect(later.points, `points grow while the bus runs (${first.points} -> ${later.points})`).toBeGreaterThan(first.points + 200);
-  expect(later.lastKey, 'newer data').toBeGreaterThan(first.lastKey + 2);
+  // x is time in the app's time style (microseconds by default): 3 s of bus later, the newest point is >= 2 s newer.
+  expect(later.lastKey - first.lastKey, 'newer data (µs)').toBeGreaterThan(2e6);
   // Follow End of Graph: the visible range ends at the newest point and moves with it.
-  expect(Math.abs(later.xUpper - later.lastKey), `x range ends at the newest point (${later.xUpper} vs ${later.lastKey})`).toBeLessThan(0.5);
+  expect(Math.abs(later.xUpper - later.lastKey), `x range ends at the newest point (${later.xUpper} vs ${later.lastKey})`).toBeLessThan(1000);
   expect(later.xUpper, 'the x range moved').toBeGreaterThan(first.xUpper);
+  // Byte 0 counts 0..255: the value axis has grown to take it in.
+  expect(later.yUpper, `value axis up to ${later.yUpper}`).toBeGreaterThanOrEqual(255);
+  expect(later.yLower, `value axis from ${later.yLower}`).toBeLessThanOrEqual(0);
   await page.screenshot({ path: join(RESULTS, 'graph-live.png') });
 });
