@@ -54,11 +54,25 @@ ConnectionWindow::ConnectionWindow(QWidget *parent) :
     ui->btnSendText->setEnabled(false);
     ui->lineSend->setEnabled(false);
 
+#ifdef Q_OS_WASM
+    // web-savvycan: the browser remembers the last connection (rememberConnections()) and makes it again as the page
+    // opens, without this window, when its port is one the browser lets the page open now (granted on an earlier
+    // visit and plugged in). The browser lists those a moment after start-up: autoConnect() once it has. Without such
+    // a port nothing happens (the chooser needs a click). Preferences: "Connect to the last device when the page
+    // opens" (Main/SaveRestoreConnections, on by default here).
+    if (settings.value("Main/SaveRestoreConnections", true).toBool() && WebSerialHub::isSupported())
+    {
+        connect(WebSerialHub::instance(), &WebSerialHub::portsChanged, this, &ConnectionWindow::autoConnect,
+                Qt::SingleShotConnection);
+        WebSerialHub::listPorts();
+    }
+#else
     if (settings.value("Main/SaveRestoreConnections", false).toBool())
     {
         /* load connection configuration */
         loadConnections();
     }
+#endif
 
     connect(ui->btnDisconnect, &QPushButton::clicked, this, &ConnectionWindow::handleRemoveConn); // <-- Disconnect
     connect(ui->btnSendHex, &QPushButton::clicked, this, &ConnectionWindow::handleSendHex);
@@ -304,6 +318,7 @@ void ConnectionWindow::handleNewConn()
         {
             connModel->add(conn);
             ui->tableConnections->setCurrentIndex(connModel->index(connModel->rowCount() - 1, 1));
+            rememberConnections();
         }
     }
     delete thisDialog;
@@ -321,6 +336,10 @@ void ConnectionWindow::handleRemoveConn()
 
     /* remove connection from model & manager */
     connModel->remove(conn_p);
+#ifdef Q_OS_WASM
+    rememberedBus.remove(conn_p);
+#endif
+    rememberConnections(); // the ones left, if any: the last one stays remembered
 
     /* stop and delete connection */
     conn_p->stop();
@@ -390,6 +409,9 @@ void ConnectionWindow::connectionStatus(CANConStatus pStatus)
     int selIdx = ui->tableConnections->selectionModel()->currentIndex().row();
     connModel->refresh();
     ui->tableConnections->selectRow(selIdx);
+#ifdef Q_OS_WASM
+    if (auto *conn = qobject_cast<CANConnection *>(sender())) applyRememberedBus(conn, false);
+#endif
 }
 
 void ConnectionWindow::setSuspendAll(bool pSuspend)
@@ -440,6 +462,7 @@ void ConnectionWindow::saveBusSettings()
         }
 
         conn_p->setBusSettings(offset, bus);
+        rememberConnections();
     }
 }
 
@@ -602,7 +625,7 @@ CANConnection* ConnectionWindow::create(CANCon::type pTye, QString pPortName, QS
 }
 
 
-void ConnectionWindow::loadConnections()
+void ConnectionWindow::loadConnections(const QStringList *onlyPorts)
 {
     QSettings settings;
 
@@ -723,9 +746,24 @@ void ConnectionWindow::loadConnections()
 
     for(int i = 0 ; i < portNames.count() ; i++)
     {
+        if (onlyPorts && !onlyPorts->contains(portNames[i])) continue;
         CANConnection* conn_p = create((CANCon::type)devTypes[i], portNames[i], driverNames[i], serialSpeeds[i], busSpeeds[i], isCanFds[i] ? true : false, DataRates[i], listenOnlys[i] ? true : false, actives[i] ? true : false);
+        if (!conn_p) continue;
         /* add connection to model */
         connModel->add(conn_p);
+#ifdef Q_OS_WASM
+        // GVRET is made without bus settings (the device has its own): they are set once it has told us its bus.
+        if (conn_p->getType() == CANCon::GVRET_SERIAL && busSpeeds[i] > 0)
+        {
+            CANBus bus;
+            bus.setSpeed(busSpeeds[i]);
+            bus.setCanFD(isCanFds[i] != 0);
+            bus.setDataRate(DataRates[i]);
+            bus.setListenOnly(listenOnlys[i] != 0);
+            bus.setActive(actives[i] != 0);
+            rememberedBus.insert(conn_p, bus);
+        }
+#endif
     }
 
     if (connModel->rowCount() > 0) {
@@ -831,6 +869,53 @@ void ConnectionWindow::saveConnections()
         vlist << v;
     settings.setValue("connections/actives", vlist);
 }
+
+// web-savvycan: in the browser the connections are saved as soon as one is made or its bus is set (also what the
+// browser keeps for the next visit): a page is closed without this window's destructor, where they are saved on the
+// desktop. Removing the last one keeps it remembered.
+void ConnectionWindow::rememberConnections()
+{
+#ifdef Q_OS_WASM
+    if (!CANConManager::getInstance()->getConnections().isEmpty()) saveConnections();
+#endif
+}
+
+#ifdef Q_OS_WASM
+// The browser has listed the ports the page may open (portsChanged after WebSerialHub::listPorts()): the remembered
+// connections on one of those ports are made again. None (no port granted, or not plugged in): nothing happens.
+void ConnectionWindow::autoConnect()
+{
+    if (connModel->rowCount() > 0) return; // already connected by hand
+    QStringList available;
+    for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts()) available << info.portName();
+    if (available.isEmpty()) return;
+    loadConnections(&available);
+}
+
+// A remembered GVRET connection's bus settings, set as Bus Details' Save Bus Settings sets them, once the device has
+// told us its bus (connected, bus 0 known) and whether it can do CAN FD. That answer (GET_FD) comes after the bus's
+// own; a device without CAN FD never sends one, so after a second the settings are set without it.
+void ConnectionWindow::applyRememberedBus(CANConnection *conn, bool evenWithoutFd)
+{
+    auto it = rememberedBus.find(conn);
+    CANBus bus;
+    if (it == rememberedBus.end() || conn->getStatus() != CANCon::CONNECTED || !conn->getBusSettings(0, bus)) return;
+    if (!bus.isCanFDCapable() && !evenWithoutFd)
+    {
+        QTimer::singleShot(1000, this, [this, conn] { applyRememberedBus(conn, true); });
+        return;
+    }
+    const CANBus want = it.value();
+    rememberedBus.erase(it);
+    bus.setSpeed(want.getSpeed());
+    bus.setActive(want.isActive());
+    bus.setListenOnly(want.isListenOnly());
+    bus.setCanFD(want.isCanFD());
+    if (want.getDataRate() > 0) bus.setDataRate(want.getDataRate());
+    conn->setBusSettings(0, bus);
+    if (isVisible()) populateBusDetails(ui->tabBuses->currentIndex()); // Bus Details, if this window is open
+}
+#endif
 
 void ConnectionWindow::moveConnUp()
 {

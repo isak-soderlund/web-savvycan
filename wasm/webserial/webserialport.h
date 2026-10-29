@@ -119,6 +119,7 @@ public:
     virtual void setSignals(int handle, bool dtr, bool rts) = 0;
     virtual void close(int handle) = 0;                   // no answer: the handle is forgotten already
     virtual void requestPort(bool anyPort) = 0;           // the browser's chooser; deliverPortChosen
+    virtual void listPorts();                             // deliverPortsChanged once ports() is complete
 };
 
 // The backend's reports come in through deliver*(), from any call stack of the page's one thread (a JS promise
@@ -139,6 +140,9 @@ public:
     // Shows the browser's port chooser. Must run while handling a user's click or key press (Chrome's rule).
     // anyPort false: only resolve-can devices; true: every serial port. Answer: portChosen().
     static void requestPort(bool anyPort);
+    // portsChanged() once the ports granted on earlier visits are known: at start-up the browser lists them a
+    // moment later (navigator.serial.getPorts()), so availablePorts() can still be empty before that.
+    static void listPorts();
 
     static void deliverOpened(int handle, bool ok, int serialPortError, const QString &message);
     static void deliverData(int handle, const QByteArray &bytes);
@@ -159,3 +163,5 @@ private:
     QHash<int, QSerialPort *> m_ports; // open ports by handle
     int m_nextHandle = 1;
 };
+
+inline void WebSerialBackend::listPorts() { WebSerialHub::deliverPortsChanged(); }

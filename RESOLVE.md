@@ -122,10 +122,24 @@ int32 time basis as upstream's GVRET had.
 
 ## Next (owner 2026-10-29)
 
-1. **Remember the connection and connect by itself.** The browser keeps the last connection (GVRET or LAWICEL, bus
-   speed, CAN FD on/off, FD data speed, listen-only) and, when rc1 is already plugged in and allowed
-   (`navigator.serial.getPorts()`), connects with it as the page opens, without the connection window. A setting
-   to switch it off; nothing happens without a granted rc1.
+1. **A faster, leaner log loader.** Measured 2026-10-29 in the browser (graph-bounds and temporal-graph tests):
+   File > Load Log File of a 600 000-frame GVRET CSV (40 MB) takes 64-67 s and leaves ~850 MB of heap in use
+   (~1.4 KB a frame); 1 M frames (56 MB) 108 s and ~1.5 GB. So the 500 MB file limit (`loadBrowserFile`) is far
+   too high: a file well under it can exhaust the page's 4 GB. The cost is the loader and the trace (the frame
+   copies, `QVector<CommFrame>` twice, per-frame `QByteArray` payloads, the filters), not the graphs or the
+   Temporal Graph (0.4 s on the same file). Goal: an hour-plus Leaf log (3+ M frames) in seconds and within a
+   few hundred bytes a frame; until then, a limit that fits (~150 MB of CSV).
+
+Done: **remember the connection and connect by itself** (branch `autoconnect`, owner's item 2 of 2026-10-29). The
+browser saves the connections as soon as one is made or its bus is set (SavvyCAN's own `connections/*` settings,
+`ConnectionWindow::saveConnections`, in the page's `localStorage`; on the desktop they are still saved at exit); the
+last one stays remembered after Disconnect. As the page opens, once the browser has listed the allowed ports
+(`WebSerialHub::listPorts()`, `navigator.serial.getPorts()`), the remembered connection on one of them is made again
+without the connection window: LAWICEL with its bus speed, CAN FD and data rate; GVRET with its bus (speed, enable,
+listen-only, CAN FD, data rate) set as Save Bus Settings sets it once rc1 has answered. No allowed rc1: nothing
+happens (no chooser, no error). File > Preferences > **Connect to the last device when the page opens**
+(`Main/SaveRestoreConnections`, upstream's "Save/Restore CAN bus connections"; on by default in the browser).
+Tests: `tests/web` autoconnect spec. Not tried with a real rc1 in Chrome yet.
 
 ## Stages switched on: `enabledfeatures.h`
 

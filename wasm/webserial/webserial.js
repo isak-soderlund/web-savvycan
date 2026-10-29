@@ -254,12 +254,17 @@ globalThis.resolveWebSerial = (function () {
     });
   }
 
+  // C++ asks once it runs: the first getPorts() may have finished before (its portsChanged then went nowhere).
+  function listPorts() {
+    ready.then(function () { call('webSerialPortsChanged'); });
+  }
+
   function ports() {
     return entries.map(function (e) { return { name: e.name, description: e.description }; });
   }
 
   return {
     supported: !!serial, ports: ports, open: open, write: write, setSignals: setSignals, close: close,
-    requestPort: requestPort, ready: function () { return ready; }, sessions: function () { return sessions.size; }
+    requestPort: requestPort, listPorts: listPorts, ready: function () { return ready; }, sessions: function () { return sessions.size; }
   };
 })();
