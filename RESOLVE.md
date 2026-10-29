@@ -39,7 +39,9 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
 - **Without hardware:** a fake GVRET device (resolve-can's `test/hil/gvret_fake.py`) and unit tests for the
   Web Serial stand-in and the parsers.
 - **On the rig:** rc1 with the Kvaser as the peer, classic and CAN FD. Every frame the Kvaser sends must appear in
-  the trace and in the log file.
+  the trace and in the log file. Done: `tests/web/run.sh --rig` (`tests/web/rig/README.md`): the real rc1 behind the
+  suite's Web Serial mock through a bridge to its tty, the Kvaser Leaf v3 sending known frames; connect, CAN FD, log,
+  auto-connect, a real unplug, full rate, graphs and RE tools passed 2026-10-29 (8a5145d).
 - **Where:** browser tests in `tests/web` (`run.sh`: the fake rc1 (`fake/rc1.js`), the app in headless Chromium,
   the logging module alone in Chromium and Firefox; `--long`, `--large`, `--screenshots` opt-in), desktop C++ tests in
   `tests/desktop` (`run.sh plain|address|thread`, through `heavy.sh`); the smoke test is `scripts/smoke-wasm.sh`
@@ -117,7 +119,10 @@ are unchanged, so rc1 stays usable with standard SavvyCAN. Goal: whole CCS charg
 | Log loader | `loadNativeCSVFile` took a time shorter than 4 characters as "no time" and made one up: frames in a log's first millisecond ("0".."999") moved. Any number is now the time; made-up times only for an empty or non-numeric field |
 | Tests | `tests/web` `timewrap` spec: the fake's clock 30 s before the wrap (`__rc1.setClock`), a Leaf bus across it: trace (`traceTail` now has `time`), continuous log and a graph in increasing time, spaced exactly as the device stamped them; a CSV with times 0, 523, 999, ... loads with exactly those. `tests/desktop`: `tst_parsers` `gvret_timeWrap`, `gvret_timeSyncBeforeWrap`; `nativecsv_tool shorttimes` |
 
-Not yet seen: a real log of more than 72 min from rc1 (on the rig). `MQTT_BUS` (not in the browser build) has the same
+Seen with the real rc1 on the rig (2026-10-29, 8a5145d, `tests/web/rig` timewrap): 75 min of logging at 100 frames/s
+from the Kvaser, 450 000 rows in the download, all in order, none missing; times from 11.7 s to 4 511.6 s (past 2^32 µs
+= 4 295.0 s), 10 000 µs apart across the wrap as before it, never going back (steps 0.2-19.9 ms: the peer's timing).
+`MQTT_BUS` (not in the browser build) has the same
 int32 time basis as upstream's GVRET had.
 
 ## Temporal Graph (stage 4, switched on 2026-10-29)
@@ -182,7 +187,8 @@ without the connection window: LAWICEL with its bus speed, CAN FD and data rate;
 listen-only, CAN FD, data rate) set as Save Bus Settings sets it once rc1 has answered. No allowed rc1: nothing
 happens (no chooser, no error). File > Preferences > **Connect to the last device when the page opens**
 (`Main/SaveRestoreConnections`, upstream's "Save/Restore CAN bus connections"; on by default in the browser).
-Tests: `tests/web` autoconnect spec. Not tried with a real rc1 in Chrome yet.
+Tests: `tests/web` autoconnect spec; with the real rc1 on the rig (`rig/autoconnect.spec`, GVRET and LAWICEL with CAN FD,
+2026-10-29), through the bridge, not Chrome's own Web Serial (which loses USB serial ports on the rig's Linux).
 
 ## Stages switched on: `enabledfeatures.h`
 
@@ -237,7 +243,8 @@ Tests: `tests/web` autoconnect spec. Not tried with a real rc1 in Chrome yet.
   create` in a fork defaults to the upstream repo: the default here is set to `isak-soderlund/web-savvycan`
   (`gh repo set-default`); always pass `--repo isak-soderlund/web-savvycan` anyway.
 - Work on branches, merge into `main` here. Commit messages end with the repo's Co-Authored-By line.
-- **Don't test on the real rc1** (the rig runs scheduled tests); use the fake GVRET device and the browser mock.
+- **The real rc1 only through `tests/web/run.sh --rig`** (owner 2026-10-29: real-rc1 tests on the rig), one rig user at a
+  time (resolve-hil AGENTS.md); everything else against the fake rc1 and the browser mock.
 - **Heavy jobs** (Qt/WebAssembly and desktop builds, sanitizer runs, Lighthouse) only through
   `scripts/heavy.sh <cmd>` (`~/.local/share/web-savvycan/heavy.sh` links to it): one at a time, in web-savvycan's own memory slice (`wscjobs.slice`,
   3G), separate from resolve-can's `rcanjobs.slice` where the rig's Windows VM runs (on 2026-10-28 a build in that

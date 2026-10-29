@@ -1,6 +1,6 @@
 # Browser tests: a fake resolve-can-1 and the Playwright suite
 
-No rc1 and no rig hardware: the tests run against a fake rc1 that speaks GVRET and LAWICEL/slcan exactly as rc1's
+No rc1 and no rig hardware (except `rig/`, the real-rc1 tests on the rig): the tests run against a fake rc1 that speaks GVRET and LAWICEL/slcan exactly as rc1's
 firmware does, behind a `navigator.serial` (Web Serial) mock injected before the page loads.
 
 ```
@@ -9,6 +9,7 @@ tests/web/run.sh --dist path/to/dist  # the app build to test (default <repo>/di
 tests/web/run.sh --long               # also the 60 s full-load replays (through ~/.local/share/web-savvycan/heavy.sh)
 tests/web/run.sh --large              # also the multi-GB log (WSC_LARGE_GB=2,4,8; through heavy.sh)
 tests/web/run.sh --screenshots        # also pictures of the app in light and dark (results/screenshots/)
+tests/web/run.sh --rig                # only the REAL rc1 on the rig, with a CAN peer (rig/README.md)
 tests/web/run.sh -- --project=app -g logging    # Playwright arguments after --
 scripts/smoke-wasm.sh                 # the smoke spec alone (CI)
 tests/desktop/run.sh                  # the desktop C++ tests (through heavy.sh), also builds nativecsv_tool
@@ -31,6 +32,7 @@ Needs Node 22 and Playwright 1.56.1 (`npm ci` in `tests/web`, done by `run.sh`) 
 | `lib/harness.mjs` | Fixtures: the init script, console-error collection (every test fails on a console error or uncaught exception), the app driver |
 | `lib/disklog.html` | The logging module (`wasm/disklog/disklog.js`) alone on a page, for `download` and `large` |
 | `specs/*.spec.mjs` | The suite (below) |
+| `rig/` | The real-rc1 tests on the rig: a bridge from the mock to rc1's tty, a CAN peer, their specs (`rig/README.md`) |
 | `server.mjs` | Static server: `dist/` at `/`, `tests/web` at `/__harness/`, the repository at `/__src/` |
 | `../desktop/rc1_pty.py` | The fake on a pseudo-terminal (`/tmp/rc1-fake`) and optionally TCP, for the desktop build |
 | `../desktop/check_pty.py` | Runs resolve-can's `test/hil/serial_proto.py` (the firmware's M8 host tool) against the pty: GVRET classic+FD and slcan, both ways |

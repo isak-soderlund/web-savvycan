@@ -955,6 +955,109 @@
     }
   }
 
+  // ---------------------------------------------------------------- the real rc1 behind the mock
+  /**
+   * The real rc1 on the rig in the Web Serial mock's place of Rc1Device (`installWebSerial({remote: true})`): the
+   * bytes go to and come from rc1's serial port through the test's Node process (tests/web/rig/bridge.mjs, which
+   * calls `window.__rc1Remote.push(base64)` / `.lost(why)` and gets `__rc1Call(kind, payload)`). The mock's Chrome
+   * behaviour (gesture, filters, bufferSize, close rules, disconnect) stays as it is. A shadow Rc1Device is fed the
+   * host's bytes and control lines and its answers thrown away: it tracks what the host asked rc1 for (mode, the
+   * channel's rates, `log()`, `requests()`), so the specs' checks read the same; `encoded` counts the frames the real
+   * rc1 sent (parsed from its stream), not bus frames.
+   */
+  class RemoteDevice {
+    constructor(o = {}) {
+      this.opts = o;
+      this.shadow = new Rc1Device(Object.assign({}, o, { record: false }));
+      this.call = (kind, payload) => globalThis.__rc1Call && globalThis.__rc1Call(kind, payload);
+      this.out = [];
+      this.outLen = 0;
+      this.opened = false;
+      this.st = { encoded: 0, bytesToHost: 0, bytesFromHost: 0, sessions: 0, lost: 0, bus: 0 };
+      this.record = o.record ? [] : null;
+      this.gvret = new GvretHostParser();
+      this.gvret.onFrame = (f) => this.counted(f);
+      this.line = '';
+      this.onData = null;
+      this.log = this.shadow.log;
+      this.requests = this.shadow.requests;
+      this.hostFrames = this.shadow.hostFrames;
+    }
+    counted(f) {
+      this.st.encoded++;
+      if (this.record) this.record.push({ id: f.id, ext: f.ext, fd: f.fd, brs: f.brs, data: Array.from(f.data), tsUs: f.ts });
+    }
+    /** Counts the frames in rc1's stream: GVRET frames, or slcan frame lines. */
+    parse(bytes) {
+      if (this.shadow.port.mode === 'gvret') {
+        this.gvret.push(bytes);
+        return;
+      }
+      for (const b of bytes) {
+        if (b === 0x0d || b === 0x07) {
+          if ('tTrRdDbB'.includes(this.line[0] || '')) this.st.encoded++;
+          this.line = '';
+        } else this.line += String.fromCharCode(b);
+      }
+    }
+    write(bytes) {
+      this.st.bytesFromHost += bytes.length;
+      this.shadow.write(bytes);
+      this.shadow.out = [];
+      this.shadow.outLen = 0;
+      this.call('write', Array.from(bytes));
+    }
+    setControl(c) {
+      if (!this.opened) {
+        this.opened = true;
+        this.call('open');
+      }
+      this.shadow.setControl(c);
+      this.call('signals', { dtr: !!c.dtr, rts: !!c.rts });
+    }
+    hostClosed() {
+      this.shadow.hostClosed();
+      this.out = [];
+      this.outLen = 0;
+      if (this.opened) this.call('close');
+      this.opened = false;
+    }
+    /** Bytes from the real rc1 (bridge.mjs). */
+    push(bytes) {
+      if (!this.opened) return;
+      this.out.push(bytes);
+      this.outLen += bytes.length;
+      this.parse(bytes);
+      if (this.onData) this.onData();
+    }
+    available() {
+      return this.outLen;
+    }
+    read(max = Infinity) {
+      return Rc1Device.prototype.read.call(this, max);
+    }
+    advance() {}
+    nextDue() {
+      return null;
+    }
+    setTraffic() {
+      throw new Error('the real rc1: traffic comes from the rig\'s CAN peer (tests/web/rig/peer.mjs)');
+    }
+    setClock() {
+      throw new Error('the real rc1 has its own clock');
+    }
+    usNow() {
+      return null;
+    }
+    inject() {
+      throw new Error('the real rc1: frames come from the rig\'s CAN peer');
+    }
+    stats() {
+      const s = this.shadow.stats();
+      return Object.assign({}, s, this.st, { real: true, queuedBytes: this.outLen, traffic: 'rig' });
+    }
+  }
+
   // ---------------------------------------------------------------- Web Serial mock
   /**
    * Replaces navigator.serial with a mock backed by Rc1Device. Options:
@@ -965,12 +1068,14 @@
    *   device             Rc1Device options; traffic {mode, ...opts}: started when the channel opens
    *   usbIntervalMs      the host's reads see new data at most this often (USB Full-Speed frames; default 1)
    *   disconnectAfterMs  unplug this long after open (the `disconnect` case)
+   *   remote             the real rc1 instead of the fake (RemoteDevice; the rig's bridge, tests/web/rig/)
    * The test reaches everything through `window.__rc1` ({ports, device, stats(), setTraffic(), unplug(), replug(), events}).
    */
   function installWebSerial(o = {}) {
     const g = globalThis;
     const events = [];
     const ev = (type, detail) => events.push(Object.assign({ type, t: Math.round(performance.now()) }, detail || {}));
+    const makeDevice = (d) => (o.remote ? new RemoteDevice(d) : new Rc1Device(d));
 
     class MockSerial extends EventTarget {
       constructor() {
@@ -1016,7 +1121,8 @@
         this._i = i;
         this._granted = !!o.granted;
         this._plugged = true;
-        this._dev = new Rc1Device(Object.assign({}, o.device || {}, i ? { info: { serial: DEFAULT_INFO.serial.slice(0, -1) + (i + 1) } } : {}));
+        this._dev = makeDevice(Object.assign({}, o.device || {}, i ? { info: { serial: DEFAULT_INFO.serial.slice(0, -1) + (i + 1) } } : {}));
+        this._dev.onData = () => this._waiter && this._kick && (clearTimeout(this._waiter), this._kick());
         this._isOpen = false;
         this.readable = null;
         this.writable = null;
@@ -1184,7 +1290,8 @@
         this.readable = null;
         this.writable = null;
         this._trafficStarted = false;
-        this._dev = new Rc1Device(o.device || {});
+        this._dev = makeDevice(o.device || {});
+        this._dev.onData = () => this._waiter && this._kick && (clearTimeout(this._waiter), this._kick());
         serial._fire('connect', this);
       }
     }
@@ -1215,6 +1322,14 @@
       recorded: (i = 0, from = 0) => (ports[i]._dev.record || []).slice(from),
       requests: (i = 0) => ports[i]._dev.requests.slice(),
     };
+    if (o.remote) {
+      api.real = true;
+      g.__rc1Remote = {
+        push: (b64) => ports[0]._dev.push(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))),
+        lost: () => ports[0]._unplug(),
+        back: () => ports[0]._replug(),
+      };
+    }
     g.__rc1 = api;
     return api;
   }
@@ -1353,6 +1468,6 @@
   }
 
   return { USB_VENDOR_ID, USB_PRODUCT_ID, PRODUCT, DEFAULT_INFO, DLC_LEN, dlcToLen, lenToDlc, frame, frameLen, frameData,
-    ERR, ERROR_FRAMES, LEAF_TABLE, Gvret, Slcan, Port, Rc1Device, makeTraffic, gvretFrameBytes, slcanParseFrame,
+    ERR, ERROR_FRAMES, LEAF_TABLE, Gvret, Slcan, Port, Rc1Device, RemoteDevice, makeTraffic, gvretFrameBytes, slcanParseFrame,
     installWebSerial, installProbe, GvretHostParser, parseSavvyCsv, seqCheck };
 });

@@ -4,6 +4,7 @@
 #   tests/web/run.sh --long              also the 60 s full-load replays (through the heavy-job wrapper)
 #   tests/web/run.sh --large             also the multi-GB log (WSC_LARGE_GB=2,4; through the heavy-job wrapper)
 #   tests/web/run.sh --screenshots       also the pictures of the app in light and dark
+#   tests/web/run.sh --rig               only the real-rc1 tests on the rig (rig/README.md): rc1 + a CAN peer
 #   tests/web/run.sh --dist DIR          the app build to test (default: <repo>/dist; env WSC_DIST)
 #   tests/web/run.sh -- <playwright args>   e.g. -- --project=app -g logging
 # Browsers: Playwright 1.56's (chromium-1194, firefox-1495) from ~/.cache/ms-playwright (or PLAYWRIGHT_BROWSERS_PATH).
@@ -14,9 +15,10 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --long|--large) RUN+=("${1#--}"); HEAVY=1; shift ;;
         --screenshots) RUN+=(screenshots); shift ;;
+        --rig) export WSC_RIG=1; shift ;;
         --dist) export WSC_DIST="$(realpath "$2")"; shift 2 ;;
         --) shift; break ;;
-        -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
         *) break ;;
     esac
 done

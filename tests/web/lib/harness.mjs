@@ -232,7 +232,15 @@ export const test = base.extend({
     const why = appMissing();
     testInfo.skip(!!why, why || '');
     await installFake(page, fakeOptions);
+    // The real rc1 on the rig (tests/web/rig): the mock's device is the real one through the bridge.
+    const bridge = fakeOptions.serial && fakeOptions.serial.remote
+      ? await (await import('../rig/bridge.mjs')).installBridge(page) : null;
     await use(new AppDriver(page));
+    if (bridge) {
+      testInfo.attach('bridge', { body: JSON.stringify(bridge.stats()), contentType: 'application/json' });
+      if (process.env.WSC_RC1_DEBUG) console.log('bridge', JSON.stringify(bridge.stats()));
+      await bridge.stop();
+    }
     // Every test: no console errors, no uncaught exceptions.
     expect(consoleErrors, 'console errors').toEqual([]);
   },
