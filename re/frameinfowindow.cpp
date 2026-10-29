@@ -40,9 +40,6 @@ FrameInfoWindow::FrameInfoWindow(const FrameListView *frames, QWidget *parent) :
     // web-savvycan: as the connection and graphing windows: a Qt::Window is frameless and covers the main window's
     // menus in the browser; as a dialog it has Qt's title bar and close button and can be moved aside.
     setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
-    // the .ui's size (the dialog opened at its smaller size hint, too narrow for a 64-byte heatmap), within the page
-    if (QScreen *s = QGuiApplication::primaryScreen())
-        resize(QSize(1142, 651).boundedTo(s->availableGeometry().size() - QSize(20, 40)));
 #else
     setWindowFlags(Qt::Window);
 #endif
@@ -329,7 +326,16 @@ void FrameInfoWindow::readSettings()
 
     if (settings.value("Main/SaveRestorePositions", false).toBool())
     {
-        resize(settings.value("FrameInfo/WindowSize", QSize(794, 694)).toSize());
+#ifdef Q_OS_WASM
+        // web-savvycan: first opened at the .ui's size (SavvyCAN's 794 x 694 is too narrow for a 64-byte heatmap),
+        // within the page
+        QSize defaultSize(1142, 651);
+        if (QScreen *screen = QGuiApplication::primaryScreen())
+            defaultSize = defaultSize.boundedTo(screen->availableGeometry().size() - QSize(60, 90));
+#else
+        const QSize defaultSize(794, 694);
+#endif
+        resize(settings.value("FrameInfo/WindowSize", defaultSize).toSize());
         move(Utility::constrainedWindowPos(settings.value("FrameInfo/WindowPos", QPoint(50, 50)).toPoint()));
     }
     useOpenGL = settings.value("Main/UseOpenGL", false).toBool();
