@@ -8,6 +8,8 @@
 //   nativecsv_tool continuous <log.csv> <count>    desktop continuous logging (open, write in batches, flush,
 //                                                  close), then check --exact count
 //   nativecsv_tool roundtrip <log.csv> <count>     saveNativeCSVFile, then check --exact count
+//   nativecsv_tool shorttimes <log.csv>            a log's first millisecond: times "0", "523", "999" load as
+//                                                  exactly those (upstream made them up below 4 characters)
 //
 // The reference frames mix classic CAN (standard/extended, 0-8 bytes, Rx/Tx, buses 0-2) and CAN FD (0-64
 // bytes, with/without BRS and ESI), with GVRET-style (µs) and system-clock (seconds + µs) time stamps.
@@ -124,7 +126,7 @@ int main(int argc, char **argv)
     const QStringList a = app.arguments();
     if (a.size() < 3)
     {
-        fprintf(stderr, "usage: %s gen|check|continuous|roundtrip <file> [count | --exact N | --min N --max N]\n",
+        fprintf(stderr, "usage: %s gen|check|continuous|roundtrip|shorttimes <file> [count | --exact N | --min N --max N]\n",
                 argv[0]);
         return 2;
     }
@@ -175,6 +177,29 @@ int main(int argc, char **argv)
             FrameFileIO::closeContinuousNative();
         }
         return check(file, count, -1, -1);
+    }
+    if (cmd == "shorttimes")
+    {
+        QFile out(file);
+        if (!out.open(QIODevice::WriteOnly)) return 2;
+        out.write(FrameFileIO::nativeCSVHeader());
+        const qint64 want[] = {0, 523, 999, 1000, 71582788, 4294967296LL + 17};
+        for (qint64 t : want)
+            out.write(QByteArray::number(t) + ",000001DA,false,Rx,0,8,01,02,03,04,05,06,07,08,\n");
+        out.write(",000001DB,false,Rx,0,1,09,\n");      // no time: one is made up (upstream's fallback)
+        out.close();
+        QVector<CommFrame> frames;
+        if (!FrameFileIO::loadNativeCSVFile(file, &frames)) { fprintf(stderr, "FAIL: load\n"); return 1; }
+        const int n = int(sizeof(want) / sizeof(want[0]));
+        if (frames.count() != n + 1) { fprintf(stderr, "FAIL: %d frames, expected %d\n", int(frames.count()), n + 1); return 1; }
+        for (int i = 0; i < n; i++)
+            if (micros(frames[i]) != want[i])
+            {
+                fprintf(stderr, "FAIL: row %d time %lld, expected %lld\n", i, micros(frames[i]), want[i]);
+                return 1;
+            }
+        printf("%s: times 0, 523, 999, 1000, ... loaded exactly\nOK\n", qPrintable(file));
+        return 0;
     }
     fprintf(stderr, "bad arguments\n");
     return 2;

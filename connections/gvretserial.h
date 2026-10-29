@@ -5,6 +5,7 @@
 #include <QCanBusDevice>
 #include <QThread>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QTcpSocket>
 #include <QUdpSocket>
 #include "canconnection.h"
@@ -72,6 +73,7 @@ private:
     void emitBuiltFrame(CommFrame::FrameType frameType);
     void sendCommValidation();
     void rebuildLocalTimeBasis();
+    qint64 unwrapDeviceTime(quint32 raw);
     void sendToSerial(const QByteArray &bytes);
     void sendDebug(const QString debugText);
 
@@ -102,9 +104,15 @@ protected:
     quint8 fdReplyFlags;
     quint32 fdReplyRate;
     uint32_t buildTimeBasis;
-    int32_t timeBasis;
+    qint64 timeBasis;           //added to the device's (unwrapped) time: µs since the app's time basis
     uint64_t lastSystemTimeBasis;
     uint64_t timeAtGVRETSync;
+    //web-savvycan: GVRET sends 32-bit µs, which wrap every 71.6 min; unwrapDeviceTime() makes them 64-bit (one device
+    //clock for all its buses). The anchor is the session's first device time and the host's monotonic clock then.
+    qint64 anchorDeviceUs;
+    QElapsedTimer anchorClock;  //invalid until the session's first device time
+    qint64 syncDeviceUs;        //the time sync's device time, unwrapped
+    bool haveTimeSync;          //the device answered the time sync (GVRET command 1) in this session
 };
 
 #endif // GVRETSERIAL_H

@@ -69,6 +69,7 @@ target_include_directories(nativecsv_tool PRIVATE ${SRC} ${SRC}/connections ${SR
 target_link_libraries(nativecsv_tool PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::SerialBus)
 add_test(NAME nativecsv_continuous COMMAND nativecsv_tool continuous ${CMAKE_CURRENT_BINARY_DIR}/continuous.csv 20000)
 add_test(NAME nativecsv_roundtrip COMMAND nativecsv_tool roundtrip ${CMAKE_CURRENT_BINARY_DIR}/roundtrip.csv 20000)
+add_test(NAME nativecsv_shorttimes COMMAND nativecsv_tool shorttimes ${CMAKE_CURRENT_BINARY_DIR}/shorttimes.csv)
 
 get_property(ALL_TESTS DIRECTORY PROPERTY TESTS)
 set_tests_properties(${ALL_TESTS} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 600)

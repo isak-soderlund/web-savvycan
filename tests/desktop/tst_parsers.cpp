@@ -90,6 +90,41 @@ private slots:
         QCOMPARE(fr[0].frameId(), quint32(0x18DAF110));
     }
 
+    // The device's 32-bit µs time past 2^32 (71.6 min): classic and FD times go on increasing; a frame a little
+    // older than the one before stays a little older.
+    void gvret_timeWrap()
+    {
+        auto g = gvret();
+        const quint32 raw[] = {0xFFFFF000u, 0xFFFFFF00u, 0x00000100u, 0x00002000u, 0x00001F00u};
+        const qint64 want[] = {0xFFFFF000LL, 0xFFFFFF00LL, 0x100000100LL, 0x100002000LL, 0x100001F00LL};
+        QByteArray bytes;
+        for (int i = 0; i < 5; i++) bytes += gvretFrame(0x100 + i, pattern(8, quint8(i)), i % 2 == 1, false, 0, raw[i]);
+        g->processRxBytes(bytes);
+        const auto fr = drain(g.get());
+        QCOMPARE(fr.size(), 5);
+        for (int i = 0; i < 5; i++) QCOMPARE(fr[i].timeStamp().microSeconds(), want[i]);
+        QCOMPARE(fr[1].frameType(), CommFrame::CANFDDataFrame);
+    }
+
+    // The time sync (command 1) answered just before the wrap: frames after it are timed from the app's time basis
+    // (near 0, not 2^32 µs off) and keep their spacing across the wrap.
+    void gvret_timeSyncBeforeWrap()
+    {
+        auto g = gvret();
+        QByteArray bytes;
+        bytes.append(char(0xF1));
+        bytes.append(char(1));
+        tf::putLE32(bytes, 0xFFF00000u);                       // 1.05 s before the wrap
+        bytes += gvretFrame(0x100, pattern(8, 1), false, false, 0, 0xFFF00000u + 1000);
+        bytes += gvretFrame(0x101, pattern(8, 2), true, true, 0, 0x00001000u);
+        g->processRxBytes(bytes);
+        const auto fr = drain(g.get());
+        QCOMPARE(fr.size(), 2);
+        const qint64 t0 = fr[0].timeStamp().microSeconds(), t1 = fr[1].timeStamp().microSeconds();
+        QVERIFY2(t0 > -1000000 && t0 < 600000000, qPrintable(QString::number(t0)));
+        QCOMPARE(t1 - t0, qint64(0x100000000LL + 0x1000 - 0xFFF00000LL - 1000));
+    }
+
     void gvret_fdThenClassicClearsFlags()
     {
         auto g = gvret();

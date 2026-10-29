@@ -735,7 +735,7 @@
    *   bufferBytes       device -> host bytes held while the host doesn't read, before CAN frames are lost: the firmware's
    *                     1 KB pipe + its CAN ring + the host's tty buffer (default 8192); the Web Serial mock adds the
    *                     port's bufferSize (Chrome's data pipe)
-   *   clockStartUs      the device's µs clock at start (u32, wraps; set near 2^32 to test the wrap)
+   *   clockStartUs      the device's µs clock at start (u32, wraps; set near 2^32 to test the wrap; or setClock())
    *   record            keep every frame sent to the host (for exact comparisons; not for long runs)
    *   refuseOpen        the CAN channel is owned by gs_usb: Bitrate/DataBitrate/Open refused (slcan BEL, GVRET stays off)
    *   now               a clock in ms (default performance.now / Date.now)
@@ -771,6 +771,12 @@
     }
     usNow() {
       return (this.clockStartUs + Math.round((this.now() - this.t0) * 1000)) >>> 0;
+    }
+    /** Sets the device's µs clock (GVRET time stamps and time sync, u32) to `us` now; it runs on from there and wraps
+     * at 2^32 (71.6 min) as rc1's does. Set it before the host connects: e.g. 2^32 - 20e6 wraps 20 s later. */
+    setClock(us) {
+      this.advance();
+      this.clockStartUs = us - Math.round((this.now() - this.t0) * 1000);
     }
     // host -> device ----------------------------------------------------------
     write(bytes) {
@@ -931,7 +937,7 @@
       this.reply(out);
       if (!f.err) {
         st.encoded++;
-        if (this.record) this.record.push({ id: f.id, ext: f.ext, fd: f.fd, brs: f.brs, rtr: f.rtr, data: Array.from(frameData(f)) });
+        if (this.record) this.record.push({ id: f.id, ext: f.ext, fd: f.fd, brs: f.brs, rtr: f.rtr, data: Array.from(frameData(f)), tsUs });
         if (f.seq !== undefined) {
           if (st.firstSeq === null) st.firstSeq = f.seq;
           st.lastSeq = f.seq;
@@ -1196,6 +1202,8 @@
       },
       stats: (i = 0) => ports[i]._dev.stats(),
       setTraffic: (mode, opts, i = 0) => ports[i]._dev.setTraffic(mode, opts || {}),
+      setClock: (us, i = 0) => ports[i]._dev.setClock(us),
+      clockUs: (i = 0) => ports[i]._dev.usNow(),
       inject: (f, i = 0) => ports[i]._dev.inject(frame(f)),
       unplug: (i = 0) => ports[i]._unplug(),
       replug: (i = 0) => ports[i]._replug(),
