@@ -750,10 +750,9 @@ void MainWindow::readUpdateableSettings()
 
     CSVAbsTime = settings.value("Main/CSVAbsTime", false).toBool();
 
-    if (settings.value("Main/FilterLabeling", false).toBool())
-        ui->listFilters->setMaximumWidth(250);
-    else
-        ui->listFilters->setMaximumWidth(175);
+    // web-savvycan (owner 2026-10-29): the ID filter list fills the side panel's width, as the filter box and
+    // buttons above and below it do. Upstream capped it at 175 px (250 with filter labels), so its background
+    // ended partway across the panel.
 
     bool showSendPanel = settings.value("Main/ShowSendPanel", true).toBool()
                          && Features::on(Features::Feature::FrameSender);
