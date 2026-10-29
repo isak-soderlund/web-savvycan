@@ -43,6 +43,8 @@ public:
     static bool loadNativeCSVData(QByteArrayView data, FrameStore *frames);
     static bool loadNativeCSVData(QByteArrayView data, QVector<CommFrame> *frames);
     static bool isNativeCSVData(QByteArrayView data); //isNativeCSVFile's test on the first two lines
+    //web-savvycan: a log file's bytes (the browser's file picker) loaded by its detected type, into a store
+    static bool loadLogData(const QString &name, const QByteArray &content, FrameStore *frames);
     //The loaders' loops call this: at most every 100 ms it runs the event loop (in the browser that hands the page
     //a turn: it draws, the progress dialog moves) after telling progressHook how far they are (bytes done/total).
     static void keepUiAlive(qint64 done = -1, qint64 total = -1);

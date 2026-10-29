@@ -11,6 +11,8 @@
 #include <climits>
 #include <cstring>
 #include <QElapsedTimer>
+#include <QDir>
+#include <QFileInfo>
 #include "framestore.h"
 #include "pcaplite.h"
 
@@ -5658,4 +5660,30 @@ bool FrameFileIO::loadCanWise(QString filename, QVector<CommFrame>* frames)
         return false;
     }
     return true;
+}
+
+// web-savvycan (stage 4, the file comparison): a log file's bytes, as the browser's file picker hands them over, loaded
+// as File > Load Log File detects them: SavvyCAN's GVRET CSV parsed in place into the store (loadNativeCSVData), other
+// formats through SavvyCAN's loaders from a temporary file in the page's file system (they read by name), deleted
+// after. False if nothing could be read (a GVRET CSV with broken rows keeps the rows that could be read, as SavvyCAN
+// salvages; other formats: false if their loader failed). Shared helper, kept small.
+bool FrameFileIO::loadLogData(const QString &name, const QByteArray &content, FrameStore *frames)
+{
+    if (!content.startsWith("LOGG") && isNativeCSVData(content))
+        if (loadNativeCSVData(QByteArrayView(content), frames) || !frames->isEmpty()) return frames->size() > 0;
+    const QString dir = QDir::tempPath() + QStringLiteral("/web-savvycan");
+    QDir().mkpath(dir);
+    const QString path = dir + QLatin1Char('/') + QFileInfo(name).fileName();
+    {
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(content) != content.size()) {
+            QFile::remove(path);
+            return false;
+        }
+    }
+    QVector<CommFrame> loaded;
+    const bool ok = autoDetectLoadFile(path, &loaded);
+    QFile::remove(path);
+    for (const CommFrame &f : loaded) frames->append(f);
+    return ok;
 }

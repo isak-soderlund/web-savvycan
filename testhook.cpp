@@ -373,6 +373,7 @@ void TestHook::install(CommFrameModel *model)
     installFrameInfoHook();
     wsc_install_temporal_hook();
     wsc_install_memory_hook();
+    TestHook::installFileTools();
 }
 
 // ---- Frame Data Analysis (RE Tools > Frame Data Analysis, the heatmap tool) -------------------------------------

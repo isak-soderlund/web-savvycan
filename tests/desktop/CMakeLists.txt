@@ -1,6 +1,7 @@
 # web-savvycan's desktop C++ tests (no browser, no device). Run them with tests/desktop/run.sh.
 #   tst_framestore, tst_parsers, tst_ingest_load   the frame store, the trace model, the GVRET/LAWICEL receive path,
 #                                                  a full-rate replay load test
+#   tst_filetools                                  the file-based RE tools' logic (bisector, comparisons, search)
 #   tst_webserialport                              the Web Serial QSerialPort stand-in, with a fake backend
 #   nativecsv_tool                                 SavvyCAN's native GVRET CSV with its own code: desktop continuous
 #                                                  logging and save/load (tests here), the reference rows and the
@@ -54,6 +55,12 @@ foreach(t tst_framestore tst_parsers tst_ingest_load)
     target_link_libraries(${t} PRIVATE frames_under_test)
     add_test(NAME ${t} COMMAND ${t})
 endforeach()
+
+# The file-based RE tools' logic (stage 4), with FrameFileIO for loadLogData
+add_executable(tst_filetools tst_filetools.cpp testframes.h ${SRC}/re/filetools.cpp ${SRC}/re/filetools.h
+    ${SRC}/framefileio.cpp ${SRC}/blfhandler.cpp ${SRC}/pcaplite.cpp)
+target_link_libraries(tst_filetools PRIVATE frames_under_test)
+add_test(NAME tst_filetools COMMAND tst_filetools)
 
 # The Web Serial stand-in: no Qt6::SerialPort here, <QSerialPort> must be the stand-in's.
 set(WEBSERIAL ${SRC}/wasm/webserial)

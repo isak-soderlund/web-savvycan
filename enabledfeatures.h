@@ -78,10 +78,10 @@ constexpr bool on(Feature f)
     case Feature::FlowView:           return false; // stage 4
     case Feature::RangeState:         return false; // stage 4
     case Feature::DiscreteState:      return false; // stage 4
-    case Feature::Bisector:           return false; // stage 4
-    case Feature::FileComparator:     return false; // stage 4
-    case Feature::DBCComparator:      return false; // stage 4
-    case Feature::FrameSearch:        return false; // stage 4
+    case Feature::Bisector:           return true;  // stage 4: file-based RE tools (2026-10-30)
+    case Feature::FileComparator:     return true;  // stage 4: file-based RE tools (2026-10-30)
+    case Feature::DBCComparator:      return true;  // stage 4: file-based RE tools (its own DBC loading)
+    case Feature::FrameSearch:        return true;  // stage 4: file-based RE tools (2026-10-30)
     case Feature::FrameSender:        return false; // stage 5
     case Feature::Playback:           return false; // stage 5
     case Feature::Fuzzing:            return false; // stage 5

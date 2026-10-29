@@ -1,6 +1,12 @@
 #include "dbccomparatorwindow.h"
 #include "ui_dbccomparatorwindow.h"
 #include "helpwindow.h"
+#include "re/filetools.h"
+#include <QDir>
+#include <QElapsedTimer>
+#include <QFileInfo>
+#include <QMessageBox>
+#include <QPointer>
 #include <QProgressDialog>
 #include <QSettings>
 #include <qevent.h>
@@ -10,7 +16,13 @@ DBCComparatorWindow::DBCComparatorWindow(QWidget *parent) :
     ui(new Ui::DBCComparatorWindow)
 {
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    // web-savvycan: as the connection and graphing windows: a Qt::Window is frameless and covers the main window's
+    // menus in the browser; as a dialog it has Qt's title bar and close button and can be moved aside.
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+#else
     setWindowFlags(Qt::Window);
+#endif
 
     connect(ui->btnDBCFile1, SIGNAL(clicked(bool)), this, SLOT(loadFirstFile()));
     connect(ui->btnDBCFile2, SIGNAL(clicked(bool)), this, SLOT(loadSecondFile()));
@@ -28,6 +40,8 @@ DBCComparatorWindow::DBCComparatorWindow(QWidget *parent) :
 DBCComparatorWindow::~DBCComparatorWindow()
 {
     removeEventFilter(this);
+    delete firstDBC;
+    delete secondDBC;
     delete ui;
 }
 
@@ -81,6 +95,52 @@ void DBCComparatorWindow::writeSettings()
     }
 }
 
+#ifdef Q_OS_WASM
+// web-savvycan: in the browser the DBC file comes from the browser's file picker (Qt's dialog would only see the page's
+// empty in-memory file system). SavvyCAN's DBC loader reads by file name: the bytes go to a temporary file in the page's
+// file system, are loaded into the comparator's own DBCFile (not the DBC File Manager's) and the file is deleted.
+void DBCComparatorWindow::pickDBC(DBCFile **slot, QLabel *label)
+{
+    QPointer<DBCComparatorWindow> self(this);
+    QFileDialog::getOpenFileContent(QStringLiteral("DBC Files (*.dbc *.DBC)"),
+                                    [self, slot, label](const QString &name, const QByteArray &content) {
+        if (!self || name.isEmpty()) return; // empty: the picker was cancelled
+        const QString shown = QFileInfo(name).fileName();
+        const QString dir = QDir::tempPath() + QStringLiteral("/web-savvycan-dbc");
+        QDir().mkpath(dir);
+        const QString path = dir + QLatin1Char('/') + shown;
+        {
+            QFile file(path);
+            if (!file.open(QIODevice::WriteOnly) || file.write(content) != content.size()) {
+                QFile::remove(path);
+                QMessageBox::warning(self, tr("Error Loading"), tr("%1 could not be read.").arg(shown));
+                return;
+            }
+        }
+        QProgressDialog progress(self);
+        progress.setWindowModality(Qt::WindowModal);
+        progress.setLabelText("Loading file...");
+        progress.setCancelButton(nullptr);
+        progress.setRange(0,0);
+        progress.setMinimumDuration(1000);
+        delete *slot;
+        *slot = new DBCFile;
+        const bool ok = (*slot)->loadFile(path);
+        QFile::remove(path);
+        progress.cancel();
+        if (!ok) {
+            delete *slot;
+            *slot = nullptr;
+            QMessageBox::warning(self, tr("Error Loading"), tr("%1 could not be read.").arg(shown));
+            label->setText(QString());
+            return;
+        }
+        label->setText(shown);
+        if (self->firstDBC && self->secondDBC) self->calculateDetails();
+    });
+}
+#endif
+
 QString DBCComparatorWindow::loadDBC(DBCFile **file)
 {
     QString filename;
@@ -125,6 +185,10 @@ QString DBCComparatorWindow::loadDBC(DBCFile **file)
 
 void DBCComparatorWindow::loadFirstFile()
 {
+#ifdef Q_OS_WASM
+    pickDBC(&firstDBC, ui->lblFirstFile);
+    return;
+#endif
     QString filename;
     filename = loadDBC(&firstDBC);
     ui->lblFirstFile->setText(filename);
@@ -133,238 +197,49 @@ void DBCComparatorWindow::loadFirstFile()
 
 void DBCComparatorWindow::loadSecondFile()
 {
+#ifdef Q_OS_WASM
+    pickDBC(&secondDBC, ui->lblSecondFile);
+    return;
+#endif
     QString filename;
     filename = loadDBC(&secondDBC);
     ui->lblSecondFile->setText(filename);
     if (firstDBC && secondDBC) calculateDetails();
 }
 
+// web-savvycan: SavvyCAN's tree, built by FileTools::buildDbcDiff (its loop over the second DBC's signals ran on the
+// message index and read past the message list; tree items no longer leaked for unchanged signals)
 void DBCComparatorWindow::calculateDetails()
 {
-    QProgressDialog progress(this);
-    progress.setWindowModality(Qt::WindowModal);
-    progress.setLabelText("Calculating differences");
-    progress.setCancelButton(nullptr);
-    progress.setRange(0,0);
-    progress.setMinimumDuration(0);
-    progress.show();
-
-    qApp->processEvents();
-
-    firstDBC->sort();
-    secondDBC->sort();
-
-
+    QElapsedTimer timer;
+    timer.start();
     ui->treeDetails->clear();
-
-    //Find nodes missing in one of the DBC files
-
-    QTreeWidgetItem *nodeDiffRoot = new QTreeWidgetItem();
-    nodeDiffRoot->setText(0, "Node Differences");
-    QTreeWidgetItem *nodesMissingDBCFirst = new QTreeWidgetItem();
-    nodesMissingDBCFirst->setText(0, "Nodes not found in first DBC");
-    QTreeWidgetItem *nodesMissingDBCSecond = new QTreeWidgetItem();
-    nodesMissingDBCSecond->setText(0, "Nodes not found in second DBC");
-    nodeDiffRoot->addChild(nodesMissingDBCFirst);
-    nodeDiffRoot->addChild(nodesMissingDBCSecond);
-    ui->treeDetails->addTopLevelItem(nodeDiffRoot);
-
-    for (int i = 0; i < firstDBC->dbc_nodes.count(); i++)
-    {
-        QString nodeName = firstDBC->dbc_nodes[i]->name;
-        DBC_NODE *node = secondDBC->findNodeByName(nodeName);
-        if (!node)
-        {
-            QTreeWidgetItem *missingNodeItem = new QTreeWidgetItem();
-            missingNodeItem->setText(0, nodeName);
-            nodesMissingDBCSecond->addChild(missingNodeItem);
-        }
-    }
-
-    for (int i = 0; i < secondDBC->dbc_nodes.count(); i++)
-    {
-        QString nodeName = secondDBC->dbc_nodes[i]->name;
-        DBC_NODE *node = firstDBC->findNodeByName(nodeName);
-        if (!node)
-        {
-            QTreeWidgetItem *missingNodeItem = new QTreeWidgetItem();
-            missingNodeItem->setText(0, nodeName);
-            nodesMissingDBCFirst->addChild(missingNodeItem);
-        }
-    }
-
-
-
-    //Find messages that are missing in one of the DBC files
-    //If a message exists in both then check for missing signals
-
-    QTreeWidgetItem *msgDiffRoot = new QTreeWidgetItem();
-    msgDiffRoot->setText(0, "Message Differences");
-    QTreeWidgetItem *msgMissingDBCFirst = new QTreeWidgetItem();
-    msgMissingDBCFirst->setText(0, "Messages not found in first DBC");
-    QTreeWidgetItem *msgMissingDBCSecond = new QTreeWidgetItem();
-    msgMissingDBCSecond->setText(0, "Messages not found in second DBC");
-    QTreeWidgetItem *msgSignalsDiff = new QTreeWidgetItem();
-    msgSignalsDiff->setText(0, "Messages with missing signals");
-    QTreeWidgetItem *sigDiffOne = new QTreeWidgetItem();
-    sigDiffOne->setText(0, "Missing from first DBC");
-    QTreeWidgetItem *sigDiffTwo = new QTreeWidgetItem();
-    sigDiffTwo->setText(0, "Missing from second DBC");
-    QTreeWidgetItem *sigModifiedRoot = new QTreeWidgetItem();
-    sigModifiedRoot->setText(0, "Modified Signals");
-    msgSignalsDiff->addChild(sigDiffOne);
-    msgSignalsDiff->addChild(sigDiffTwo);
-
-    msgDiffRoot->addChild(msgMissingDBCFirst);
-    msgDiffRoot->addChild(msgMissingDBCSecond);
-    msgDiffRoot->addChild(msgSignalsDiff);
-    msgDiffRoot->addChild(sigModifiedRoot);
-
-    ui->treeDetails->addTopLevelItem(msgDiffRoot);
-
-    QTreeWidgetItem *msgItem {};
-    QTreeWidgetItem *sigTemp {};
-
-    QList<DBC_MESSAGE *> msgs = firstDBC->messageHandler->getMsgsAsList();
-
-    for (int i = 0; i < firstDBC->messageHandler->getCount(); i++)
-    {
-        DBC_MESSAGE *thisMsg = msgs[i];
-        QString msgName = thisMsg->name;
-        DBC_MESSAGE *otherMsg = secondDBC->messageHandler->findMsgByName(msgName);
-        if (!otherMsg)
-        {
-            QTreeWidgetItem *missingMsgItem = new QTreeWidgetItem();
-            missingMsgItem->setText(0, msgName+ " (" + Utility::formatCANID(thisMsg->ID) + ")");
-            msgMissingDBCSecond->addChild(missingMsgItem);
-        }
-        else //both have Msg. Check sigs for missing
-        {
-            bool thisMsgHasMissing = false;
-            bool thisMsgHasMods = false;
-
-            QList<DBC_SIGNAL *> sigs = thisMsg->sigHandler->getSignalsAsList();
-
-            for (int j = 0; j < thisMsg->sigHandler->getCount(); j++)
-            {
-                DBC_SIGNAL *thisSig = sigs[j];
-                QString sigName = thisSig->name;
-                DBC_SIGNAL *otherSig = otherMsg->sigHandler->findSignalByName(sigName);
-                if (!otherSig)
-                {
-                    QTreeWidgetItem *missingSigItem = new QTreeWidgetItem();
-                    missingSigItem->setText(0, sigName);
-                    if (!thisMsgHasMissing)
-                    {
-                        thisMsgHasMissing = true;
-                        msgItem = new QTreeWidgetItem();
-                        msgItem->setText(0, msgName + " (" + Utility::formatCANID(thisMsg->ID) + ")");
-                        sigDiffTwo->addChild(msgItem);
-                    }
-                    if (msgItem)
-                        msgItem->addChild(missingSigItem);
-                }
-                else //signal exists on both sides. See if it as changed position or length
-                {
-                    bool didChange = false;
-                    QTreeWidgetItem *sigItem = new QTreeWidgetItem();
-                    sigItem->setText(0, sigName);
-                    if (thisSig->startBit != otherSig->startBit)
-                    {
-                        didChange = true;
-                        QTreeWidgetItem *sigStartBit = new QTreeWidgetItem();
-                        sigStartBit->setText(0, "Start Bit       First DBC: " + QString::number(thisSig->startBit) + "     Second: " + QString::number(otherSig->startBit));
-                        sigItem->addChild(sigStartBit);
-                    }
-                    if (thisSig->signalSize != otherSig->signalSize)
-                    {
-                        didChange = true;
-                        QTreeWidgetItem *sigSize = new QTreeWidgetItem();
-                        sigSize->setText(0, "Size          First DBC: " + QString::number(thisSig->signalSize) + "      Second: " + QString::number(otherSig->signalSize));
-                        sigItem->addChild(sigSize);
-                    }
-                    if (thisSig->bias != otherSig->bias)
-                    {
-                        didChange = true;
-                        QTreeWidgetItem *sigBias = new QTreeWidgetItem();
-                        sigBias->setText(0, "Bias          First DBC: " + QString::number(thisSig->bias) + "      Second: " + QString::number(otherSig->bias));
-                        sigItem->addChild(sigBias);
-                    }
-                    if (thisSig->factor != otherSig->factor)
-                    {
-                        didChange = true;
-                        QTreeWidgetItem *sigFactor = new QTreeWidgetItem();
-                        sigFactor->setText(0, "Factor        First DBC: " + QString::number(thisSig->factor) + "      Second: " + QString::number(otherSig->factor));
-                        sigItem->addChild(sigFactor);
-                    }
-                    if (didChange)
-                    {
-                        if (!thisMsgHasMods)
-                        {
-                            thisMsgHasMods = true;
-                            sigTemp = new QTreeWidgetItem();
-                            sigTemp->setText(0, msgName + " (" + Utility::formatCANID(thisMsg->ID) + ")");
-                            sigModifiedRoot->addChild(sigTemp);
-                        }
-                        if (sigTemp)
-                            sigTemp->addChild(sigItem);
-                    }
-                }
-            }
-            thisMsgHasMissing = false;
-
-            QList<DBC_SIGNAL *> other_sigs = otherMsg->sigHandler->getSignalsAsList();
-
-            for (int j = 0; i < otherMsg->sigHandler->getCount(); i++)
-            {
-                DBC_SIGNAL *thisSig = other_sigs[j];
-                QString sigName = thisSig->name;
-                DBC_SIGNAL *otherSig = thisMsg->sigHandler->findSignalByName(sigName);
-                if (!otherSig)
-                {
-                    QTreeWidgetItem *missingSigItem = new QTreeWidgetItem();
-                    missingSigItem->setText(0, sigName);
-                    if (!thisMsgHasMissing)
-                    {
-                        thisMsgHasMissing = true;
-                        msgItem = new QTreeWidgetItem();
-                        msgItem->setText(0, msgName + " (" + Utility::formatCANID(thisMsg->ID) + ")");
-                        sigDiffOne->addChild(msgItem);
-                    }
-                    msgItem->addChild(missingSigItem);
-                }
-            }
-        }
-    }
-
-    QList<DBC_MESSAGE *> second_msgs = secondDBC->messageHandler->getMsgsAsList();
-
-    for (int i = 0; i < secondDBC->messageHandler->getCount(); i++)
-    {
-        DBC_MESSAGE *origMsg = second_msgs[i];
-        QString msgName = origMsg->name;
-        DBC_MESSAGE *msg = firstDBC->messageHandler->findMsgByName(msgName);
-        if (!msg)
-        {
-            QTreeWidgetItem *missingMsgItem = new QTreeWidgetItem();
-            missingMsgItem->setText(0, msgName + " (" + Utility::formatCANID(origMsg->ID) + ")");
-            msgMissingDBCFirst->addChild(missingMsgItem);
-        }
-    }
+    ui->treeDetails->addTopLevelItems(FileTools::buildDbcDiff(firstDBC, secondDBC));
 
     QSettings settings;
     if (settings.value("InfoCompare/AutoExpand", false).toBool())
     {
         ui->treeDetails->expandAll();
     }
-
-    progress.cancel();
-
-    qApp->processEvents();
+    compareMs = timer.nsecsElapsed() / 1e6;
 }
 
 void DBCComparatorWindow::saveDetails()
 {
+#ifdef Q_OS_WASM
+    // web-savvycan: in the browser the text goes to the browser as a download (DBCComparison.txt)
+    {
+        QByteArray out;
+        for (QTreeWidgetItemIterator it(ui->treeDetails); *it; ++it) {
+            QTreeWidgetItem *item = *it;
+            const QString itemText = item->text(0);
+            for (; item->parent(); item = item->parent()) out += "   ";
+            out += itemText.toUtf8() + "\n";
+        }
+        QFileDialog::saveFileContent(out, QStringLiteral("DBCComparison.txt"));
+        return;
+    }
+#endif
     QString filename;
     QFileDialog dialog(this);
     QSettings settings;
@@ -405,6 +280,7 @@ void DBCComparatorWindow::saveDetails()
         }
 
         outFile->close();
+        delete outFile;
 
     }
 }

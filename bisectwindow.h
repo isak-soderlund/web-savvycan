@@ -4,6 +4,8 @@
 #include <QDialog>
 #include "framestore.h"
 #include "can_structs.h"
+#include <QSet>
+#include <limits>
 
 namespace Ui {
 class BisectWindow;
@@ -36,10 +38,21 @@ private slots:
 private:
     Ui::BisectWindow *ui;
     const FrameListView *modelFrames;
-    QVector<CommFrame> splitFrames;
-    QList<int> foundID;
+    // web-savvycan: the split frames in a compact store (36 bytes a classic frame, 92 a 64-byte FD one; SavvyCAN's
+    // QVector<CommFrame> took ~100-160 in the browser); "Replace main list" moves them into the trace
+    FrameStore splitFrames{std::numeric_limits<qsizetype>::max(), FrameStore::DefaultChunkFrames};
+    QSet<uint32_t> foundID;
+    bool idListStale = true;
 
+public:
+    // for the tests (testhook): the split as Calculate Split made it
+    const FrameStore &split() const { return splitFrames; }
+    double lastCalculateMs() const { return calculateMs; }
+
+private:
+    double calculateMs = 0;
     void refreshIDList();
+    void addIDs(const QVector<CommFrame> &frames);
     void refreshFrameNumbers();
     bool eventFilter(QObject *obj, QEvent *event);
 };
