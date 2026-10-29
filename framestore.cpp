@@ -2,6 +2,9 @@
 
 #include <QReadLocker>
 #include <algorithm>
+#include <climits>
+#include <cstdint>
+#include <cstring>
 
 FrameStore::FrameStore(qsizetype capacityFrames, qsizetype chunkFrames)
     : mChunk(chunkFrames > 0 ? chunkFrames : DefaultChunkFrames),
@@ -26,28 +29,69 @@ void FrameStore::setCapacity(qsizetype capacityFrames)
 
 void FrameStore::dropFrontChunk()
 {
-    const quint64 n = quint64(mChunks.front().size());
+    const quint64 n = quint64(mChunks.front().offsets.size());
     mChunks.pop_front();
     mFirstSeq += n;
     mTotalWrapped += n;
 }
 
-qsizetype FrameStore::append(const CommFrame &frame)
+//The chunk the next frame goes into: drops the oldest chunk when full, starts a new chunk when the newest is.
+FrameStore::Chunk &FrameStore::chunkForAppend(qsizetype &dropped)
 {
-    qsizetype dropped = 0;
+    dropped = 0;
     //full: drop the oldest chunk, so the store holds between capacity - chunk and capacity frames.
     //(Only with two chunks or more: a capacity below two chunks is exceeded rather than emptied.)
     if (size() >= mCapacity && mChunks.size() >= 2)
     {
-        dropped = qsizetype(mChunks.front().size());
+        dropped = qsizetype(mChunks.front().offsets.size());
         dropFrontChunk();
     }
-    if (mChunks.empty() || qsizetype(mChunks.back().size()) == mChunk)
+    if (mChunks.empty() || qsizetype(mChunks.back().offsets.size()) == mChunk)
     {
+        if (!mChunks.empty()) mChunks.back().words.shrink_to_fit(); //a full chunk keeps no spare room
         mChunks.emplace_back();
-        mChunks.back().reserve(size_t(mChunk)); // never reallocated after this: frames don't move
+        Chunk &c = mChunks.back();
+        c.offsets.reserve(size_t(mChunk));
+        c.words.reserve(size_t(mChunk) * (HeaderWords + 1)); //room for classic frames; grows for longer ones
     }
-    mChunks.back().push_back(frame);
+    return mChunks.back();
+}
+
+qsizetype FrameStore::append(const CommFrame &frame)
+{
+    const QByteArray &payload = frame.payload();
+    return append(frame, payload.constData(), payload.size());
+}
+
+qsizetype FrameStore::append(const CommFrame &header, const char *payload, qsizetype len)
+{
+    if (len < 0) len = 0;
+    if (len > 0xFFFF) len = 0xFFFF;
+    qsizetype dropped;
+    Chunk &c = chunkForAppend(dropped);
+    const size_t at = c.words.size();
+    //offsets are 32-bit: a chunk of 65536 frames holds at most 65536 * (3 + 8192) words
+    c.offsets.push_back(quint32(at));
+    const size_t payloadWords = size_t(len + 7) / 8;
+    c.words.resize(at + HeaderWords + payloadWords);
+    quint64 *w = c.words.data() + at;
+    //the time as CommFrame keeps it: seconds (32 bits) and microseconds; seconds past 32 bits are folded
+    //into the microseconds (the same time)
+    const CommFrame::TimeStamp ts = header.timeStamp();
+    qint64 secs = ts.seconds(), usecs = ts.microSeconds();
+    if (secs < INT32_MIN || secs > INT32_MAX)
+    {
+        usecs += secs * 1000000LL;
+        secs = 0;
+    }
+    w[0] = quint64(usecs);
+    w[1] = quint64(quint32(qint32(secs))) | (quint64(header.getFrameCount()) << 32);
+    w[2] = header.packedBits() | (quint64(header.getBus()) << 38) | (quint64(len) << 46);
+    if (payloadWords)
+    {
+        w[HeaderWords + payloadWords - 1] = 0; //the padding of the last word
+        memcpy(w + HeaderWords, payload, size_t(len));
+    }
     ++mEndSeq;
     ++mTotalAppended;
     return dropped;
@@ -62,16 +106,56 @@ void FrameStore::clear()
     mFirstSeq = mEndSeq;
 }
 
-const CommFrame &FrameStore::bySeq(quint64 seq) const
+const quint64 *FrameStore::record(quint64 seq) const
 {
     const quint64 off = seq - mFirstSeq;
-    return mChunks[size_t(off / quint64(mChunk))][size_t(off % quint64(mChunk))];
+    const Chunk &c = mChunks[size_t(off / quint64(mChunk))];
+    return c.words.data() + c.offsets[size_t(off % quint64(mChunk))];
 }
 
-CommFrame &FrameStore::bySeqMutable(quint64 seq)
+quint64 *FrameStore::record(quint64 seq)
 {
-    const quint64 off = seq - mFirstSeq;
-    return mChunks[size_t(off / quint64(mChunk))][size_t(off % quint64(mChunk))];
+    return const_cast<quint64 *>(static_cast<const FrameStore *>(this)->record(seq));
+}
+
+CommFrame FrameStore::bySeq(quint64 seq) const
+{
+    const quint64 *w = record(seq);
+    CommFrame f;
+    const qsizetype len = qsizetype((w[2] >> 46) & 0xFFFF);
+    if (len) f.setPayload(QByteArray(reinterpret_cast<const char *>(w + HeaderWords), len));
+    f.setPackedBits(w[2]); //after the payload: setPayload() may set the FD flag, the record has it as it was
+    f.setBus(quint8((w[2] >> 38) & 0xFF));
+    f.setTimeStamp(CommFrame::TimeStamp(qint64(qint32(quint32(w[1]))), qint64(w[0])));
+    f.setFrameCount(quint32(w[1] >> 32));
+    return f;
+}
+
+CommFrame::TimeStamp FrameStore::timeStampBySeq(quint64 seq) const
+{
+    const quint64 *w = record(seq);
+    return CommFrame::TimeStamp(qint64(qint32(quint32(w[1]))), qint64(w[0]));
+}
+
+void FrameStore::setTimeStamp(quint64 seq, CommFrame::TimeStamp ts)
+{
+    quint64 *w = record(seq);
+    qint64 secs = ts.seconds(), usecs = ts.microSeconds();
+    if (secs < INT32_MIN || secs > INT32_MAX)
+    {
+        usecs += secs * 1000000LL;
+        secs = 0;
+    }
+    w[0] = quint64(usecs);
+    w[1] = quint64(quint32(qint32(secs))) | (w[1] & 0xFFFFFFFF00000000ULL);
+}
+
+qsizetype FrameStore::memoryBytes() const
+{
+    size_t bytes = 0;
+    for (const Chunk &c : mChunks)
+        bytes += c.offsets.capacity() * sizeof(quint32) + c.words.capacity() * sizeof(quint64);
+    return qsizetype(bytes);
 }
 
 // ---------------- FrameListView ----------------

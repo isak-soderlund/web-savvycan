@@ -115,18 +115,20 @@ bool CommFrameModel::FilteredView::frameLocked(qsizetype i, CommFrame &out) cons
     return true;
 }
 
-const CommFrame *CommFrameModel::frameForRow(int row) const
+bool CommFrameModel::frameForRow(int row, CommFrame &out) const
 {
-    if (row < 0 || row >= publishedRows) return nullptr;
+    if (row < 0 || row >= publishedRows) return false;
     if (overwriteDups)
     {
-        if (row >= overwriteFrames.size()) return nullptr;
-        return &overwriteFrames.at(row);
+        if (row >= overwriteFrames.size()) return false;
+        out = overwriteFrames.at(row);
+        return true;
     }
-    if (size_t(row) >= filteredSeqs.size()) return nullptr;
+    if (size_t(row) >= filteredSeqs.size()) return false;
     const quint64 seq = filteredSeqs[size_t(row)];
-    if (!store.contains(seq)) return nullptr;
-    return &store.bySeq(seq);
+    if (!store.contains(seq)) return false;
+    out = store.bySeq(seq);
+    return true;
 }
 
 quint64 CommFrameModel::overwriteKey(const CommFrame &frame)
@@ -227,24 +229,24 @@ void CommFrameModel::normalizeTiming()
     beginResetModel();
     {
         QWriteLocker lk(&store.lock());
-        timeOffset = store.bySeq(store.firstSeq()).timeStamp().microSeconds();
+        timeOffset = store.timeStampBySeq(store.firstSeq()).microSeconds();
         qint64 prevStamp = 0;
 
         //find the absolute lowest timestamp in the whole time. Needed because maybe timestamp was reset in the middle.
         for (quint64 s = store.firstSeq(); s < store.endSeq(); s++)
         {
-            if (store.bySeq(s).timeStamp().microSeconds() < timeOffset) timeOffset = store.bySeq(s).timeStamp().microSeconds();
+            const qint64 us = store.timeStampBySeq(s).microSeconds();
+            if (us < timeOffset) timeOffset = us;
         }
 
         for (quint64 s = store.firstSeq(); s < store.endSeq(); s++)
         {
-            CommFrame &f = store.bySeqMutable(s);
-            qint64 thisStamp = f.timeStamp().microSeconds() - timeOffset;
+            qint64 thisStamp = store.timeStampBySeq(s).microSeconds() - timeOffset;
             if (thisStamp <= prevStamp)
             {
                 timeOffset -= prevStamp;
             }
-            f.setTimeStamp(CommFrame::TimeStamp(0, thisStamp));
+            store.setTimeStamp(s, CommFrame::TimeStamp(0, thisStamp));
         }
 
         //the filtered rows of normal mode are the same frames; overwrite mode keeps its own copies
@@ -395,11 +397,16 @@ void CommFrameModel::sortByColumn(int column)
         }
         else
         {
-            std::stable_sort(filteredSeqs.begin(), filteredSeqs.end(),
-                             [&](quint64 a, quint64 b) {
-                                 const uint64_t ka = getCommFrameVal(store.bySeq(a), col), kb = getCommFrameVal(store.bySeq(b), col);
-                                 return asc ? ka < kb : ka > kb;
+            //the keys first (the store makes a frame on each access): one per row, then sorted with their rows
+            std::vector<std::pair<uint64_t, quint64>> keyed;
+            keyed.reserve(filteredSeqs.size());
+            for (quint64 seq : filteredSeqs)
+                keyed.emplace_back(store.contains(seq) ? getCommFrameVal(store.bySeq(seq), col) : 0, seq);
+            std::stable_sort(keyed.begin(), keyed.end(),
+                             [asc](const std::pair<uint64_t, quint64> &a, const std::pair<uint64_t, quint64> &b) {
+                                 return asc ? a.first < b.first : a.first > b.first;
                              });
+            for (size_t i = 0; i < keyed.size(); i++) filteredSeqs[i] = keyed[i].second;
             filteredSorted = true;
             publishedRows = qsizetype(filteredSeqs.size());
         }
@@ -481,11 +488,8 @@ QVariant CommFrameModel::data(const QModelIndex &index, int role) const
     if (!index.isValid())
         return QVariant();
 
-    const CommFrame *rowFrame = frameForRow(index.row());
-    if (!rowFrame) //out of range, or the ring dropped this row a moment ago (its removal is on its way)
+    if (!frameForRow(index.row(), thisFrame)) //out of range, or the ring dropped this row a moment ago (its removal is on its way)
         return QVariant();
-
-    thisFrame = *rowFrame;
 
     const unsigned char *data = reinterpret_cast<const unsigned char *>(thisFrame.payload().constData());
     int dataLen = thisFrame.payload().length();
@@ -1296,6 +1300,28 @@ void CommFrameModel::insertFrames(const QVector<CommFrame> &newFrames)
     if (needFilterRefresh) emit updatedFiltersList();
 }
 
+//A loaded file's frames, staged in a store of their own (FrameFileIO's fast loaders): taken in chunk by chunk,
+//each chunk freed as soon as its frames are in, so the frames are in memory about once, not twice.
+void CommFrameModel::insertFrames(FrameStore &staged)
+{
+    const qsizetype count = staged.size();
+    {
+        QWriteLocker lk(&store.lock());
+        const qsizetype need = store.size() + count;
+        if (need > store.capacity()) store.setCapacity(need + store.chunkFrames());
+        while (!staged.isEmpty())
+        {
+            const quint64 end = staged.frontChunkEndSeq();
+            for (quint64 s = staged.firstSeq(); s < end; s++)
+                ingestLocked(staged.bySeq(s), false);
+            staged.dropFront();
+        }
+    }
+    lastUpdateNumFrames = int(count);
+    publishRows();
+    if (needFilterRefresh) emit updatedFiltersList();
+}
+
 int CommFrameModel::getIndexFromTimeID(unsigned int ID, double timestamp)
 {
     //returns a row of the trace (the caller selects it in the view)
@@ -1303,10 +1329,10 @@ int CommFrameModel::getIndexFromTimeID(unsigned int ID, double timestamp)
     int64_t intTimeStamp = static_cast<int64_t> (timestamp * 1000000l);
     for (int i = 0; i < publishedRows; i++)
     {
-        const CommFrame *f = frameForRow(i);
-        if (f && f->frameId() == ID)
+        CommFrame f;
+        if (frameForRow(i, f) && f.frameId() == ID)
         {
-            if (f->timeStamp().microSeconds() <= intTimeStamp) bestIndex = i;
+            if (f.timeStamp().microSeconds() <= intTimeStamp) bestIndex = i;
             else break; //drop out of loop as soon as we pass the proper timestamp
         }
     }

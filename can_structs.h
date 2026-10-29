@@ -338,6 +338,29 @@ public:
         return length <= 8;
     }
 
+    // web-savvycan: the ID/error code, the frame type and the flags as one number (bits 0-28 ID, 29-31 type,
+    // 32 extended, 33 valid ID, 34 FD, 35 BRS, 36 ESI, 37 local echo), exactly as stored here, so the frame
+    // store's compact records (framestore.h) give the frame back bit for bit.
+    constexpr quint64 packedBits() const noexcept
+    {
+        return quint64(msgId) | (quint64(format) << 29) | (quint64(isExtendedFrame) << 32)
+               | (quint64(isValidFrameId) << 33) | (quint64(isFlexibleDataRate) << 34)
+               | (quint64(isBitrateSwitch) << 35) | (quint64(isErrorStateIndicator) << 36)
+               | (quint64(isLocalEcho) << 37);
+    }
+    constexpr void setPackedBits(quint64 b) noexcept
+    {
+        msgId = quint32(b & 0x1FFFFFFFU);
+        format = quint8((b >> 29) & 0x7);
+        isExtendedFrame = quint8((b >> 32) & 1);
+        isValidFrameId = quint8((b >> 33) & 1);
+        isFlexibleDataRate = quint8((b >> 34) & 1);
+        isBitrateSwitch = quint8((b >> 35) & 1);
+        isErrorStateIndicator = quint8((b >> 36) & 1);
+        isLocalEcho = quint8((b >> 37) & 1);
+        reserved0 = 0;
+    }
+
 private:
     quint32 msgId:29; // acts as container for error codes too
     quint8 format:3; // max of 8 frame types

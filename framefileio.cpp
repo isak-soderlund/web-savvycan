@@ -8,6 +8,10 @@
 #include <QSettings>
 #include <iostream>
 #include <memory>
+#include <climits>
+#include <cstring>
+#include <QElapsedTimer>
+#include "framestore.h"
 #include "pcaplite.h"
 
 #include "utility.h"
@@ -631,7 +635,7 @@ bool FrameFileIO::loadVehicleSpyFile(QString filename, QVector<CommFrame> *frame
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
         QByteArray line = inFile.readLine().simplified().toUpper();
@@ -773,7 +777,7 @@ bool FrameFileIO::loadCRTDFile(QString filename, QVector<CommFrame>* frames)
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
         QByteArray line = inFile.readLine().simplified();
@@ -892,7 +896,7 @@ bool FrameFileIO::loadCARBUSAnalyzerFile(QString filename, QVector<CommFrame>* f
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
         line = txt.readLine().simplified();
@@ -995,7 +999,7 @@ bool FrameFileIO::saveCARBUSAnalzyer(QString filename, const QVector<CommFrame>*
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
         auto frame = frames->at(c);
@@ -1118,7 +1122,7 @@ bool FrameFileIO::loadCANHackerFile(QString filename, QVector<CommFrame>* frames
             lineCounter++;
             if (lineCounter % 100 == 0)
             {
-                qApp->processEvents();
+                keepUiAlive();
             }
             QByteArray line = inFile.readLine().simplified();
             if (line.length() > 2)
@@ -1252,7 +1256,7 @@ bool FrameFileIO::loadCANOpenFile(QString filename, QVector<CommFrame>* frames)
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -1307,7 +1311,7 @@ bool FrameFileIO::saveCRTDFile(QString filename, const QVector<CommFrame>* frame
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -1454,7 +1458,7 @@ bool FrameFileIO::loadPCANFile(QString filename, QVector<CommFrame>* frames)
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
         QByteArray line = inFile.readLine();
@@ -1742,7 +1746,7 @@ bool FrameFileIO::loadCanalyzerASC(QString filename, QVector<CommFrame>* frames)
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
         QByteArray line = inFile.readLine();
@@ -1977,7 +1981,7 @@ bool FrameFileIO::saveCanalyzerASC(QString filename, const QVector<CommFrame>* f
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -2102,7 +2106,7 @@ bool FrameFileIO::savePCANFile(QString filename, const QVector<CommFrame>* frame
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -2281,107 +2285,273 @@ QByteArray FrameFileIO::nativeCSVRow(const CommFrame &frame)
     return row;
 }
 
+// ---- web-savvycan: the native GVRET CSV parsed in place (the leaner log loader) ----
+// The same rules as SavvyCAN's line by line loader had (readLine, simplified, split(','), toInt per field), without a
+// QByteArray per line and per field: a 600 000-frame file made ~45 million allocations. Fields: leading and trailing
+// whitespace is ignored; numbers as QByteArray::toInt/toUInt/toLongLong read them (a field that isn't one is 0, the
+// time is then made up, as before).
+namespace {
+inline char csvUpper(char c) { return (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A') : c; }
+inline bool csvSpace(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f'; }
+
+inline void csvTrim(const char *&b, const char *&e)
+{
+    while (b < e && csvSpace(*b)) b++;
+    while (e > b && csvSpace(e[-1])) e--;
+}
+
+// A decimal integer (optional sign) within [lo, hi]; false if the field isn't one or is out of range.
+bool csvDec(const char *b, const char *e, qint64 lo, qint64 hi, qint64 &out)
+{
+    csvTrim(b, e);
+    if (b == e) return false;
+    bool neg = false;
+    if (*b == '+' || *b == '-') { neg = (*b == '-'); b++; }
+    if (b == e) return false;
+    const quint64 limit = neg ? quint64(-(lo + 1)) + 1 : quint64(hi);
+    quint64 v = 0;
+    for (; b < e; b++)
+    {
+        const unsigned d = unsigned(static_cast<unsigned char>(*b)) - unsigned('0');
+        if (d > 9) return false;
+        if (v > (limit - d) / 10) return false;
+        v = v * 10 + d;
+    }
+    out = neg ? qint64(0 - v) : qint64(v);
+    return true;
+}
+
+// A hexadecimal number (optional 0x) up to max; 0 if the field isn't one or is larger.
+quint64 csvHex(const char *b, const char *e, quint64 max)
+{
+    csvTrim(b, e);
+    if (e - b > 2 && b[0] == '0' && (b[1] == 'x' || b[1] == 'X')) b += 2;
+    if (b == e) return 0;
+    quint64 v = 0;
+    for (; b < e; b++)
+    {
+        const char c = *b;
+        unsigned d;
+        if (c >= '0' && c <= '9') d = unsigned(c - '0');
+        else if (c >= 'a' && c <= 'f') d = unsigned(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') d = unsigned(c - 'A' + 10);
+        else return 0;
+        if (v > (max - d) / 16) return 0;
+        v = v * 16 + d;
+    }
+    return v;
+}
+
+inline int csvInt(const char *b, const char *e)
+{
+    qint64 v = 0;
+    return csvDec(b, e, INT_MIN, INT_MAX, v) ? int(v) : 0;
+}
+
+// Case-insensitive: does [b, e) contain word (upper case)?
+bool csvContains(const char *b, const char *e, const char *word)
+{
+    const qsizetype n = qsizetype(strlen(word));
+    for (const char *p = b; e - p >= n; p++)
+    {
+        qsizetype i = 0;
+        while (i < n && csvUpper(p[i]) == word[i]) i++;
+        if (i == n) return true;
+    }
+    return false;
+}
+
+// The rows of a native CSV: sink(frame, payload, length) per row; frame's own payload is empty. Returns false if
+// a row had fewer than 5 fields (as loadNativeCSVFile always did: such rows are left out).
+template <class Sink>
+bool parseNativeCSV(QByteArrayView data, Sink &&sink)
+{
+    const char *const begin = data.data();
+    const char *const end = begin + data.size();
+    const char *p = begin;
+    // the header (read out and discarded); "Dir" from position 23 on: a V2 file
+    const char *nl = static_cast<const char *>(memchr(p, '\n', size_t(end - p)));
+    const char *lineEnd = nl ? nl : end;
+    const int fileVersion = (lineEnd - p > 23 && csvUpper(p[23]) == 'D') ? 2 : 1;
+    p = nl ? nl + 1 : end;
+
+    uint64_t madeUpTime = Utility::GetTimeMS();
+    bool foundErrors = false;
+    constexpr int MaxFields = 72;                // time .. flags of a 64-byte V2 row (6 + 64 + 1), and some
+    const char *fieldB[MaxFields], *fieldE[MaxFields];
+    char bytes[64];
+    int lineCounter = 0;
+    while (p < end)
+    {
+        nl = static_cast<const char *>(memchr(p, '\n', size_t(end - p)));
+        const char *b = p, *e = nl ? nl : end;
+        p = nl ? nl + 1 : end;
+        if (++lineCounter >= 4096)
+        {
+            lineCounter = 0;
+            FrameFileIO::keepUiAlive(qint64(p - begin), qint64(end - begin));
+        }
+        csvTrim(b, e);
+        if (e - b <= 2) continue; //as before: empty and tiny lines are skipped
+
+        int n = 0;
+        const char *f = b;
+        for (const char *q = b; ; q++)
+        {
+            if (q == e || *q == ',')
+            {
+                if (n < MaxFields) { fieldB[n] = f; fieldE[n] = q; }
+                n++;
+                if (q == e) break;
+                f = q + 1;
+            }
+        }
+        if (n < 5)
+        {
+            foundErrors = true;
+            continue;
+        }
+        auto field = [&](int i, const char *&fb, const char *&fe) {
+            if (i < n && i < MaxFields) { fb = fieldB[i]; fe = fieldE[i]; }
+            else fb = fe = nullptr;
+        };
+        const char *fb, *fe;
+
+        CommFrame frame;
+        frame.setFrameType(CommFrame::CANDataFrame);
+        //any number is the time in µs, also "0".."999" (a log's first millisecond); made-up times only without one
+        qint64 tstamp = 0;
+        if (csvDec(fieldB[0], fieldE[0], LLONG_MIN, LLONG_MAX, tstamp))
+            frame.setTimeStamp(CommFrame::TimeStamp(0, tstamp));
+        else
+        {
+            madeUpTime += 5;
+            frame.setTimeStamp(CommFrame::TimeStamp(0, qint64(madeUpTime)));
+        }
+        frame.setFrameId(quint32(csvHex(fieldB[1], fieldE[1], 0xFFFFFFFFULL)));
+        frame.setExtendedFrameFormat(csvContains(fieldB[2], fieldE[2], "TRUE"));
+        //fix for faulty files that fail to set the extended flag when they should
+        if (frame.frameId() > 0x7FF) frame.setExtendedFrameFormat(true);
+        frame.setFrameType(CommFrame::CANDataFrame);
+
+        int lng;
+        if (fileVersion == 1)
+        {
+            frame.setReceived(true);
+            frame.setBus(quint8(csvInt(fieldB[3], fieldE[3])));
+            lng = csvInt(fieldB[4], fieldE[4]);
+            if (lng > 8) lng = 8;
+            if (lng < 0) lng = 0;
+            if (lng + 5 > n) lng = n - 5;
+            for (int d = 0; d < lng; d++)
+            {
+                field(5 + d, fb, fe);
+                bytes[d] = static_cast<char>(fb ? quint32(csvHex(fb, fe, 0x7FFFFFFF)) : 0);
+            }
+        }
+        else
+        {
+            frame.setReceived(fieldB[3] < fieldE[3] && *fieldB[3] == 'R');
+            frame.setBus(quint8(csvInt(fieldB[4], fieldE[4])));
+            field(5, fb, fe);
+            lng = fb ? csvInt(fb, fe) : 0;
+            if (lng > 64) lng = 64; //CAN FD frames carry up to 64 bytes
+            if (lng < 0) lng = 0;
+            if (lng + 6 > n) lng = n - 6;
+            if (lng < 0) lng = 0;
+            for (int d = 0; d < lng; d++)
+            {
+                field(6 + d, fb, fe);
+                bytes[d] = static_cast<char>(fb ? quint32(csvHex(fb, fe, 0x7FFFFFFF)) : 0);
+            }
+            //flags column after the max(8, LEN) data columns: "FD", "FD+BRS", ... (empty for classic CAN).
+            //More than 8 bytes can only be CAN FD, even if a file has no flags column.
+            field(6 + qMax(8, lng), fb, fe);
+            if (fb) csvTrim(fb, fe);
+            const bool fdFlag = fb && fe - fb >= 2 && csvUpper(fb[0]) == 'F'
+                                && csvUpper(fb[1]) == 'D';
+            if (fdFlag || lng > 8)
+            {
+                frame.setFlexibleDataRateFormat(true);
+                frame.setBitrateSwitch(fb && csvContains(fb, fe, "BRS"));
+                frame.setErrorStateIndicator(fb && csvContains(fb, fe, "ESI"));
+            }
+        }
+        sink(frame, bytes, lng);
+    }
+    return !foundErrors;
+}
+} // namespace
+
+std::function<void(qint64, qint64)> FrameFileIO::progressHook;
+
+void FrameFileIO::keepUiAlive(qint64 done, qint64 total)
+{
+    static QElapsedTimer since;
+    if (since.isValid() && since.elapsed() < 100) return;
+    if (progressHook && total > 0) progressHook(done, total);
+    qApp->processEvents();
+    since.start();
+}
+
+bool FrameFileIO::isNativeCSVData(QByteArrayView data)
+{
+    //isNativeCSVFile's test on the first two lines
+    const char *p = data.data(), *end = p + data.size();
+    const char *nl = static_cast<const char *>(memchr(p, '\n', size_t(end - p)));
+    QByteArray header(p, (nl ? nl + 1 : end) - p);
+    header = header.toUpper();
+    if (header.length() < 23) return false;
+    const int fileVersion = (header.length() > 23 && header.at(23) == 'D') ? 2 : 1;
+    if (!header.contains("TIME STAMP") || !header.contains("EXTENDED") || !header.contains("D1")) return false;
+    if (!nl || nl + 1 >= end) return true;
+    p = nl + 1;
+    nl = static_cast<const char *>(memchr(p, '\n', size_t(end - p)));
+    const QByteArray line = QByteArray(p, (nl ? nl : end) - p).simplified();
+    if (line.length() <= 2) return true;
+    const QList<QByteArray> tokens = line.split(',');
+    if (tokens.length() < 5) return false;
+    if (fileVersion == 1) return tokens[4].toUInt() <= 8;
+    return tokens.length() < 6 || tokens[5].toUInt() <= 64; //CAN FD frames carry up to 64 bytes
+}
+
+bool FrameFileIO::loadNativeCSVData(QByteArrayView data, FrameStore *frames)
+{
+    return parseNativeCSV(data, [frames](const CommFrame &f, const char *payload, int len) {
+        frames->append(f, payload, len);
+    });
+}
+
+bool FrameFileIO::loadNativeCSVData(QByteArrayView data, QVector<CommFrame> *frames)
+{
+    qsizetype lines = 0;
+    for (const char *p = data.data(), *end = p + data.size();
+         (p = static_cast<const char *>(memchr(p, '\n', size_t(end - p)))); p++)
+        lines++;
+    frames->reserve(frames->size() + lines + 1); //one allocation, no growing (a QVector grows by copying)
+    return parseNativeCSV(data, [frames](CommFrame &f, const char *payload, int len) {
+        if (len > 0) f.setPayload(QByteArray(payload, len));
+        frames->append(f);
+    });
+}
+
 bool FrameFileIO::loadNativeCSVFile(QString filename, QVector<CommFrame>* frames)
 {
     QFile inFile(filename);
-    CommFrame thisFrame;
-    int fileVersion = 1;
-    uint64_t timeStamp = Utility::GetTimeMS();
-    int lineCounter = 0;
-    bool foundErrors = false;
-    thisFrame.setFrameType(CommFrame::CANDataFrame);
-
-    if (!inFile.open(QIODevice::ReadOnly | QIODevice::Text))
+    if (!inFile.open(QIODevice::ReadOnly))
     {
         return false;
     }
-
-    QByteArray line = inFile.readLine().toUpper(); //read out the header first and discard it.
-    if (line.at(23) == 'D') fileVersion = 2; //Dir is found starting at position 23 if this is a V2 file
-
-    while (!inFile.atEnd()) {
-        lineCounter++;
-        if (lineCounter > 100)
-        {
-            qApp->processEvents();
-            lineCounter = 0;
-        }
-
-        line = inFile.readLine().simplified();
-        if (line.length() > 2)
-        {
-            QList<QByteArray> tokens = line.split(',');
-            if (tokens.length() >= 5)
-            {
-                //web-savvycan: any number is the time in µs, also "0".."999" (a log's first millisecond); upstream
-                //took a field shorter than 4 characters as "no time stamp". Made-up times only without a number.
-                bool haveTime = false;
-                const qint64 tstamp = tokens[0].trimmed().toLongLong(&haveTime);
-                if (haveTime)
-                {
-                    thisFrame.setTimeStamp(CommFrame::TimeStamp(0, tstamp));
-                }
-                else
-                {
-                    timeStamp += 5;
-                    thisFrame.setTimeStamp(CommFrame::TimeStamp(0, timeStamp));
-                }
-
-                thisFrame.setFrameId(tokens[1].toUInt(nullptr, 16));
-                if (tokens[2].toUpper().contains("TRUE")) thisFrame.setExtendedFrameFormat(true);
-                    else thisFrame.setExtendedFrameFormat(false);
-
-                //fix for faulty files that fail to set the extended flag when they should
-                if (thisFrame.frameId() > 0x7FF) thisFrame.setExtendedFrameFormat(true);
-
-                thisFrame.setFrameType(CommFrame::CANDataFrame);
-
-                if (fileVersion == 1)
-                {
-                    thisFrame.setReceived(true);
-                    thisFrame.setBus(tokens[3].toInt());
-                    int lng = tokens[4].toInt();
-                    if (lng > 8) lng = 8;
-                    if (lng < 0) lng = 0;
-                    if (lng + 5 > tokens.length()) lng = tokens.length() - 5;
-                    QByteArray bytes(lng, 0);
-                    for (int c = 0; c < lng; c++) bytes[c] = 0;
-                    for (int d = 0; d < lng; d++)
-                        bytes[d] = static_cast<char>(tokens[5 + d].toInt(nullptr, 16));
-                    thisFrame.setPayload(bytes);
-                }
-                else if (fileVersion == 2)
-                {
-                    if (tokens[3].at(0) == 'R') thisFrame.setReceived(true);
-                    else thisFrame.setReceived(false);
-                    thisFrame.setBus(tokens[4].toInt());
-                    int lng = tokens[5].toInt();
-                    if (lng > 64) lng = 64; //CAN FD frames carry up to 64 bytes
-                    if (lng < 0) lng = 0;
-                    if (lng + 6 > tokens.length()) lng = tokens.length() - 6;
-                    QByteArray bytes(lng, 0);
-                    for (int c = 0; c < lng; c++) bytes[c] = 0;
-                    for (int d = 0; d < lng; d++)
-                        bytes[d] = static_cast<char>(tokens[6 + d].toInt(nullptr, 16));
-                    thisFrame.setPayload(bytes);
-                    //flags column after the max(8, LEN) data columns: "FD", "FD+BRS", ... (empty for classic CAN).
-                    //More than 8 bytes can only be CAN FD, even if a file has no flags column.
-                    int flagsIdx = 6 + qMax(8, lng);
-                    QByteArray flags = (flagsIdx < tokens.length()) ? tokens[flagsIdx].trimmed().toUpper() : QByteArray();
-                    if (flags.startsWith("FD") || lng > 8)
-                    {
-                        thisFrame.setFlexibleDataRateFormat(true);
-                        thisFrame.setBitrateSwitch(flags.contains("BRS"));
-                        thisFrame.setErrorStateIndicator(flags.contains("ESI"));
-                    }
-                }
-
-                frames->append(thisFrame);
-            }
-            else foundErrors = true;
-        }
+    //the whole file at once (mapped where the system can), parsed in place
+    const qint64 size = inFile.size();
+    if (uchar *mapped = size > 0 ? inFile.map(0, size) : nullptr)
+    {
+        const bool ok = loadNativeCSVData(QByteArrayView(reinterpret_cast<const char *>(mapped), qsizetype(size)), frames);
+        inFile.unmap(mapped);
+        return ok;
     }
-    return !foundErrors;
+    const QByteArray all = inFile.readAll();
+    return loadNativeCSVData(QByteArrayView(all), frames);
 }
 
 bool FrameFileIO::saveNativeCSVFile(QString filename, const QVector<CommFrame>* frames)
@@ -2401,7 +2571,7 @@ bool FrameFileIO::saveNativeCSVFile(QString filename, const QVector<CommFrame>* 
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -2562,7 +2732,7 @@ bool FrameFileIO::loadGenericCSVFile(QString filename, QVector<CommFrame>* frame
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -2617,7 +2787,7 @@ bool FrameFileIO::saveGenericCSVFile(QString filename, const QVector<CommFrame>*
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -2736,7 +2906,7 @@ bool FrameFileIO::loadLogFile(QString filename, QVector<CommFrame>* frames)
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -2821,7 +2991,7 @@ bool FrameFileIO::saveLogFile(QString filename, const QVector<CommFrame>* frames
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
         const CommFrame *frame = &frames->at(c);
@@ -2911,7 +3081,7 @@ bool FrameFileIO::loadIXXATFile(QString filename, QVector<CommFrame>* frames)
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -2993,7 +3163,7 @@ bool FrameFileIO::saveIXXATFile(QString filename, const QVector<CommFrame>* fram
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -3089,7 +3259,7 @@ bool FrameFileIO::loadCANDOFile(QString filename, QVector<CommFrame>* frames)
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -3153,7 +3323,7 @@ bool FrameFileIO::saveCANDOFile(QString filename, const QVector<CommFrame>* fram
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
         const CommFrame *frame = &frames->at(c);
@@ -3255,7 +3425,7 @@ bool FrameFileIO::loadMicrochipFile(QString filename, QVector<CommFrame>* frames
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -3340,7 +3510,7 @@ bool FrameFileIO::saveMicrochipFile(QString filename, const QVector<CommFrame>* 
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -3463,7 +3633,7 @@ bool FrameFileIO::loadTraceFile(QString filename, QVector<CommFrame>* frames)
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -3549,7 +3719,7 @@ bool FrameFileIO::saveTraceFile(QString filename, const QVector<CommFrame> * fra
         lineCounter++;
         if ((lineCounter % 100) == 0)
         {
-            qApp->processEvents();
+            keepUiAlive();
             //lineCounter = 0;
         }
 
@@ -3614,7 +3784,7 @@ bool FrameFileIO::saveCanDumpFile(QString filename, const QVector<CommFrame> * f
         lineCounter++;
         if ((lineCounter % 100) == 0)
         {
-            qApp->processEvents();
+            keepUiAlive();
         }
 
         const CommFrame *frame = &frames->at(c);
@@ -3801,7 +3971,7 @@ bool FrameFileIO::loadCanDumpFile(QString filename, QVector<CommFrame>* frames)
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -3987,7 +4157,7 @@ bool FrameFileIO::loadLawicelFile(QString filename, QVector<CommFrame>* frames)
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
         QByteArray line = inFile.readLine().simplified();
@@ -4081,7 +4251,7 @@ bool FrameFileIO::loadKvaserFile(QString filename, QVector<CommFrame> *frames, b
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
         QByteArray line = inFile.readLine().toUpper();
@@ -4180,7 +4350,7 @@ bool FrameFileIO::loadCabanaFile(QString filename, QVector<CommFrame>* frames)
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -4273,7 +4443,7 @@ bool FrameFileIO::saveCabanaFile(QString filename, const QVector<CommFrame>* fra
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -4347,7 +4517,7 @@ bool FrameFileIO::loadTeslaAPFile(QString filename, QVector<CommFrame>* frames)
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -4814,7 +4984,7 @@ bool FrameFileIO::loadCLX000File(QString filename, QVector<CommFrame>* frames) {
         }
 
         if(++lineCounter >= 100) {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
     }
@@ -4973,7 +5143,7 @@ bool FrameFileIO::loadCANServerFile(QString filename, QVector<CommFrame>* frames
                 // Can frame format (either a v1 or a v2)
                 if (frameCounter++ > 10000)
                 {
-                    qApp->processEvents();
+                    keepUiAlive();
                     frameCounter = 0;
                 }
 
@@ -5071,7 +5241,7 @@ bool FrameFileIO::loadWiresharkFile(QString filename, QVector<CommFrame>* frames
         lineCounter++;
         if (lineCounter > 100)
         {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
         
@@ -5149,7 +5319,7 @@ bool FrameFileIO::loadWiresharkSocketCANFile(QString filename, QVector<CommFrame
     while (packetData) {
         lineCounter++;
         if (lineCounter > 100) {
-            qApp->processEvents();
+            keepUiAlive();
             lineCounter = 0;
         }
 
@@ -5451,7 +5621,7 @@ bool FrameFileIO::loadCanWise(QString filename, QVector<CommFrame>* frames)
         for (int lineCounter = 0; !inFile.atEnd(); lineCounter++)
         {
             if (lineCounter % 100 == 0) {
-                qApp->processEvents();
+                keepUiAlive();
             }
 
             auto line = lineRe.match(inFile.readLine());

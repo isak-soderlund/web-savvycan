@@ -25,6 +25,29 @@
 #include <QClipboard>
 #include <QActionGroup>
 #include <QTimer>
+#include <QProgressDialog>
+#include <limits>
+#include "framestore.h"
+#if defined(Q_OS_WASM) && QT_CONFIG(accessibility)
+#include <QAccessibleWidget>
+#include <QHeaderView>
+// web-savvycan: the trace (its table, headers and viewport) goes to Qt's accessibility as plain widgets, not as a table
+// of cells. When a child of a table is shown (its scroll bar), Qt's browser accessibility goes over every child of the
+// table, and Qt's table interface makes and keeps an interface for each cell it is asked for: a loaded log of 600 000
+// frames took ~1.3 KB of memory a frame and ~35 s more that way (measured 2026-10-29, with the screen reader layer on,
+// as in the browser tests). The trace is one "Frames" element for a screen reader (millions of cells weren't usable).
+static QAccessibleInterface *traceAccessible(const QString &, QObject *object)
+{
+    QWidget *w = qobject_cast<QWidget *>(object);
+    if (!w) return nullptr;
+    auto isTrace = [](const QWidget *v) { return v && v->objectName() == QLatin1String("canFramesView"); };
+    if (isTrace(w)) return new QAccessibleWidget(w, QAccessible::Table, QObject::tr("Frames"));
+    if (isTrace(w->parentWidget())
+        && (qobject_cast<QHeaderView *>(w) || w->objectName() == QLatin1String("qt_scrollarea_viewport")))
+        return new QAccessibleWidget(w, QAccessible::Client);
+    return nullptr;
+}
+#endif
 /*
 Some notes on things I'd like to put into the program but haven't put on github (yet)
 
@@ -44,6 +67,9 @@ MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow)
 {
+#if defined(Q_OS_WASM) && QT_CONFIG(accessibility)
+    QAccessible::installFactory(traceAccessible); //before the trace exists (see traceAccessible)
+#endif
     ui->setupUi(this);
 #ifdef Q_OS_WASM
     // web-savvycan (owner 2026-10-29): the menu bar's and the status bar's text in the middle of the bands at the
@@ -1704,12 +1730,13 @@ void MainWindow::handleLoadFile()
 }
 
 #ifdef Q_OS_WASM
-// A file picked in the browser: its bytes are written to the in-memory file system for the loaders
-// (they read by file name), loaded as a dropped file is, and deleted again. Everything lives in the
-// page's memory (wasm32: at most 4 GB): the bytes twice, the frames twice while they are handed to the
-// trace, so files over kMaxBrowserFileBytes are refused with a message. Measured 2026-10-29: ~1.4 KB of heap a loaded
-// frame (600 000 frames: ~850 MB; 1 M: ~1.5 GB), a GVRET CSV ~66 bytes a frame: 100 MB ~ 1.5 M frames ~ 2 GB, room
-// left for the copies while loading (RESOLVE.md "Next": a leaner loader). Binary formats hold more frames a MB.
+// A file picked in the browser. SavvyCAN's own GVRET CSV (what the browser version logs) is parsed straight from the
+// bytes the browser handed over (loadNativeCSVData); other formats are written to the in-memory file system for
+// SavvyCAN's loaders (they read by file name), loaded as a dropped file is, and deleted again. Everything lives in the
+// page's memory (wasm32: at most 4 GB), so files over kMaxBrowserFileBytes are refused with a message. Measured
+// 2026-10-29 (headless Chromium, loader.spec): a GVRET CSV of 3 000 000 frames (~200 MB) loads in ~N s; a loaded
+// frame then takes ~NN bytes of the page's memory; while loading the file's bytes, the frames staged and the trace
+// are in memory together. Other formats still load through vectors of whole frames (more memory a frame, slower).
 void MainWindow::loadBrowserFile(const QString &name, const QByteArray &content)
 {
     constexpr qint64 kMaxBrowserFileBytes = 100LL * 1000 * 1000;
@@ -1721,6 +1748,10 @@ void MainWindow::loadBrowserFile(const QString &name, const QByteArray &content)
                                  .arg(shown).arg(content.size() / 1000000).arg(kMaxBrowserFileBytes / 1000000));
         return;
     }
+    //the autodetect order: Vector BLF ("LOGG") first, then the native CSV
+    if (!content.startsWith("LOGG") && FrameFileIO::isNativeCSVData(content)
+        && loadNativeCSVData(shown, QByteArrayView(content)))
+        return;
     QDir().mkpath(QStringLiteral("/tmp/web-savvycan"));
     const QString path = QStringLiteral("/tmp/web-savvycan/") + shown;
     {
@@ -1739,6 +1770,57 @@ void MainWindow::loadBrowserFile(const QString &name, const QByteArray &content)
     }
 }
 #endif
+
+// web-savvycan: a log in SavvyCAN's native GVRET CSV from memory, the leaner log loader (RESOLVE.md): parsed in place
+// into a compact staging store (FrameFileIO::loadNativeCSVData, no QByteArray per line, field or frame), then handed
+// to the trace chunk by chunk, each chunk freed as it goes in. A progress dialog if it takes more than a second; the
+// page keeps running meanwhile (FrameFileIO::keepUiAlive). As SavvyCAN's loader: a file with broken rows asks whether
+// to keep what could be read; the trace is replaced only when the file is taken. Returns false if not a single frame
+// could be read (the caller then tries SavvyCAN's other loaders).
+bool MainWindow::loadNativeCSVData(const QString &fileName, QByteArrayView data)
+{
+    if (!Features::on(Features::Feature::LoadLog)) return true; // web-savvycan: enabledfeatures.h
+    QProgressDialog progress(qApp->activeWindow());
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setLabelText(tr("Loading %1...").arg(fileName));
+    progress.setCancelButton(nullptr);
+    progress.setRange(0, 1000);
+    progress.setMinimumDuration(1000);
+    progress.setValue(0);
+    FrameFileIO::progressHook = [&progress](qint64 done, qint64 total) {
+        progress.setValue(int(qMin<qint64>(990, done * 1000 / total)));
+    };
+    FrameStore staged(std::numeric_limits<qsizetype>::max(), FrameStore::DefaultChunkFrames);
+    bool loadResult = FrameFileIO::loadNativeCSVData(data, &staged);
+    FrameFileIO::progressHook = nullptr;
+    if (!loadResult)
+    {
+        if (staged.isEmpty()) return false;
+        progress.cancel();
+        if (QMessageBox::question(this, "Error Loading", "Do you want to salvage what could be loaded?",
+                                  QMessageBox::Yes|QMessageBox::No) != QMessageBox::Yes)
+            return true;
+    }
+    else
+    {
+        progress.setLabelText(tr("Adding %1 frames to the trace...").arg(staged.size()));
+        progress.setValue(995);
+    }
+
+    disableAutoRowExpansion();
+    ui->canFramesView->scrollToTop();
+    model->clearFrames();
+    model->insertFrames(staged);
+    progress.cancel();
+    loadedFileName = fileName;
+    model->recalcOverwrite();
+    ui->lbNumFrames->setText(QString::number(model->rowCount()));
+    if (ui->cbAutoScroll->isChecked()) ui->canFramesView->scrollToBottom();
+
+    updateFileStatus();
+    emit framesUpdated(-1);
+    return true;
+}
 
 void MainWindow::handleDroppedFile(const QString &filename)
 {

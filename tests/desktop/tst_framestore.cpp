@@ -63,14 +63,91 @@ private slots:
         QVERIFY(!s.contains(s.firstSeq() - 1));
     }
 
-    void store_framesDontMove()
+    void store_framesKeptAsAppended()
     {
         FrameStore s(100000, 1000);
         s.append(makeFrame(7, 8));
-        const CommFrame *p = &s.bySeq(0);
-        for (int i = 0; i < 50000; i++) s.append(makeFrame(quint32(i), 8));
-        QCOMPARE(p, &s.bySeq(0));
-        QCOMPARE(p->frameId(), quint32(7));
+        for (int i = 0; i < 50000; i++) s.append(makeFrame(quint32(i), i % 65, i % 3 == 0, i % 5 == 0, quint8(i % 4), qint64(i) * 1000));
+        QCOMPARE(s.bySeq(0).frameId(), quint32(7));
+        QCOMPARE(s.bySeq(0).payload().size(), 8);
+        for (int i = 0; i < 50000; i += 7)
+        {
+            const CommFrame a = makeFrame(quint32(i), i % 65, i % 3 == 0, i % 5 == 0, quint8(i % 4), qint64(i) * 1000);
+            const CommFrame b = s.bySeq(quint64(i) + 1);
+            QCOMPARE(b.packedBits(), a.packedBits());
+            QCOMPARE(b.payload(), a.payload());
+            QCOMPARE(b.getBus(), a.getBus());
+            QCOMPARE(b.timeStamp().seconds(), a.timeStamp().seconds());
+            QCOMPARE(b.timeStamp().microSeconds(), a.timeStamp().microSeconds());
+        }
+    }
+
+    // A compact record gives the frame back bit for bit: every type and flag, 29-bit and invalid IDs, error
+    // codes, buses, lengths 0..64 and longer, times in seconds + µs (also past 32-bit seconds), frame counts.
+    void store_recordsExact()
+    {
+        FrameStore s(100000, 64);
+        QVector<CommFrame> in;
+        for (int i = 0; i < 3000; i++)
+        {
+            CommFrame f(CommFrame::FrameType(i % 7));
+            f.setPayload(QByteArray(i % 70, char(i)));
+            if (i % 7 == int(CommFrame::ErrorFrame)) f.setError(CommFrame::FrameErrors(i & 0x3FF));
+            else f.setFrameId(i % 11 == 0 ? 0x20000000u + quint32(i) : quint32(i) * 99991u % 0x20000000u);
+            f.setExtendedFrameFormat(i % 2);
+            if (i % 3 == 0) f.setFlexibleDataRateFormat(i % 6 == 0);
+            f.setBitrateSwitch(i % 4 == 0);
+            f.setErrorStateIndicator(i % 8 == 0);
+            f.setLocalEcho(i % 5 == 0);
+            f.setBus(quint8(i * 37));
+            f.setFrameCount(quint32(i) * 1234567u);
+            if (i % 9 == 0) f.setTimeStamp(CommFrame::TimeStamp(1761660000 + i, 999999 - i));
+            else if (i % 9 == 1) f.setTimeStamp(CommFrame::TimeStamp(5000000000LL, i));
+            else f.setTimeStamp(CommFrame::TimeStamp(0, qint64(i) * 4294967296LL - 7));
+            in.append(f);
+            s.append(f);
+        }
+        QByteArray big(70000, 'x');
+        CommFrame longFrame;
+        longFrame.setPayload(big);
+        s.append(longFrame);
+        for (int i = 0; i < in.size(); i++)
+        {
+            const CommFrame &a = in[i];
+            const CommFrame b = s.atIndex(i);
+            QCOMPARE(b.packedBits(), a.packedBits());
+            QCOMPARE(b.frameType(), a.frameType());
+            QCOMPARE(b.frameId(), a.frameId());
+            QCOMPARE(b.payload(), a.payload());
+            QCOMPARE(b.getBus(), a.getBus());
+            QCOMPARE(b.getFrameCount(), a.getFrameCount());
+            QCOMPARE(b.timeStamp().seconds() * 1000000LL + b.timeStamp().microSeconds(),
+                     a.timeStamp().seconds() * 1000000LL + a.timeStamp().microSeconds());
+            if (a.timeStamp().seconds() < 2147483647LL) {
+                QCOMPARE(b.timeStamp().seconds(), a.timeStamp().seconds());
+                QCOMPARE(b.timeStamp().microSeconds(), a.timeStamp().microSeconds());
+            }
+        }
+        QCOMPARE(s.atIndex(in.size()).payload().size(), 65535); // cut at 65535 bytes
+        s.setTimeStamp(s.firstSeq() + 5, CommFrame::TimeStamp(0, 42));
+        QCOMPARE(s.atIndex(5).timeStamp().microSeconds(), qint64(42));
+        QCOMPARE(s.atIndex(5).getFrameCount(), in[5].getFrameCount());
+        QCOMPARE(s.timeStampBySeq(s.firstSeq() + 5).microSeconds(), qint64(42));
+    }
+
+    // A staging store handed to the model chunk by chunk: every frame arrives, the staging store ends empty.
+    void model_insertStaged()
+    {
+        CommFrameModel m;
+        FrameStore staged(1 << 30, 100);
+        for (int i = 0; i < 1050; i++) staged.append(makeFrame(quint32(i % 50), i % 65, i % 2, i % 4 == 0, 0, i));
+        m.insertFrames(staged);
+        QVERIFY(staged.isEmpty());
+        QCOMPARE(m.getListReference()->count(), qsizetype(1050));
+        QCOMPARE(m.getFilteredListReference()->count(), qsizetype(1050));
+        QCOMPARE(m.rowCount(), 1050);
+        QCOMPARE(m.getListReference()->at(1049).payload().size(), 1049 % 65);
+        QCOMPARE(m.getListReference()->at(1049).timeStamp().microSeconds(), qint64(1049));
     }
 
     void store_clearKeepsSeqsUnique()

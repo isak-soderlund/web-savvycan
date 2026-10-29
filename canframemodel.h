@@ -73,6 +73,7 @@ public:
     void recalcOverwrite();
     bool needsFilterRefresh();
     void insertFrames(const QVector<CommFrame> &newFrames);
+    void insertFrames(FrameStore &staged); //takes the frames out of staged (it is empty after)
     void sortByColumn(int column);
     int getIndexFromTimeID(unsigned int ID, double timestamp);
     //web-savvycan: read-only, thread-safe views (FrameListView: count(), at(i), mid(), tail(), toVector()).
@@ -86,6 +87,7 @@ public:
     //Frames taken in (live or loaded) since the last clear, including those wrapped out since.
     quint64 framesIngested() const { return mIngested; }
     qsizetype storeCapacity() const;
+    qsizetype storeMemoryBytes() const { return store.memoryBytes(); } //the frames' compact records (framestore.h)
     // web-savvycan: frames stored but not yet announced (framesUpdated(n) on the next GUI tick, sendBulkRefresh)
     int unannouncedFrames() const { return lastUpdateNumFrames; }
     const QMap<int, bool> *getFiltersReference() const; //this neither
@@ -125,7 +127,7 @@ private:
 
     uint64_t getCommFrameVal(const CommFrame &frame, Column col) const;
     static quint64 overwriteKey(const CommFrame &frame);
-    const CommFrame *frameForRow(int row) const;
+    bool frameForRow(int row, CommFrame &out) const;
     void ingestLocked(const CommFrame &frame, bool applyOffset); //store's write lock held
     void registerFilters(const CommFrame &frame);
     void pruneTrimmed();   //drop index rows whose frames the ring has dropped (no lock held)

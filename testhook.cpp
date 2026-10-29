@@ -342,12 +342,37 @@ EM_JS(void, wsc_install_temporal_hook, (), {
 });
 // ---- end of Temporal Graph
 
+// ---- The page's memory (the leaner log loader, loader.spec): webSavvyCAN.memory(): heapUsed (bytes malloc has
+// handed out now, mallinfo), maxFootprint (the most malloc ever had from the system: the peak, with its free gaps),
+// heapSize (the wasm memory: it never shrinks), storeBytes (the trace's frames in the store), frames (in the store).
+static QJsonObject memoryState()
+{
+    const WscMallinfo mi = wsc_libc_mallinfo();
+    QJsonObject o;
+    o.insert("heapUsed", double(mi.uordblks));
+    o.insert("maxFootprint", double(mi.usmblks));
+    o.insert("heapSize", double(emscripten_get_heap_size()));
+    o.insert("storeBytes", double(g_model->storeMemoryBytes()));
+    o.insert("frames", double(g_model->getListReference()->count()));
+    return o;
+}
+
+extern "C" {
+EMSCRIPTEN_KEEPALIVE const char *wsc_memory() { return keep(QJsonDocument(memoryState()).toJson(QJsonDocument::Compact)); }
+}
+
+EM_JS(void, wsc_install_memory_hook, (), {
+    window.webSavvyCAN.memory = () => JSON.parse(UTF8ToString(_wsc_memory()));
+});
+// ---- end of memory
+
 void TestHook::install(CommFrameModel *model)
 {
     g_model = model;
     wsc_install_hook();
     installFrameInfoHook();
     wsc_install_temporal_hook();
+    wsc_install_memory_hook();
 }
 
 // ---- Frame Data Analysis (RE Tools > Frame Data Analysis, the heatmap tool) -------------------------------------

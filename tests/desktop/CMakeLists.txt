@@ -64,7 +64,7 @@ target_link_libraries(tst_webserialport PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME tst_webserialport COMMAND tst_webserialport)
 
 add_executable(nativecsv_tool nativecsv_tool.cpp
-    ${SRC}/framefileio.cpp ${SRC}/framefileio.h ${SRC}/blfhandler.cpp ${SRC}/pcaplite.cpp ${SRC}/utility.cpp)
+    ${SRC}/framefileio.cpp ${SRC}/framefileio.h ${SRC}/framestore.cpp ${SRC}/blfhandler.cpp ${SRC}/pcaplite.cpp ${SRC}/utility.cpp)
 target_include_directories(nativecsv_tool PRIVATE ${SRC} ${SRC}/connections ${SRC}/utils)
 target_link_libraries(nativecsv_tool PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::SerialBus)
 add_test(NAME nativecsv_continuous COMMAND nativecsv_tool continuous ${CMAKE_CURRENT_BINARY_DIR}/continuous.csv 20000)

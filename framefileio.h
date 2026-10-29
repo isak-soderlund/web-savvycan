@@ -14,6 +14,10 @@
 #include <QFileDialog>
 #include "can_structs.h"
 #include "utility.h"
+#include <QByteArrayView>
+#include <functional>
+
+class FrameStore;
 
 class FrameFileIO: public QObject
 {
@@ -33,6 +37,16 @@ public:
     static bool autoDetectLoadFile(QString, QVector<CommFrame>*);
     static bool loadCRTDFile(QString, QVector<CommFrame>*);
     static bool loadNativeCSVFile(QString, QVector<CommFrame>*);
+    //web-savvycan: the native GVRET CSV parsed in place from memory, with loadNativeCSVFile's rules (it uses them):
+    //no QByteArray per line or per field. Into a store (compact, no QByteArray per frame: a file the browser hands
+    //over, MainWindow::loadBrowserFile) or a vector. False if a row had too few fields (the rest is loaded).
+    static bool loadNativeCSVData(QByteArrayView data, FrameStore *frames);
+    static bool loadNativeCSVData(QByteArrayView data, QVector<CommFrame> *frames);
+    static bool isNativeCSVData(QByteArrayView data); //isNativeCSVFile's test on the first two lines
+    //The loaders' loops call this: at most every 100 ms it runs the event loop (in the browser that hands the page
+    //a turn: it draws, the progress dialog moves) after telling progressHook how far they are (bytes done/total).
+    static void keepUiAlive(qint64 done = -1, qint64 total = -1);
+    static std::function<void(qint64 done, qint64 total)> progressHook;
     static bool loadGenericCSVFile(QString, QVector<CommFrame>*);
     static bool loadLogFile(QString, QVector<CommFrame>*);
     static bool loadMicrochipFile(QString, QVector<CommFrame>*);

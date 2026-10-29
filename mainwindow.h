@@ -75,6 +75,7 @@ public:
 #ifdef Q_OS_WASM
     void loadBrowserFile(const QString &name, const QByteArray &content);
 #endif
+    bool loadNativeCSVData(const QString &fileName, QByteArrayView data);
 
 private slots:
     void handleLoadFile();
