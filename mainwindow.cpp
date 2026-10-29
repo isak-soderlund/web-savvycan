@@ -1739,7 +1739,7 @@ void MainWindow::handleLoadFile()
 // are in memory together. Other formats still load through vectors of whole frames (more memory a frame, slower).
 void MainWindow::loadBrowserFile(const QString &name, const QByteArray &content)
 {
-    constexpr qint64 kMaxBrowserFileBytes = 100LL * 1000 * 1000;
+    constexpr qint64 kMaxBrowserFileBytes = 1000LL * 1000 * 1000;
     const QString shown = QFileInfo(name).fileName();
     if (content.size() > kMaxBrowserFileBytes) {
         QMessageBox::warning(this, tr("File too large"),
