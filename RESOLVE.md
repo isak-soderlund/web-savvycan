@@ -85,10 +85,17 @@ Tests: `tests/web` smoke spec (in CI) loads a GVRET CSV through the file picker 
    started near 2^32 µs (a wrap within seconds), frames in order across it in the trace, the log and a graph; on the
    rig, a log of more than 72 min. Goal: a whole CCS charging session (hours: ~0.25 GB of CSV an hour on the Leaf
    bus; Chrome keeps logs of 8 GB, Firefox about half the PC's free memory).
-2. **Remember the connection and connect by itself.** The browser keeps the last connection (GVRET or LAWICEL, bus
-   speed, CAN FD on/off, FD data speed, listen-only) and, when rc1 is already plugged in and allowed
-   (`navigator.serial.getPorts()`), connects with it as the page opens, without the connection window. A setting
-   to switch it off; nothing happens without a granted rc1.
+
+Done: **remember the connection and connect by itself** (branch `autoconnect`, owner's item 2 of 2026-10-29). The
+browser saves the connections as soon as one is made or its bus is set (SavvyCAN's own `connections/*` settings,
+`ConnectionWindow::saveConnections`, in the page's `localStorage`; on the desktop they are still saved at exit); the
+last one stays remembered after Disconnect. As the page opens, once the browser has listed the allowed ports
+(`WebSerialHub::listPorts()`, `navigator.serial.getPorts()`), the remembered connection on one of them is made again
+without the connection window: LAWICEL with its bus speed, CAN FD and data rate; GVRET with its bus (speed, enable,
+listen-only, CAN FD, data rate) set as Save Bus Settings sets it once rc1 has answered. No allowed rc1: nothing
+happens (no chooser, no error). File > Preferences > **Connect to the last device when the page opens**
+(`Main/SaveRestoreConnections`, upstream's "Save/Restore CAN bus connections"; on by default in the browser).
+Tests: `tests/web` autoconnect spec. Not tried with a real rc1 in Chrome yet.
 
 ## Stages switched on: `enabledfeatures.h`
 
