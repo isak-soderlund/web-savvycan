@@ -88,3 +88,27 @@ jobs:
             -m "dist of ${GITHUB_SHA} (${GITHUB_REF_NAME}, run ${GITHUB_RUN_ID})"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" \
             "HEAD:refs/heads/dist/$GITHUB_REF_NAME"
+
+  # dist/<branch> goes when its branch is merged into main (or deleted): on every push to main, each dist/<b> but
+  # dist/main whose branch b is gone or whose head main already contains is deleted (owner 2026-10-29: ~9 MB each).
+  prune-dist:
+    name: Delete merged branches' dist/<branch>
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prune
+        run: |
+          set -e
+          git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
+          for ref in $(git for-each-ref --format='%(refname:strip=3)' 'refs/remotes/origin/dist/'); do
+            b=${ref#dist/}
+            [ "$b" = main ] && continue
+            if ! git rev-parse -q --verify "refs/remotes/origin/$b" >/dev/null; then why="no branch $b"
+            elif git merge-base --is-ancestor "refs/remotes/origin/$b" "refs/remotes/origin/main"; then why="$b merged"
+            else continue; fi
+            echo "delete $ref ($why)"
+            git push -q origin --delete "$ref"
+          done
