@@ -251,8 +251,108 @@ EM_JS(void, wsc_install_hook, (), {
     };
 });
 
+static void installFrameInfoHook(); // Frame Data Analysis, at the end of this file
+
 void TestHook::install(CommFrameModel *model)
 {
     g_model = model;
     wsc_install_hook();
+    installFrameInfoHook();
+}
+
+// ---- Frame Data Analysis (RE Tools > Frame Data Analysis, the heatmap tool) -------------------------------------
+// webSavvyCAN.frameInfo(): what its window shows: the IDs in its list, the ID analysed, its frames and lengths, per
+// bit (512, CAN FD) the changes from frame to frame (the heatmap's counts), the frames with the bit set (Bitfield
+// Histogram) and the heatmap's level, the heatmap grid's size, the byte graphs shown and their points.
+// webSavvyCAN.frameInfoSelect(id): selects the ID in its list, as a click on it (the analysis runs at once).
+#include "re/frameinfowindow.h"
+#include "filterutility.h"
+#include <QListWidget>
+#include <QTreeWidget>
+
+static FrameInfoWindow *frameInfoWindow()
+{
+    for (QWidget *w : QApplication::topLevelWidgets())
+        if (auto *f = qobject_cast<FrameInfoWindow *>(w); f && f->isVisible()) return f;
+    return nullptr;
+}
+
+static QJsonObject frameInfoState()
+{
+    QJsonObject o;
+    FrameInfoWindow *win = frameInfoWindow();
+    o.insert("open", win != nullptr);
+    if (!win) return o;
+    QJsonArray ids;
+    if (QListWidget *list = win->findChild<QListWidget *>("listFrameID")) {
+        for (int i = 0; i < list->count(); i++) ids.append(double(FilterUtility::getIdAsInt(list->item(i))));
+        if (list->currentItem()) o.insert("current", double(FilterUtility::getIdAsInt(list->currentItem())));
+    }
+    o.insert("ids", ids);
+    const FrameInfoWindow::Analysis &a = win->analysis();
+    o.insert("valid", a.valid);
+    o.insert("id", double(a.id));
+    o.insert("frames", a.frames);
+    o.insert("minLen", a.minLen);
+    o.insert("maxLen", a.maxLen);
+    o.insert("byteGraphs", a.byteGraphs);
+    o.insert("bytePoints", a.bytePoints);
+    QJsonArray flips, sets, heat;
+    for (int i = 0; i < FrameInfoWindow::kMaxBits; i++) {
+        flips.append(a.flips[i]);
+        sets.append(a.sets[i]);
+        heat.append(int(a.heat[i]));
+    }
+    o.insert("flips", flips);
+    o.insert("sets", sets);
+    o.insert("heat", heat);
+    if (CANDataGrid *grid = win->findChild<CANDataGrid *>()) {
+        o.insert("gridBytes", grid->getBytesToDraw());
+        o.insert("gridWidth", grid->width());
+        o.insert("gridHeight", grid->height());
+    }
+    if (QTreeWidget *tree = win->findChild<QTreeWidget *>("treeDetails")) {
+        QJsonArray lines; // the details' first level: "# of frames: ...", "Data Length: ...", ...
+        if (QTreeWidgetItem *top = tree->topLevelItem(0))
+            for (int i = 0; i < top->childCount(); i++) lines.append(top->child(i)->text(0));
+        o.insert("details", lines);
+    }
+    int shown = 0;
+    for (QCustomPlot *plot : win->findChildren<QCustomPlot *>())
+        if (plot->isVisible()) shown++;
+    o.insert("plotsVisible", shown); // the byte graphs and the two histograms
+    o.insert("x", win->x());
+    o.insert("y", win->y());
+    o.insert("width", win->width());
+    o.insert("height", win->height());
+    return o;
+}
+
+extern "C" {
+EMSCRIPTEN_KEEPALIVE const char *wsc_frameinfo_state() { return keep(QJsonDocument(frameInfoState()).toJson(QJsonDocument::Compact)); }
+EMSCRIPTEN_KEEPALIVE int wsc_frameinfo_select(int id)
+{
+    FrameInfoWindow *win = frameInfoWindow();
+    QListWidget *list = win ? win->findChild<QListWidget *>("listFrameID") : nullptr;
+    if (!list) return 0;
+    for (int i = 0; i < list->count(); i++) {
+        if (FilterUtility::getIdAsInt(list->item(i)) == uint32_t(id)) {
+            list->setCurrentRow(i);
+            return 1;
+        }
+    }
+    return 0;
+}
+}
+
+EM_JS(void, wsc_install_frameinfo_hook, (), {
+    Object.assign(window.webSavvyCAN, {
+        frameInfo: () => JSON.parse(UTF8ToString(_wsc_frameinfo_state())),
+        frameInfoSelect: (id) => _wsc_frameinfo_select(id | 0) === 1,
+    });
+});
+
+static void installFrameInfoHook()
+{
+    wsc_install_frameinfo_hook();
 }

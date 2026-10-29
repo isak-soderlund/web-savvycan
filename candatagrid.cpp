@@ -441,6 +441,15 @@ void CANDataGrid::paintGridCells()
                 painter->setPen(QColor(255-brushColor.red(), 255-brushColor.green(), 255-brushColor.blue()));
                 break;
             }
+            // web-savvycan: heatmap (Frame Data Analysis): bit numbers dark on the light heat colours (yellow, green,
+            // cyan) and light on the dark ones (black = no change, blue, red), in both themes (black text on the black
+            // cells of unchanged bits could not be read)
+            if (gridMode == GridMode::HEAT_VIEW && textStates[byteIdx][bitIdx] == GridTextState::NORMAL)
+            {
+                const QColor heatColor = painter->brush().color();
+                const int luma = (heatColor.red() * 299 + heatColor.green() * 587 + heatColor.blue() * 114) / 1000;
+                painter->setPen(QPen(luma >= 140 ? QColor(0x20, 0x20, 0x20) : QColor(0xe8, 0xe8, 0xe8)));
+            }
             //change style of bit number output for current signal
             //if (thisBit) painter->setFont(boldFont);
            // else painter->setFont(mainFont);

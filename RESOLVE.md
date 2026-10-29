@@ -80,6 +80,30 @@ Left for later: files larger than memory: graphing straight from the file (only 
 
 Tests: `tests/web` smoke spec (in CI) loads a GVRET CSV through the file picker and graphs it (every frame, every point); `graph.spec` graphs a live Leaf bus (grows, follows, value axis takes in 0..255), a live graph past its cap (bounded, whole session kept, heap level), a 600 000-frame log (bounded, whole file, heap), and CAN FD signals past byte 8 (the test hook and the Add New Graph dialog with its 64-byte grid, light and dark).
 
+## Frame Data Analysis (stage 4, switched on 2026-10-29)
+
+RE Tools > Frame Data Analysis ("the heatmap tool", owner 2026-10-29: brought forward from stage 4), working with CAN FD.
+
+| What | How |
+| --- | --- |
+| The window | SavvyCAN's: the ID list, the details tree (lengths, intervals, per byte changed bits, range, value histogram; Bitfield Histogram; Bitchange Heatmap; J1939/GMLAN for 29-bit IDs), the bit-change **heatmap**, the bit histogram, the interval histogram and a graph per byte. In the browser a framed dialog, as the graphing window, first opened at the .ui's 1142 x 651 (SavvyCAN's remembered-size default 794 x 694 is too narrow for a 64-byte heatmap) |
+| CAN FD (fix W1) | Every per-byte and per-bit table holds 64 bytes / 512 bits (SavvyCAN's `minData[8]`, `dataHistogram[256][8]`, `bitfieldHistogram[64]`, `bitFlipHeat[64]`, ... overflowed on frames over 8 bytes); the heatmap grid as large as the longest frame (`CANDataGrid` 8x8, 16x8, 16x16 or 32x16 bits); a byte graph for every byte (8 for classic as SavvyCAN, up to 64 in a scroll area); the bit histogram over every bit. Also fixed: a byte's reference is the first frame that has it (an ID with longer and shorter frames read uninitialised bytes), "Data Length" no longer "8 to 64", the bit histogram drew every bit twice |
+| Live | As SavvyCAN: an ID is analysed when it is selected (and the first one when the window opens); new IDs join the list as frames come (from the trace's newest frames, so the ring-buffer trace works; every new ID of a tick, SavvyCAN stopped at the selected one). Select the ID again for the newer frames. Memory: the window keeps the ID set and the last analysis only |
+| Large captures | No copy of the ID's frames (their rows, 8 bytes each, during the analysis); byte graphs of at most 8 000 points (past 4 000 frames each pair is a run's min and max); one analysis as the window opens (was two). 30 000 64-byte frames of one ID: 0.56 s in headless Chromium (2026-10-29), the UI waits that long |
+| Save details to file | In the browser the text goes to the browser as a download (`FrameDetails.txt`) |
+| Colours | Byte graph colours per theme (light: SavvyCAN's; dark: lighter, light grey for black); plots themed; heatmap bit numbers dark or light by the cell's colour (black text on the black "no change" cells could not be read) |
+| Bit grid | `candatagrid.cpp/.h` taken unchanged from branch `graph-bounds` (c15934c: FD text sizes, dark theme, buffers cleared past the frame), plus the heatmap's text colour (only in `HEAT_VIEW`) |
+
+Limits: like SavvyCAN, an ID is one number (an 11-bit and a 29-bit ID of the same value are one entry); the
+analysis is a pass over the whole trace on the UI thread (a few 100 ms per million frames, more for big FD IDs);
+Save details re-analyses every ID; the heatmap grid of a 12/20/24/48-byte ID shows the unused bits of the next size.
+
+Tests: `tests/web` `frameinfo.spec`: a log of classic, 12-byte FD and 64-byte FD (29-bit, BRS) frames with known bit
+patterns (byte 40 bit 3 toggling every frame, byte 63 constant, ...): the heatmap counts, bit histogram and heat
+levels of all 512 bits (64 of the classic ID) equal those computed from the frames, grid size, byte graphs, details;
+30 000 frames of one FD ID (bounded byte graphs, exact counts, time); live fd-mix traffic (the list fills while the
+window is open, analyses equal the trace's frames, twice); Save details to file. Pictures in light and dark.
+
 ## Next (owner 2026-10-29)
 
 1. **Logs longer than 71.6 minutes.** GVRET sends a frame's time as 32-bit microseconds and SavvyCAN's reader keeps
@@ -123,7 +147,7 @@ Tests: `tests/web` smoke spec (in CI) loads a GVRET CSV through the file picker 
     pickers;
   - Sniffer: `re/sniffer/sniffermodel.cpp` (grey levels and dark red/green, palette read once) and
     `SnifferDelegate.cpp`;
-  - Frame Info: `graphColors` with `Qt::black` (`re/frameinfowindow.cpp`); Flow view: `graphColors[8]` with
+  - Frame Info: done 2026-10-29 (byte graph colours per theme); Flow view: `graphColors[8]` with
     `Qt::black`, black text pen (`re/flowviewwindow.cpp`); Range state: black graph pen
     (`re/rangestatewindow.cpp`); Discrete state: fixed label palettes (`re/discretestatewindow.cpp`);
   - `candatagrid.cpp`: the DBC editor's signal colours (`signalColors`) are bright in both themes (names in black);
