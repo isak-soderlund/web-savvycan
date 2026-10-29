@@ -74,6 +74,22 @@ Left for stage 2 (fork plan): the min/max envelope and **bounded graph storage**
 
 Tests: `tests/web` smoke spec (in CI) loads a GVRET CSV through the file picker and graphs it (every frame, every point); `graph.spec` graphs a live Leaf bus (grows, follows, value axis takes in 0..255).
 
+## Next (owner 2026-10-29)
+
+1. **Logs longer than 71.6 minutes.** GVRET sends a frame's time as 32-bit microseconds and SavvyCAN's reader keeps
+   it in 32 bits (`GVRetSerial`'s `buildTimestamp`, `uint`): 2^32 µs after the session's start (71.6 min) the times
+   start again near 0. Frames keep coming and are logged, but their times jump back (long logs and graphs out of
+   order). Same in desktop SavvyCAN with any GVRET device. Fix in the app only: count the wraps in the reader
+   (a time smaller than the last one by more than half the range = one wrap) and keep 64-bit µs. **No change to the
+   GVRET protocol or rc1's firmware**, so rc1 stays usable with standard SavvyCAN. Test: the fake rc1 with its clock
+   started near 2^32 µs (a wrap within seconds), frames in order across it in the trace, the log and a graph; on the
+   rig, a log of more than 72 min. Goal: a whole CCS charging session (hours: ~0.25 GB of CSV an hour on the Leaf
+   bus; Chrome keeps logs of 8 GB, Firefox about half the PC's free memory).
+2. **Remember the connection and connect by itself.** The browser keeps the last connection (GVRET or LAWICEL, bus
+   speed, CAN FD on/off, FD data speed, listen-only) and, when rc1 is already plugged in and allowed
+   (`navigator.serial.getPorts()`), connects with it as the page opens, without the connection window. A setting
+   to switch it off; nothing happens without a granted rc1.
+
 ## Stages switched on: `enabledfeatures.h`
 
 - **One list** of what is switched on: `enabledfeatures.h` (`Features::enabledFeature()`, one line per feature,
