@@ -234,7 +234,8 @@ void GraphingWindow::updatedFrames(int numFrames)
             for (int i = modelFrames->count() - numFrames; i < modelFrames->count(); i++)
             {
                 thisFrame = modelFrames->at(i);
-                if ( graphParams[j].ID == thisFrame.frameId() && ( (graphParams[j].bus == -1) || (graphParams[j].bus == thisFrame.getBus()) ) && ( (graphParams[j].frameLen == -1) || (graphParams[j].frameLen == thisFrame.payload().length()) ) )
+                if ( graphParams[j].ID == thisFrame.frameId() && thisFrame.isDataFrame() // web-savvycan: as createGraph
+                     && ( (graphParams[j].bus == -1) || (graphParams[j].bus == thisFrame.getBus()) ) && ( (graphParams[j].frameLen == -1) || (graphParams[j].frameLen == thisFrame.payload().length()) ) )
                 {
                     appendToGraph(graphParams[j], thisFrame, x, y);
                     appendedToGraph = true;
@@ -251,7 +252,13 @@ void GraphingWindow::updatedFrames(int numFrames)
 
         if (needReplot)
         {
-            if (followGraphEnd)
+            if (needScaleSetup) // web-savvycan: the first points of a window whose graphs were made before their frames came
+            {
+                needScaleSetup = false;
+                ui->graphingView->rescaleAxes();
+                ui->graphingView->axisRect()->setupFullAxesBox();
+            }
+            else if (followGraphEnd)
             {
                 //find the current X span and maintain that span but move the end of it over to match the new end
                 //of the actual graph. This causes the view to move with the data to always show the end
@@ -1515,10 +1522,15 @@ void GraphingWindow::createGraph(GraphParams &params, bool createGraphParam)
             && (params.frameLen == -1 || params.frameLen == f.payload().length());
     };
     const qsizetype frameCount = modelFrames->count();
+    // web-savvycan: the newest frames the window hasn't been told about yet are graphed by updatedFrames() when the
+    // next GUI tick announces them (framesUpdated(n): the last n frames); taking them here too graphed them twice
+    // (a graph made on a live bus; every graph open when a file is loaded).
+    const CommFrameModel *model = MainWindow::getReference() ? MainWindow::getReference()->getCommFrameModel() : nullptr;
+    const qsizetype announced = qMax<qsizetype>(0, frameCount - (model ? model->unannouncedFrames() : 0));
     // value-table brackets only for a graph of more than one point (as before)
     qsizetype matched = 0;
     if (params.associatedSignal)
-        for (qsizetype i = 0; i < frameCount && matched < 2 * stride; i++)
+        for (qsizetype i = 0; i < announced && matched < 2 * stride; i++)
             if (matches(modelFrames->at(i))) matched++;
     const bool valueBrackets = params.associatedSignal && matched >= 2 * stride;
 
@@ -1612,12 +1624,14 @@ void GraphingWindow::createGraph(GraphParams &params, bool createGraphParam)
     };
 
     qsizetype n = 0;
-    for (qsizetype i = 0; i < frameCount; i++)
+    for (qsizetype i = 0; i < announced; i++)
     {
         const CommFrame thisFrame = modelFrames->at(i);
         if (!matches(thisFrame)) continue;
         if (n++ % stride == 0) addPoint(thisFrame);
     }
+    for (qsizetype i = announced; i < frameCount && n == 0; i++) // frames on their way count as data
+        if (matches(modelFrames->at(i))) n++;
 
     //to fix weirdness where a graph that has no data won't be able to be edited, selected, or deleted properly
     //we'll check for the condition that there is nothing to graph and add a single dummy frame
@@ -1731,7 +1745,7 @@ void GraphingWindow::createGraph(GraphParams &params, bool createGraphParam)
     qDebug() << "ymin: " << yminval;
     qDebug() << "ymax: " << ymaxval;
 
-    if (needScaleSetup)
+    if (needScaleSetup && numEntries > 0) // web-savvycan: no points yet (its frames are on their way): see updatedFrames()
     {
         needScaleSetup = false;
         ui->graphingView->xAxis->setRange(xminval, xmaxval);        
