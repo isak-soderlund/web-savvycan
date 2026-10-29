@@ -5,10 +5,13 @@ name: web-savvycan build
 
 on:
   push:
-    branches: [main]
+    branches-ignore: ['dist/**'] # every branch (its build goes to dist/<branch>, below), not the builds themselves
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write # the dist/<branch> branch below
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -67,3 +70,21 @@ jobs:
             dist/
             tests/web/results/
           if-no-files-found: ignore
+
+      # The build as a branch, dist/<branch> (one commit, replaced each time), for places that can fetch from GitHub
+      # with git but not download Actions artifacts (the website's scripts/sync-savvycan.mjs takes the dist/ folder).
+      # Not for pull requests (their token can't push). Also when the smoke test failed: the build is there to look at.
+      - name: Publish dist to dist/${{ github.ref_name }}
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        run: |
+          set -e
+          test -f dist/SavvyCAN.html
+          out=$(mktemp -d)
+          cp -r dist "$out/dist"
+          cd "$out"
+          git init -q -b "dist/$GITHUB_REF_NAME"
+          git add -A
+          git -c user.name="web-savvycan CI" -c user.email="actions@github.com" commit -q \
+            -m "dist of ${GITHUB_SHA} (${GITHUB_REF_NAME}, run ${GITHUB_RUN_ID})"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" \
+            "HEAD:refs/heads/dist/$GITHUB_REF_NAME"

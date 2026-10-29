@@ -1,6 +1,7 @@
 #include "newgraphdialog.h"
 #include "ui_newgraphdialog.h"
 #include <QColorDialog>
+#include "theme.h"
 #include <QRandomGenerator>
 #include "utility.h"
 #include "helpwindow.h"
@@ -19,7 +20,10 @@ NewGraphDialog::NewGraphDialog(DBCHandler *handler, QWidget *parent) :
 
     QPalette p = ui->colorSwatch->palette();
     //using 160 instead of 255 so that colors are always at least a little dark
-    p.setColor(QPalette::Button, QColor(QRandomGenerator::global()->bounded(160),QRandomGenerator::global()->bounded(160), QRandomGenerator::global()->bounded(160)));
+    // web-savvycan: a random line colour that shows on the plot: dark ones on light, light ones on dark
+    const int lo = Theme::isDark() ? 96 : 0;
+    p.setColor(QPalette::Button, QColor(lo + QRandomGenerator::global()->bounded(160), lo + QRandomGenerator::global()->bounded(160),
+                                        lo + QRandomGenerator::global()->bounded(160)));
     ui->colorSwatch->setPalette(p);
 
     QPalette p2 = ui->fillSwatch->palette();

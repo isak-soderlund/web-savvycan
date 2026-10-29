@@ -72,6 +72,9 @@ public:
     ~MainWindow();
 
     void handleDroppedFile(const QString &filename);
+#ifdef Q_OS_WASM
+    void loadBrowserFile(const QString &name, const QByteArray &content);
+#endif
 
 private slots:
     void handleLoadFile();
@@ -234,7 +237,6 @@ private:
     quint64 lastShownDropped = ~0ull;
     void updateDroppedStatus();
     QLabel lbStatusDatabase;
-    QLabel lbHelp;
     int normalRowHeight;
     bool isConnected;
     QPoint contextMenuPosition;

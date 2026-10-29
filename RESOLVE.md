@@ -57,6 +57,39 @@ The smallest version that is useful: connect to rc1 from Chrome, watch the frame
     fine (peak 1.4 GB); 1 GB was killed by the 3G slice at the download. Firefox's limit is the PC's free RAM / 2.
 - **Sanitizers:** AddressSanitizer and ThreadSanitizer runs of the desktop build of the same tree.
 
+## Stage 2: graphs (started 2026-10-29, owner)
+
+Switched on so far (`enabledfeatures.h`): **Graphs** and, brought forward from stage 7, **LoadLog**.
+
+| What | How |
+| --- | --- |
+| RE Tools > New Graphing Window | SavvyCAN's graphing window. In the browser a framed dialog (title bar, close button), as the connection window: a `Qt::Window` would be frameless over the main window's menus |
+| Live graphs | A graph of a frame ID grows as frames arrive and **follows the newest data** by default (View > Follow End of Graph in the graph window, as SavvyCAN has it, now on from the start). While following, the value axis grows to take in new values (never shrinks) |
+| A log file from the computer | File > Load Log File opens the browser's own file picker (Chrome: `showOpenFilePicker`); the file type is detected from the contents (SavvyCAN's autodetect: GVRET CSV, candump, PCAN, Vector ASC/BLF, ...). The bytes go to the in-memory file system for SavvyCAN's loaders and are deleted after. **Up to 500 MB**: everything lives in the page's memory (wasm32, 4 GB): the bytes, their copy and about 150 bytes a frame twice while they go into the trace. A 1-hour Leaf log (~3 M frames, ~200 MB as CSV) fits; an 8-hour one doesn't |
+| Time axis | In the app's time style (File > Preferences: microseconds by default, or seconds, or clock) |
+| Colours | Default line light grey in dark; the Add New Graph dialog's random colour from the light half in dark |
+| Owner's other changes | No View menu (the theme is in File > Preferences > Theme); no "Press F1 on any screen for help" (the help pages aren't in this build) |
+
+Left for stage 2 (fork plan): the min/max envelope and **bounded graph storage** (G5–G8: a graph keeps every point today, ~32 bytes each, so a graph of a 100 Hz signal grows ~11 MB an hour), the FD bit picker in Add New Graph (its bit grid has 64 bits; FD signals past byte 8 by typed start bit only), the remaining hard-coded colours. Then files larger than memory: graphing straight from the file (only the graphed signals kept), not loading every frame.
+
+Tests: `tests/web` smoke spec (in CI) loads a GVRET CSV through the file picker and graphs it (every frame, every point); `graph.spec` graphs a live Leaf bus (grows, follows, value axis takes in 0..255).
+
+## Next (owner 2026-10-29)
+
+1. **Logs longer than 71.6 minutes.** GVRET sends a frame's time as 32-bit microseconds and SavvyCAN's reader keeps
+   it in 32 bits (`GVRetSerial`'s `buildTimestamp`, `uint`): 2^32 µs after the session's start (71.6 min) the times
+   start again near 0. Frames keep coming and are logged, but their times jump back (long logs and graphs out of
+   order). Same in desktop SavvyCAN with any GVRET device. Fix in the app only: count the wraps in the reader
+   (a time smaller than the last one by more than half the range = one wrap) and keep 64-bit µs. **No change to the
+   GVRET protocol or rc1's firmware**, so rc1 stays usable with standard SavvyCAN. Test: the fake rc1 with its clock
+   started near 2^32 µs (a wrap within seconds), frames in order across it in the trace, the log and a graph; on the
+   rig, a log of more than 72 min. Goal: a whole CCS charging session (hours: ~0.25 GB of CSV an hour on the Leaf
+   bus; Chrome keeps logs of 8 GB, Firefox about half the PC's free memory).
+2. **Remember the connection and connect by itself.** The browser keeps the last connection (GVRET or LAWICEL, bus
+   speed, CAN FD on/off, FD data speed, listen-only) and, when rc1 is already plugged in and allowed
+   (`navigator.serial.getPorts()`), connects with it as the page opens, without the connection window. A setting
+   to switch it off; nothing happens without a granted rc1.
+
 ## Stages switched on: `enabledfeatures.h`
 
 - **One list** of what is switched on: `enabledfeatures.h` (`Features::enabledFeature()`, one line per feature,

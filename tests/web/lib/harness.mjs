@@ -4,7 +4,7 @@
 import { test as base, expect } from '@playwright/test';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -180,10 +180,34 @@ export class AppDriver {
     await this.page.waitForFunction(() => !window.webSavvyCAN.stats().logging, null, { timeout: 10000 });
     return d;
   }
-  /** View > Dark Theme / Light Theme (whichever the app isn't showing). */
+  /** Light or dark, whichever the app isn't showing, as File > Preferences > Theme sets it (the app has no View menu
+   * since 2026-10-29: Qt's combo boxes aren't reachable by role, so through the test hook). */
   async toggleTheme() {
     const dark = (await this.page.evaluate(() => window.webSavvyCAN.theme())) === 'dark';
-    await this.menu('View', dark ? 'Light Theme' : 'Dark Theme');
+    await this.setTheme(dark ? 'light' : 'dark');
+  }
+  /** 'system', 'light' or 'dark' (File > Preferences > Theme). */
+  async setTheme(mode) {
+    await this.page.evaluate((m) => window.webSavvyCAN.setTheme(m), mode);
+  }
+  /**
+   * File > Load Log File with `file` picked; waits until its `frames` are in the trace. Qt opens Chrome's
+   * showOpenFilePicker() (File System Access), which Playwright can't answer, so the page's showOpenFilePicker is
+   * replaced for this one call by one that hands over the file, as the user's pick would.
+   */
+  async loadFile(file, frames) {
+    const bytes = readFileSync(file);
+    await this.page.evaluate(([name, b64]) => {
+      const real = window.showOpenFilePicker;
+      window.showOpenFilePicker = async () => {
+        window.showOpenFilePicker = real;
+        const data = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const f = new File([data], name);
+        return [{ kind: 'file', name, getFile: async () => f }];
+      };
+    }, [basename(file), bytes.toString('base64')]);
+    await this.menu('File', 'Load Log File');
+    await this.page.waitForFunction((n) => window.webSavvyCAN.stats().framesReceived >= n, frames, { timeout: 30000 });
   }
   async themeShot() {
     return this.page.screenshot();

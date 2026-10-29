@@ -4,6 +4,7 @@
 #include "mainwindow.h"
 #include "helpwindow.h"
 #include "utility.h"
+#include "theme.h"
 #include <QDebug>
 
 #include <algorithm>
@@ -14,7 +15,13 @@ GraphingWindow::GraphingWindow(const FrameListView *frames, QWidget *parent) :
     ui(new Ui::GraphingWindow)
 {
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    // web-savvycan: as the connection window: a Qt::Window is frameless and covers the main window's menus in the
+    // browser; as a dialog it has Qt's title bar and close button and can be moved aside.
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+#else
     setWindowFlags(Qt::Window);
+#endif
 
     readSettings();
 
@@ -111,7 +118,7 @@ GraphingWindow::GraphingWindow(const FrameListView *frames, QWidget *parent) :
     }
 
     needScaleSetup = true;
-    followGraphEnd = false;
+    followGraphEnd = true; // web-savvycan: live graphs follow the newest data (owner 2026-10-29); View > Follow End of Graph
 
     setupMenuBar();
 }
@@ -185,6 +192,7 @@ void GraphingWindow::updatedFrames(int numFrames)
     QVector<double> x, y;
     bool appendedToGraph = false;
     bool needReplot = false;
+    double newMin = std::numeric_limits<double>::infinity(), newMax = -newMin; // the new points' values
 
     if (numFrames == -1) //all frames deleted. Kill the display
     {
@@ -233,6 +241,7 @@ void GraphingWindow::updatedFrames(int numFrames)
             {
                 graphParams[j].ref->addData(x, y);
                 needReplot = true;
+                for (double v : y) { newMin = qMin(newMin, v); newMax = qMax(newMax, v); }
             }
         }
 
@@ -252,6 +261,16 @@ void GraphingWindow::updatedFrames(int numFrames)
                     end = keyRange.upper;
                     start = end - size;
                     ui->graphingView->xAxis->setRange(start, end);
+                }
+                // web-savvycan: the value axis grows to take in new values (never shrinks, so it doesn't jump);
+                // without this a live signal runs off the range it had when the graph was made.
+                QCPRange yRange = ui->graphingView->yAxis->range();
+                if (newMin < yRange.lower || newMax > yRange.upper)
+                {
+                    const double lower = qMin(yRange.lower, newMin), upper = qMax(yRange.upper, newMax);
+                    const double margin = qMax((upper - lower) * 0.05, 1e-9);
+                    ui->graphingView->yAxis->setRange(newMin < yRange.lower ? lower - margin : yRange.lower,
+                                                      newMax > yRange.upper ? upper + margin : yRange.upper);
                 }
             }
             ui->graphingView->replot();
@@ -1673,7 +1692,7 @@ GraphParams::GraphParams()
     strideSoFar = 1;
     bus = -1;
     frameLen = -1;
-    lineColor = QColor(0,0,0);
+    lineColor = Theme::isDark() ? QColor(0xe0, 0xe0, 0xe0) : QColor(0, 0, 0); // web-savvycan: readable in dark
     fillColor = QColor(255,255,255,0);
     lineWidth = 1;
     drawOnlyPoints = false;

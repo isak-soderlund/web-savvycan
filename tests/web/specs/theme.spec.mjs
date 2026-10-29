@@ -33,13 +33,13 @@ test('switch to dark and back; remembered between visits', async ({ app, page })
 
 test.describe('the system is dark', () => {
   test.use({ colorScheme: 'dark' });
-  test('first visit follows the system (dark); Light Theme overrides it; Follow System Theme goes back', async ({ app, page }) => {
+  test('first visit follows the system (dark); Light overrides it; Follow system goes back', async ({ app, page }) => {
     await app.open();
     const theme = () => page.evaluate(() => window.webSavvyCAN.theme());
     await expect.poll(theme).toBe('dark');
-    await app.menu('View', 'Light Theme');
+    await app.setTheme('light');
     await expect.poll(theme).toBe('light');
-    await app.menu('View', 'Follow System Theme');
+    await app.setTheme('system');
     await expect.poll(theme).toBe('dark');
   });
 });

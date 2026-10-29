@@ -69,7 +69,7 @@ constexpr bool on(Feature f)
     case Feature::About:              return true;
     case Feature::ThemeSwitch:        return true;
 
-    case Feature::Graphs:             return false; // stage 2
+    case Feature::Graphs:             return true;  // stage 2 (started 2026-10-29)
     case Feature::DBC:                return false; // stage 3
     case Feature::SignalViewer:       return false; // stage 3
     case Feature::Sniffer:            return false; // stage 4
@@ -90,7 +90,7 @@ constexpr bool on(Feature f)
     case Feature::ISOTP:              return false; // stage 6
     case Feature::UDSScanner:         return false; // stage 6
     case Feature::UDSFirmwareUpdate:  return false; // stage 6
-    case Feature::LoadLog:            return false; // stage 7
+    case Feature::LoadLog:            return true;  // stage 7, brought forward: a log file to graph (owner 2026-10-29)
     case Feature::FilterFiles:        return false; // stage 7
     case Feature::CropLog:            return false; // stage 7
     case Feature::MotorControlConfig: return false; // excluded
