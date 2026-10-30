@@ -114,7 +114,9 @@ QVariant SnifferModel::data(const QModelIndex &index, int role) const
             }
             else //text defaults to being light
             {
-                return QBrush(QColor(255-v,255-v,255-v,255));
+                // web-savvycan: towards a grey still seen on the dark background (to 30 it vanished, unlike light's 225 on white)
+                const int g = 255 - v * (255 - 0x60) / 225;
+                return QBrush(QColor(g, g, g, 255));
             }
         }
 

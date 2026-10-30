@@ -123,7 +123,30 @@ All four: a framed dialog in the browser; -1/-2 (Clear, a file loaded) rebuild f
 from the trace's newest frames. `testhook_retools.cpp` (own file): `sniffer()`, `flowView()`, `rangeState()`,
 `discreteState()` and their actions.
 
-MEASUREMENTS
+Measured (headless Chromium, the fake rc1, 2026-10-30; `results/flowview-live.json`, `retools-fullrate.json`,
+`rangestate.json`, `discretestate.json`):
+- **Flow View at full rate:** one ID at 8 000 frames/s for 30 s with a 50 000-frame trace (190 625 frames evicted):
+  its cache kept the newest 190 000 (50 000 dropped from its front in eighths), every frame once (consecutive sequence
+  numbers), 3.4 MB; timer p95 21-23 ms, max 67-74 ms, nothing lost at rc1. Then 64-byte FD frames of the same ID:
+  184 000 kept, 14.6 MB (the bound is 200 000 x (64 + 9) bytes).
+- **All four open at full rate** (Sniffer, Flow View in Live Mode, Range State, a realtime Single/Multi State run;
+  50 000-frame trace): classic 8 000/s for 20 s: nothing lost, timer p95 28 ms, max 88 ms, heap in use 33.4 ->
+  36.5 MB; FD64 6 900/s for 20 s: nothing lost, p95 48-54 ms (34 ms with no tool open; Flow View on a 64-byte ID adds
+  ~16-20 ms a GUI tick: 64 graphs and the 512-bit grid redrawn 4 times a second), max 106 ms, heap 41.9 -> 51.0 MB
+  (the realtime recording 3.9 MB, Flow View's cache 2.4 MB). The sniffer saw every frame once.
+- **Range State** (1 000 frames per ID): 16-bit at every start bit of a 64-byte ID, 4 kinds (2 048 tests): 92 ms;
+  3 classic IDs, 8..16 bits at every start bit, 4 kinds (20 736 tests): 315 ms; no event-loop gap over 200 ms.
+- **Single/Multi State:** realtime, 2 states x 3 iterations of 1 s on the `re` traffic: exactly the three planted
+  fields (0x120 bits 19 and 26, FD bit 270), 1 684 frames recorded (62 KB), the search 3 ms; 3 states: exactly bits
+  26-27.
+
+Tests: `tests/web` `sniffer`, `flowview`, `rangestate`, `discretestate`, `retools-fullrate` specs (the fake's new `re`
+traffic: a counter, a constant, a toggled "state" bit and a 2-bit state field, a triangle signal, random bytes, the same
+in a 29-bit 64-byte FD frame); each tool's results against what was sent (Range State and logged Single/Multi State
+against reference implementations in `lib/retools-ref.mjs`, SavvyCAN's processSignal written out); pictures light and
+dark. `tests/desktop` `tst_retools` (11 tests, also ASan/UBSan): new frames across ring wraps, the bounded rows, Range
+State's test equal to SavvyCAN's original on random walks, the discrete searches, the sampler's budget, the sniffer
+item with lengths 8 <-> 64.
 
 Limits: like SavvyCAN, an ID is one number in Sniffer, Flow View and Range State (an 11-bit and a 29-bit ID of the
 same value are one entry; Single/Multi State keeps them apart). Flow View keeps the newest 200 000 frames of its ID
