@@ -1,7 +1,10 @@
 #include "searchwindow.h"
 #include "ui_searchwindow.h"
 #include "../utility.h"
+#include "../framefileio.h"
+#include "filetools.h"
 #include <QDebug>
+#include <QElapsedTimer>
 #include <cmath>
 #include <cstring>
 
@@ -16,7 +19,13 @@ SearchWindow::SearchWindow(const FrameListView *frames, DBCHandler *handler, QWi
     , currentMatchIndex(-1)
 {
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    // web-savvycan: as the connection and graphing windows: a Qt::Window is frameless and covers the main window's
+    // menus in the browser; as a dialog it has Qt's title bar and close button and can be moved aside.
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#else
     setWindowFlags(Qt::Window);
+#endif
 
     // DBC signal pickers
     connect(ui->cbNodes,    SIGNAL(currentIndexChanged(int)), this, SLOT(loadMessages(int)));
@@ -28,6 +37,10 @@ SearchWindow::SearchWindow(const FrameListView *frames, DBCHandler *handler, QWi
     connect(ui->txtStartBit, SIGNAL(textChanged(QString)), this, SLOT(handleStartBitUpdate()));
     connect(ui->txtDataLen,  SIGNAL(textChanged(QString)), this, SLOT(handleDataLenUpdate()));
     connect(ui->cbIntel,     SIGNAL(toggled(bool)),  this, SLOT(drawBitfield()));
+    // web-savvycan: the grid covers the frames searched (CAN FD: up to 64 bytes)
+    connect(ui->txtID, &QLineEdit::editingFinished, this, &SearchWindow::handleIdUpdate);
+    connect(ui->spinFrameLen, &QSpinBox::valueChanged, this, &SearchWindow::drawBitfield);
+    connect(ui->cbUseLen, &QCheckBox::toggled, this, &SearchWindow::drawBitfield);
 
     // Value mode toggle
     connect(ui->rbValueNone,     SIGNAL(toggled(bool)), this, SLOT(onValueModeChanged()));
@@ -49,8 +62,18 @@ SearchWindow::~SearchWindow()
 }
 
 // Called by MainWindow when the frame list changes
-void SearchWindow::updatedFrames(int /*numFrames*/)
+void SearchWindow::updatedFrames(int numFrames)
 {
+    // web-savvycan: new frames at the end of the trace leave the matches' rows where they were, unless the trace's ring
+    // has dropped its oldest frames (rows move up): the first frame tells. Cleared, loaded, refiltered: stale.
+    if (numFrames > 0 && !matchingIndices.isEmpty())
+    {
+        const CommFrame first = modelFrames->first();
+        if (first.frameId() == firstAtSearch.frameId() && first.timeStamp().seconds() == firstAtSearch.timeStamp().seconds()
+            && first.timeStamp().microSeconds() == firstAtSearch.timeStamp().microSeconds()
+            && first.payload() == firstAtSearch.payload())
+            return;
+    }
     // Clear stale results when frames change
     if (!matchingIndices.isEmpty())
     {
@@ -212,7 +235,7 @@ void SearchWindow::handleDataLenUpdate()
 {
     dataLen = ui->txtDataLen->text().toInt();
     if (dataLen < 1)  dataLen = 1;
-    if (dataLen > 512) dataLen = 512;
+    if (dataLen > 64) dataLen = 64; // web-savvycan: a value is at most 64 bits (Utility::processIntegerSignal)
     // Manual edit overrides any loaded DBC signal
     if (assocSignal) {
         assocSignal = nullptr;
@@ -255,7 +278,40 @@ void SearchWindow::drawBitfield()
         }
     }
 
+    int highestByte = 0;
+    for (int b = 0; b < 64; b++) if (bitField[b]) highestByte = b;
+    fitGrid(highestByte);
     ui->gridData->updateData(reinterpret_cast<unsigned char *>(bitField), true);
+}
+
+// web-savvycan: as Add New Graph's grid: the frame length searched for, the typed ID's frames and the bits picked,
+// whichever is longest; 8 bytes at least (SavvyCAN's grid), up to CAN FD's 64 (CANDataGrid's 8/16/32/64 layouts).
+void SearchWindow::fitGrid(int highestByte)
+{
+    int bytes = qMax(8, qMax(frameLenHint, highestByte + 1));
+    if (ui->cbUseLen->isChecked()) bytes = qMax(bytes, ui->spinFrameLen->value());
+    bytes = bytes <= 8 ? 8 : bytes <= 16 ? 16 : bytes <= 32 ? 32 : 64;
+    if (ui->gridData->getBytesToDraw() == bytes) return;
+    ui->gridData->setBytesToDraw(bytes);
+    const int cols = bytes > 32 ? 32 : bytes > 8 ? 16 : 8;
+    // wider for more columns; never taller than the .ui's 240 (the window is as tall as the page in the browser: a
+    // taller grid would be pushed under the Value Filter box); the grid scales its cells to the room it gets
+    ui->gridData->setMinimumSize(qMax(240, cols * 16 + 24), bytes > 32 ? 160 : 240);
+    ui->gridData->update();
+}
+
+// The frame length of the ID typed in: its longest frame among the newest 100 000 in the trace.
+void SearchWindow::handleIdUpdate()
+{
+    frameLenHint = 0;
+    const QString text = ui->txtID->text().trimmed();
+    if (!text.isEmpty() && modelFrames)
+    {
+        const uint32_t id = uint32_t(Utility::ParseStringToNum(text));
+        for (const CommFrame &f : modelFrames->tail(100000))
+            if (f.frameId() == id) frameLenHint = qMax(frameLenHint, int(qMin<qsizetype>(64, f.payload().size())));
+    }
+    drawBitfield();
 }
 
 // ──────────────────────────────────────────────
@@ -275,30 +331,6 @@ void SearchWindow::onValueModeChanged()
 }
 
 // ──────────────────────────────────────────────
-//  Core decode helper
-// ──────────────────────────────────────────────
-double SearchWindow::decodeValue(const CommFrame &frame) const
-{
-    double scale = ui->txtScale->text().toDouble();
-    double bias  = ui->txtBias->text().toDouble();
-    if (qFuzzyIsNull(scale)) scale = 1.0;
-
-    // If we have an associated DBC signal, use its decoder
-    if (assocSignal)
-    {
-        double val = 0.0;
-        if (assocSignal->processAsDouble(frame, val))
-            return val;
-    }
-
-    int64_t raw = Utility::processIntegerSignal(
-        frame.payload(), startBit, dataLen,
-        ui->cbIntel->isChecked(), ui->cbSigned->isChecked());
-
-    return static_cast<double>(raw) * scale + bias;
-}
-
-// ──────────────────────────────────────────────
 //  Search
 // ──────────────────────────────────────────────
 void SearchWindow::onSearchClicked()
@@ -306,8 +338,13 @@ void SearchWindow::onSearchClicked()
     performSearch();
 }
 
+// web-savvycan: the matching in FileTools::FrameSearch (signals anywhere in a 64-byte CAN FD frame, only frames that
+// hold the whole signal, values as decimal, 0x hex or 0b binary), over the trace in slices taken under one lock each;
+// the page keeps running on a big capture (FrameFileIO::keepUiAlive).
 void SearchWindow::performSearch()
 {
+    QElapsedTimer timer;
+    timer.start();
     matchingIndices.clear();
     currentMatchIndex = -1;
 
@@ -318,88 +355,43 @@ void SearchWindow::performSearch()
         return;
     }
 
-    // ── Collect filter parameters ────────────────────────────
-    bool   useID  = ui->cbUseID->isChecked();
-    uint32_t filterID = useID ? Utility::ParseStringToNum(ui->txtID->text()) : 0;
-
-    bool   useLen  = ui->cbUseLen->isChecked();
-    int    filterLen = ui->spinFrameLen->value();
-
-    // Direction: 0 = both, 1 = RX only, 2 = TX only
-    int dirMode = 0;
-    if (ui->rbDirRX->isChecked())  dirMode = 1;
-    if (ui->rbDirTX->isChecked())  dirMode = 2;
-
-    bool noValueFilter  = ui->rbValueNone->isChecked();
-    bool specificValue  = ui->rbValueSpecific->isChecked();
-    double targetValue  = ui->txtValue->text().toDouble();
-
-    // For "any change" mode we track the last value per CAN ID.
-    // Use int64_t for raw bit-range comparisons to avoid double precision loss
-    // when dataLen approaches 64 bits (double only has 53-bit mantissa).
-    // When a DBC signal is active, fall back to double (scale/bias decoded).
-    const bool useRawCompare = (assocSignal == nullptr);
-    QMap<uint32_t, int64_t> lastSeenRaw;
-    QMap<uint32_t, double>  lastSeen;
-    const int64_t NO_PREV_RAW = std::numeric_limits<int64_t>::min();
-    const double  NO_PREV     = std::numeric_limits<double>::max();
-
-    for (int i = 0; i < modelFrames->size(); i++)
+    FileTools::SearchCriteria c;
+    c.useID = ui->cbUseID->isChecked();
+    c.id = c.useID ? uint32_t(Utility::ParseStringToNum(ui->txtID->text())) : 0;
+    c.useLen = ui->cbUseLen->isChecked();
+    c.len = ui->spinFrameLen->value();
+    if (ui->rbDirRX->isChecked()) c.direction = 1;
+    if (ui->rbDirTX->isChecked()) c.direction = 2;
+    c.valueMode = ui->rbValueNone->isChecked() ? FileTools::SearchCriteria::NoFilter
+                : ui->rbValueSpecific->isChecked() ? FileTools::SearchCriteria::Specific
+                : FileTools::SearchCriteria::AnyChange;
+    c.startBit = startBit;
+    c.numBits = dataLen;
+    c.intel = ui->cbIntel->isChecked();
+    c.isSigned = ui->cbSigned->isChecked();
+    c.scale = ui->txtScale->text().toDouble();
+    c.bias = ui->txtBias->text().toDouble();
+    c.valueText = ui->txtValue->text();
+    c.signal = assocSignal;
+    FileTools::FrameSearch search(c);
+    if (!search.valid())
     {
-        const CommFrame &f = modelFrames->at(i);
-
-        // ── ID filter ──────────────────────────────────────────
-        if (useID && f.frameId() != filterID)
-            continue;
-
-        // ── Length filter ──────────────────────────────────────
-        if (useLen && f.payload().size() != filterLen)
-            continue;
-
-        // ── Direction filter ───────────────────────────────────
-        if (dirMode == 1 && !f.isReceived())   continue; // want RX, frame is TX
-        if (dirMode == 2 &&  f.isReceived())   continue; // want TX, frame is RX
-
-        // ── Value filter ───────────────────────────────────────
-        // Skip entirely when "No filter" is selected
-        if (noValueFilter) { matchingIndices.append(i); continue; }
-
-        // Only apply value filter when there's at least one data byte covered
-        if (startBit / 8 < f.payload().size())
-        {
-            double val = decodeValue(f);
-
-            if (specificValue)
-            {
-                if (!qFuzzyCompare(val, targetValue))
-                    continue;
-            }
-            else // any change
-            {
-                uint32_t key = f.frameId();
-                if (useRawCompare && !assocSignal)
-                {
-                    // Compare as raw integer to avoid double precision loss
-                    int64_t raw = Utility::processIntegerSignal(
-                        f.payload(), startBit, dataLen,
-                        ui->cbIntel->isChecked(), ui->cbSigned->isChecked());
-                    int64_t prev = lastSeenRaw.value(key, NO_PREV_RAW);
-                    if (prev != NO_PREV_RAW && raw == prev)
-                        continue;
-                    lastSeenRaw[key] = raw;
-                }
-                else
-                {
-                    double prev = lastSeen.value(key, NO_PREV);
-                    if (prev != NO_PREV && qFuzzyCompare(val, prev))
-                        continue;
-                    lastSeen[key] = val;
-                }
-            }
-        }
-
-        matchingIndices.append(i);
+        ui->lblMatchInfo->setText("The value is not a number (decimal, 0x hex or 0b binary).");
+        updateNavigationState();
+        return;
     }
+
+    constexpr qsizetype kSlice = 65536;
+    const qsizetype count = modelFrames->size();
+    firstAtSearch = modelFrames->first();
+    for (qsizetype i = 0; i < count; i += kSlice)
+    {
+        const QVector<CommFrame> slice = modelFrames->mid(i, kSlice);
+        for (qsizetype j = 0; j < slice.size(); j++)
+            if (search.matches(slice[j])) matchingIndices.append(int(i + j));
+        FrameFileIO::keepUiAlive();
+    }
+    searchMs = timer.nsecsElapsed() / 1e6;
 
     if (matchingIndices.isEmpty())
     {

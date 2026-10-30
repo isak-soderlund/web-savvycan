@@ -127,6 +127,7 @@ qt_add_executable(SavvyCAN WIN32 MACOSX_BUNDLE
     re/dbccomparatorwindow.cpp re/dbccomparatorwindow.h
     re/discretestatewindow.cpp re/discretestatewindow.h
     re/filecomparatorwindow.cpp re/filecomparatorwindow.h
+    re/filetools.cpp re/filetools.h
     re/flowviewwindow.cpp re/flowviewwindow.h
     re/frameinfowindow.cpp re/frameinfowindow.h
     re/fuzzingwindow.cpp re/fuzzingwindow.h

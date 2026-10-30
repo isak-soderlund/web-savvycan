@@ -256,6 +256,44 @@ happens (no chooser, no error). File > Preferences > **Connect to the last devic
 Tests: `tests/web` autoconnect spec; with the real rc1 on the rig (`rig/autoconnect.spec`, GVRET and LAWICEL with CAN FD,
 2026-10-29), through the bridge, not Chrome's own Web Serial (which loses USB serial ports on the rig's Linux).
 
+## Stage 4: file-based RE tools (switched on 2026-10-30)
+
+RE Tools > **Capture Bisector**, **File Comparison**, **DBC Comparison** and **Frame Search**, SavvyCAN's windows, on the
+desktop and in the browser, with CAN FD. Their logic is in `re/filetools.{h,cpp}` (apart from the windows, so
+`tests/desktop` `tst_filetools` runs it, also under ASan/UBSan).
+
+| What | How |
+| --- | --- |
+| Browser | Framed dialogs (title bar, close button), as the graphing window. Saved files are downloads: the bisector's split as SavvyCAN's GVRET CSV (`BisectedFrames.csv`, what Load Log File and SavvyCAN read; no format choice in the browser), the comparisons' details as `FileComparison.txt` / `DBCComparison.txt` |
+| Capture Bisector | SavvyCAN's splits (frame number, percentage, ID range, bus; lower/upper part). The split is kept in a compact `FrameStore` (36 bytes a classic frame, 92 a 64-byte FD one; SavvyCAN's `QVector<CommFrame>`: ~100-160 in the browser); one pass over the trace in slices under one lock each (SavvyCAN read each row up to three times). The ID lists from a set in one pass (SavvyCAN looked each frame's ID up in a list: frames x IDs) and kept up to date: a loaded file (-1) refreshes them as -2 does, new live frames add their IDs and the count. **Replace main list** moves the split into the trace and tells every window (`framesUpdated(-2)`, as Crop Log; SavvyCAN told none: W2); the split is then empty (moved, not copied) |
+| File Comparison | Both sides through the window's own buttons: in the browser the browser's file picker (`QFileDialog::getOpenFileContent`) and File > Load Log File's type detection and limits (GVRET CSV up to 1000 MB, others 200 MB), through one small shared helper `FrameFileIO::loadLogData` (GVRET CSV parsed in place into a store; other formats via SavvyCAN's loaders from a temporary file). **Each file is summarised as it loads and its frames dropped** (chunk by chunk): per ID the values seen per byte and the bits ever set for all 64 bytes (~2.1 KB an ID) and the DBC signals' values; SavvyCAN kept every frame of both files and its `int values[8][256]` / 64-bit bitmap overflowed on FD frames. Side 2 still takes more files until Clear Frames. The tree as SavvyCAN's, a byte node per byte of the longest frame; no tree items made that aren't shown (SavvyCAN leaked 256 per byte per comparison) |
+| DBC Comparison | Its own two DBC files (in the browser: the picker, a temporary file for SavvyCAN's DBC loader, deleted after; not the DBC File Manager's DBCs, `Feature::DBC` stays off here). Fixed: the loop over the second DBC's signals ran on the message index (`for (int j = 0; i < ...; i++)`: skipped messages, read past the list); unchanged signals' tree items leaked; the DBCs leaked at close. A DBC is put in place only once loaded whole (a second pick while the first was still loading compared half a file) |
+| Frame Search | Signals anywhere in a 64-byte frame (start bit 0..511, 1..64 bits; SavvyCAN let the length go to 512, past `processIntegerSignal`'s 64), the bit grid as large as the frames (8/16/32/64 bytes: the ID's frames, the length filter, the bits picked), a value as decimal, `0x` hex or `0b` binary (integers compared exactly as bits, also 64-bit and a signed signal's pattern), only frames that hold the whole signal match a value (SavvyCAN read a too-short frame as 0, and frames not covering the start bit matched any value). Matches stay valid while new frames only add to the trace (they were cleared on every GUI tick), cleared when the trace's ring drops frames, on a load, clear or filter change. Searches the trace in slices |
+| Large captures | Every pass yields to the page at most every 100 ms (`FrameFileIO::keepUiAlive`) |
+
+Measured (headless Chromium, `retools-big.spec`, 2026-10-30) on the 1-hour log of 600 000 frames (40 MB, 30 IDs, FD 64):
+bisector opens in 0.3 s, a 50 % split 51 ms (300 000 frames: 12.8 MB in the store, the heap +14.4 MB), frame search
+83 ms (468 matches); file comparison of the log and a variant: each 600 000-frame file through the picker 0.56-0.64 s,
+the comparison 5 ms, the two summaries 131 KB, the heap +2.8 MB after both files (not 2 x 600 000 frames); the page's
+event loop never paused more than 210 ms (0 ms for the bisector and the search). DBC Comparison: 1000 messages each
+side compared in < 1 s, but **SavvyCAN's DBC loader takes ~10 s for a 3000-line DBC in the browser** (it runs the event
+loop every 100 lines; the DBC loader is stage 3's).
+
+Limits: like SavvyCAN an ID is one number (11- and 29-bit of the same value are one ID) in all four; the bisector
+splits by frame number/percentage, not by a time typed in (as SavvyCAN; the frames are in time order); the file
+comparison keeps up to 10 000 distinct values per DBC signal and ID (then notes it), and a DBC loaded after the files
+applies from the next file loaded; Frame Search's DBC signal group lists DBC File Manager files, so it is empty until
+stage 3; the bisector's Save in the browser is GVRET CSV only.
+
+Tests: `tests/web` `bisect.spec` (a frame only in a 1 s window found by halves, Replace, percentage, ID, bus; the saved
+split read back), `filecompare.spec` (two logs differing in known IDs/bytes/bits incl. byte 40 and bit 511 of FD frames,
+a candump log added, unique to side 1, save, clear), `dbccompare.spec` (known node/message/signal differences, an FD
+signal at byte 63; 1000 messages), `search.spec` (byte 40 hex, a Motorola pattern ending at bit 511, short frames, scale,
+any change, Tx/length; row for row; Next/Previous select the trace's rows), `retools-big.spec` (above); pictures light
+and dark (`results/{bisect,filecompare,dbccompare,search}-{light,dark}.png`). `tests/desktop` `tst_filetools`: the same
+logic natively (bisect rules, FD summaries and tree, the DBC tree from two DBC files, search values/patterns/fit,
+`loadLogData`), plain and ASan/UBSan.
+
 ## Stages switched on: `enabledfeatures.h`
 
 - **One list** of what is switched on: `enabledfeatures.h` (`Features::enabledFeature()`, one line per feature,
