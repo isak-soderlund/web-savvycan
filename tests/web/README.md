@@ -110,6 +110,13 @@ window with that graph, or one more graph in the newest window); `graphState()` 
 `firstValue/lastValue`, `minValue/maxValue`; `openGraphDialog()` (Graph > Add New Graph), `graphDialog()` (open,
 `gridBytes`, the text fields), `setGraphDialogField('id' | 'startBit' | 'bits' | 'frameLen', n)` (as typed);
 `setMaxFrames(n)` (Preferences' maximum frames in the trace; reload after).
+Tabs (the browser build's windows are tabs of the main window, `wasm/windowtabs.h`): `tabs()`: per tab `title`,
+`class` (the window's C++ class, `MainWindow` for the main screen), `current`, `closable`, `closeShown`, its place
+(`x`, `y`, `width`, `height`, page coordinates) and `visible` (in the bar's view), and the bar: `current`, `rowHeight`,
+`barLeft`, `barWidth`, `natural` (its width with room to spare), `reserve` (the page's texts), `pageWidth`/`pageHeight`
+(the page shown), `topLevels` (visible top-level windows: 1 = the main window only); `selectTab(i)`, `closeTab(i)` (as a
+click on the tab or its close button); `openWindow('graph' | 'frameInfo' | 'temporal' | 'connection' | 'preferences')`
+(as its menu, from the event loop). The window hooks find windows through `WindowTabs::windows()`/`isOpen()`.
 `memory()`: the page's memory: `heapUsed` (malloc's bytes in use now), `maxFootprint` (the most malloc ever had: the
 peak), `heapSize` (the wasm memory), `storeBytes` and `frames` (the trace's frame store).
 
@@ -154,6 +161,7 @@ peak), `heapSize` (the wasm memory), `storeBytes` and `frames` (the trace's fram
 | download (`download`, `firefox`) | the logging module alone: rows written in batches, one download named by the start time, byte for byte SavvyCAN's own rows (`nativecsv_tool gen`) and loaded by SavvyCAN's parser; `_blob()` while logging; the name given at stop; an empty log; a second log; "leave site?" while logging |
 | fullload `@long` | 60 s at 8 000 classic / 6 900 FD64 frames/s: accounting, rc1-side loss < 0.1 %, 10 ms timer lateness p95 < 50 ms, no stall > 1 s; `results/fullload-*.json` |
 | large `@large` | gigabytes of rows through the logging module, one download: size and SHA-256, JS heap, browser PSS and profile size every 256 MB; `results/large-*.json` |
+| tabs | the windows as tabs (owner 2026-10-30): the graphing window, Frame Data Analysis, Temporal Graph and the connection window each open as a tab; real clicks beside their content (where the floating window used to be buried) keep them in front; the main screen is the first tab, not closable; switching by mouse on the tabs shows the right page; reopening from the menu switches to the tab (graphing windows get numbered tabs); the × (shown on the current and the hovered tab) closes the window as SavvyCAN does and the menu reopens it; a live graph keeps taking frames with its tab in the background; Escape doesn't close a tab; 13 tabs: equal widths, elided, every one reachable, the page's reserve kept, all closed back to the main screen; light and dark pictures `results/tabs/` |
 | screenshots `@screenshots` | pictures only: main window with traffic, RE Tools menu, About, Preferences, light and dark |
 | every test | no console error, no uncaught exception |
 

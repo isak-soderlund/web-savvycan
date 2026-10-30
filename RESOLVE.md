@@ -12,7 +12,7 @@ The Resolve fork of SavvyCAN (collin80/SavvyCAN, branch `QT6WIP`, forked at 9c3b
 
 | Document | What |
 | --- | --- |
-| `docs/requirements.md` SW-10 | Exactly SavvyCAN's interface, exceptions only for CAN FD and browser limits; CAN FD out of the box; light/dark switch; logging straight to disk; no crash on a busy bus |
+| `docs/requirements.md` SW-10 | Exactly SavvyCAN's interface, exceptions only for CAN FD and browser limits (browser: windows are tabs, owner 2026-10-30, "Tabs instead of windows" below); CAN FD out of the box; light/dark switch; logging straight to disk; no crash on a busy bus |
 | `docs/savvycan-fork-plan.md` | Decisions and the staged rollout (connection + logging, graphs, DBC, RE tools, ...) |
 | `docs/research/savvycan-improve.md` | Root causes of the crashes and slow graphs (G, M, W ids), FD gaps, theming |
 | `docs/research/savvycan-web.md` | WebAssembly spike (patch + screenshot), browser limits, logging, hosting |
@@ -189,6 +189,48 @@ happens (no chooser, no error). File > Preferences > **Connect to the last devic
 (`Main/SaveRestoreConnections`, upstream's "Save/Restore CAN bus connections"; on by default in the browser).
 Tests: `tests/web` autoconnect spec; with the real rc1 on the rig (`rig/autoconnect.spec`, GVRET and LAWICEL with CAN FD,
 2026-10-29), through the bridge, not Chrome's own Web Serial (which loses USB serial ports on the rig's Linux).
+
+## Tabs instead of windows (browser; owner 2026-10-30)
+
+**Decision (owner, 2026-10-30), an exception to SW-10's "exactly SavvyCAN's interface" for the browser:** every
+non-modal window opens as a tab of the main window, like a browser's tabs. Why: a page has no window manager. All of
+SavvyCAN's windows were Qt for WebAssembly windows in one canvas; the main window fills the page, so a click on it
+raised it above a graph (or Frame Data Analysis, Temporal Graph, the connection window...) and buried that window,
+with no taskbar or window list to get it back (the owner's report: "as soon as I press beside the graph I just added
+it disappears"). The desktop build keeps SavvyCAN's separate windows.
+
+- **One place:** `wasm/windowtabs.{h,cpp}` (browser build only; installed by `MainWindow` after its menus are set up).
+  An application event filter catches every top-level window when it is shown: a non-modal one (window or dialog)
+  moves into the main window as a tab, filling the page below the menu bar row (in a scroll area, for a window larger
+  than the page). Windows switched on later get tabs without code of their own.
+- **Tabs:** every non-modal window: the graphing windows, Frame Data Analysis, Temporal Graph, the connection window,
+  Preferences, Help, and stage 3/4's windows (DBC File Manager and its editors, Signal Viewer, Sniffer, Flow View,
+  Range State, Single/Multi State, Bisector, File and DBC Comparison, Frame Search, ...).
+- **Still dialogs over the current tab:** modal ones (`exec()`/`open()`: About, Add New Graph, New Connection, file
+  questions), message boxes, progress dialogs and Qt's standard dialogs: short questions that block the app anyway.
+  A window can opt out with the property `webSavvyCanFloating`.
+- **The tab bar** is in the menu bar row, after the menus (the row is 34 px high, the menus' text centred on the
+  tabs'). The first tab, "Frames", is the main screen and can't be closed. A tool's tab has a × (shown on the current
+  and the hovered tab): it closes the window as SavvyCAN's close does (`closeEvent`, settings written; a window that
+  refuses keeps its tab). Opening an open window from its menu switches to its tab (`MainWindow`'s `show...` slots go
+  through `showWindow()` -> `WindowTabs::present()`); the graphing windows, of which SavvyCAN opens a new one each
+  time, get numbered tabs ("Graph 2"; tabs are named by the window title, or by its menu entry where the title says less: Graph, Frame Data Analysis, Connection, Preferences). A window the app closes itself loses its tab; shown again, it gets one.
+  Escape doesn't close a tab (QDialog's Escape would have).
+- **A tab in the background is covered, not hidden** (`QStackedLayout::StackAll`): the windows stay "visible" to Qt, as
+  a window behind another one on the desktop. Live graphs keep taking frames, and a window's `showEvent` (Frame Data
+  Analysis re-reads its ID list there) doesn't run again on every switch.
+- **Look:** Chrome-like: the strip a shade darker than the window colour, the current tab in the window colour joining
+  the page below, quieter titles on the others, a hover colour, thin separators, tabs 120-220 px that shrink to 84 px
+  with an elided title (full title in the tooltip) before the bar scrolls. Colours from the theme's palette.
+- **The website's bar shares the row** (`/resolve-can/savvycan`, its texts at the row's right end): the app publishes
+  `window.savvycanTopBar` (`height`, `tabTop`, `tabsLeft`, `tabsNatural`) and the event `savvycan-topbar`; the page
+  decides which texts fit beside the tabs at their full width, by measured widths (first "Chrome based browser must be
+  used" goes, then the source text; the source stays in Help > About, which names the build's commit) and answers
+  with `savvycanTopBar.setReserve(px)`, the width its texts take; the tabs stop before them and only shrink once both
+  texts are gone.
+- **Tests:** `tests/web/specs/tabs.spec.mjs`; the test hook's `tabs()`, `selectTab(i)`, `closeTab(i)`,
+  `openWindow(name)`. The hook finds windows through `WindowTabs::windows()`/`isOpen()` (they aren't top-levels any
+  more): a window's hook must do the same (not `QApplication::topLevelWidgets()` + `isVisible()`).
 
 ## Stages switched on: `enabledfeatures.h`
 

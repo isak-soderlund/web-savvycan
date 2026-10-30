@@ -158,9 +158,16 @@ export class AppDriver {
     if (expectOpen) await page.waitForFunction(() => window.__rc1.stats().channel.open, null, { timeout: 10000 });
     await this.closeConnectionWindow();
   }
-  /** The connection window covers the main window's menus: Escape closes it (the connection stays up). */
+  /** Closes the connection window (the connection stays up): its tab's close button (the browser build's windows are
+   * tabs, wasm/windowtabs.h), as a click on it; Escape for a build without tabs. */
   async closeConnectionWindow() {
-    await this.page.keyboard.press('Escape');
+    const closed = await this.page.evaluate(() => {
+      const s = window.webSavvyCAN.tabs ? window.webSavvyCAN.tabs() : null;
+      if (!s || !s.tabs) return null;
+      const i = s.tabs.findIndex((t) => t.class === 'ConnectionWindow');
+      return i > 0 ? window.webSavvyCAN.closeTab(i) : false;
+    });
+    if (closed === null) await this.page.keyboard.press('Escape');
     await this.page.waitForTimeout(300);
   }
   async disconnect() {

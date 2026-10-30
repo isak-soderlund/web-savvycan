@@ -20,6 +20,7 @@
 #ifdef Q_OS_WASM
 #include <QInputDialog>
 #include "wasm/disklog/webdisklog.h"
+#include "wasm/windowtabs.h"
 #endif
 
 #include <QClipboard>
@@ -48,6 +49,17 @@ static QAccessibleInterface *traceAccessible(const QString &, QObject *object)
     return nullptr;
 }
 #endif
+// web-savvycan: a window opened from a menu comes to the front. In the browser the windows are tabs
+// (wasm/windowtabs.h, owner 2026-10-30): an open one is switched to. The desktop keeps SavvyCAN's show().
+static void showWindow(QWidget *w)
+{
+#ifdef Q_OS_WASM
+    WindowTabs::present(w);
+#else
+    w->show();
+#endif
+}
+
 /*
 Some notes on things I'd like to put into the program but haven't put on github (yet)
 
@@ -467,6 +479,11 @@ void MainWindow::applyFeatures()
     }
     // No View menu (owner 2026-10-29): the theme is chosen in File > Preferences > Theme.
     ui->menuView->menuAction()->setVisible(false);
+#ifdef Q_OS_WASM
+    // Non-modal windows open as tabs of this window (owner 2026-10-30): a page has no window manager, and a floating
+    // window got buried behind this one, which fills the page.
+    WindowTabs::install(this);
+#endif
 
     // The main window's own controls.
     ui->cbInterpret->setVisible(Features::on(Feature::DBC));
@@ -2398,7 +2415,7 @@ void MainWindow::showSettingsDialog()
         settingsDialog = new MainSettingsDialog();
         connect (settingsDialog, SIGNAL(updatedSettings()), this, SLOT(readUpdateableSettings()));
     }
-    settingsDialog->show();
+    showWindow(settingsDialog);
 }
 
 //always gets unfiltered list. You ask for the graphs so there is no need to send filtered frames
@@ -2435,7 +2452,7 @@ void MainWindow::showGraphingWindow()
         connect(flowViewWindow, SIGNAL(sendCenterTimeID(uint32_t,double)), lastGraphingWindow, SLOT(gotCenterTimeID(uint32_t,double)));
     }
 
-    lastGraphingWindow->show();
+    showWindow(lastGraphingWindow);
 }
 
 void MainWindow::showTemporalGraphWindow()
@@ -2455,7 +2472,7 @@ void MainWindow::showTemporalGraphWindow()
         temporalGraphWindow = new TemporalGraphWindow(frames);
     }
 
-    temporalGraphWindow->show();
+    showWindow(temporalGraphWindow);
 }
 
 void MainWindow::showFrameDataAnalysis()
@@ -2469,7 +2486,7 @@ void MainWindow::showFrameDataAnalysis()
         else
             frameInfoWindow = new FrameInfoWindow(model->getFilteredListReference());
     }
-    frameInfoWindow->show();
+    showWindow(frameInfoWindow);
 }
 
 void MainWindow::showISOInterpreterWindow()
@@ -2482,7 +2499,7 @@ void MainWindow::showISOInterpreterWindow()
         else
             isoWindow = new ISOTP_InterpreterWindow(model->getFilteredListReference());
     }
-    isoWindow->show();
+    showWindow(isoWindow);
 }
 
 void MainWindow::showSnifferWindow()
@@ -2490,7 +2507,7 @@ void MainWindow::showSnifferWindow()
     if (!Features::on(Features::Feature::Sniffer)) return; // web-savvycan: enabledfeatures.h
     if (!snifferWindow)
         snifferWindow = new SnifferWindow(this);
-    snifferWindow->show();
+    showWindow(snifferWindow);
 }
 
 void MainWindow::showBisectWindow()
@@ -2500,7 +2517,7 @@ void MainWindow::showBisectWindow()
     {
         bisectWindow = new BisectWindow(model->getListReference());
     }
-    bisectWindow->show();
+    showWindow(bisectWindow);
 }
 
 void MainWindow::showCANBridgeWindow()
@@ -2510,7 +2527,7 @@ void MainWindow::showCANBridgeWindow()
     {
         canBridgeWindow = new CANBridgeWindow(model->getListReference());
     }
-    canBridgeWindow->show();
+    showWindow(canBridgeWindow);
 }
 
 void MainWindow::showSearchWindow()
@@ -2526,7 +2543,7 @@ void MainWindow::showSearchWindow()
             searchWindow->updatedFrames(0);
         });
     }
-    searchWindow->show();
+    showWindow(searchWindow);
     searchWindow->raise();
 }
 
@@ -2557,7 +2574,7 @@ void MainWindow::showFrameSenderWindow()
         else
             frameSenderWindow = new FrameSenderWindow(model->getFilteredListReference());
     }
-    frameSenderWindow->show();
+    showWindow(frameSenderWindow);
 }
 
 void MainWindow::showPlaybackWindow()
@@ -2570,7 +2587,7 @@ void MainWindow::showPlaybackWindow()
         else
             playbackWindow = new FramePlaybackWindow(model->getFilteredListReference());
     }
-    playbackWindow->show();
+    showWindow(playbackWindow);
 }
 
 void MainWindow::showUDSFirmwareUploaderWindow()
@@ -2580,7 +2597,7 @@ void MainWindow::showUDSFirmwareUploaderWindow()
     {
         udsFirmwareUploaderWindow = new UDSFirmwareUploaderWindow(model->getListReference());
     }
-    udsFirmwareUploaderWindow->show();
+    showWindow(udsFirmwareUploaderWindow);
 }
 
 void MainWindow::showComparisonWindow()
@@ -2590,7 +2607,7 @@ void MainWindow::showComparisonWindow()
     {
         comparatorWindow = new FileComparatorWindow();
     }
-    comparatorWindow->show();
+    showWindow(comparatorWindow);
 }
 
 void MainWindow::showDBCComparisonWindow()
@@ -2600,7 +2617,7 @@ void MainWindow::showDBCComparisonWindow()
     {
         dbcComparatorWindow = new DBCComparatorWindow();
     }
-    dbcComparatorWindow->show();
+    showWindow(dbcComparatorWindow);
 }
 
 void MainWindow::showSingleMultiWindow()
@@ -2610,7 +2627,7 @@ void MainWindow::showSingleMultiWindow()
     {
         discreteStateWindow = new DiscreteStateWindow(model->getListReference());
     }
-    discreteStateWindow->show();
+    showWindow(discreteStateWindow);
 }
 
 void MainWindow::showFuzzingWindow()
@@ -2620,7 +2637,7 @@ void MainWindow::showFuzzingWindow()
     {
         fuzzingWindow = new FuzzingWindow(model->getListReference());
     }
-    fuzzingWindow->show();
+    showWindow(fuzzingWindow);
 }
 
 void MainWindow::showMCConfigWindow()
@@ -2632,7 +2649,7 @@ void MainWindow::showMCConfigWindow()
         //connect(motorctrlConfigWindow, SIGNAL(sendCommFrame(const CommFrame*,int)), worker, SLOT(sendFrame(const CommFrame*,int)));
         //connect(motorctrlConfigWindow, SIGNAL(sendFrameBatch(const QList<CommFrame>*)), worker, SLOT(sendFrameBatch(const QList<CommFrame>*)));
     }
-    motorctrlConfigWindow->show();
+    showWindow(motorctrlConfigWindow);
 }
 
 void MainWindow::showUDSScanWindow()
@@ -2642,7 +2659,7 @@ void MainWindow::showUDSScanWindow()
     {
         udsScanWindow = new UDSScanWindow(model->getListReference());
     }
-    udsScanWindow->show();
+    showWindow(udsScanWindow);
 }
 
 void MainWindow::showScriptingWindow()
@@ -2653,7 +2670,7 @@ void MainWindow::showScriptingWindow()
     {
         scriptingWindow = new ScriptingWindow(model->getListReference());
     }
-    scriptingWindow->show();
+    showWindow(scriptingWindow);
 #endif
 }
 
@@ -2664,7 +2681,7 @@ void MainWindow::showRangeWindow()
     {
         rangeWindow = new RangeStateWindow(model->getListReference());
     }
-    rangeWindow->show();
+    showWindow(rangeWindow);
 }
 
 void MainWindow::showFuzzyScopeWindow()
@@ -2691,7 +2708,7 @@ void MainWindow::showFlowViewWindow()
         connect(flowViewWindow, SIGNAL(sendCenterTimeID(uint32_t,double)), lastGraphingWindow, SLOT(gotCenterTimeID(int32_t,double)));
     }
 
-    flowViewWindow->show();
+    showWindow(flowViewWindow);
 }
 
 
@@ -2709,7 +2726,7 @@ void MainWindow::showDBCFileWindow()
         dbcFileWindow = new DBCLoadSaveWindow(model->getListReference());
         connect(dbcFileWindow, &DBCLoadSaveWindow::updatedDBCSettings, this, &MainWindow::DBCSettingsUpdated);
     }
-    dbcFileWindow->show();
+    showWindow(dbcFileWindow);
 }
 
 void MainWindow::showSignalViewer()
@@ -2722,7 +2739,7 @@ void MainWindow::showSignalViewer()
         else
             signalViewerWindow = new SignalViewerWindow(model->getFilteredListReference());
     }
-    signalViewerWindow->show();
+    showWindow(signalViewerWindow);
 }
 
 void MainWindow::showConnectionSettingsWindow()
@@ -2738,5 +2755,5 @@ void MainWindow::showConnectionSettingsWindow()
             QMetaObject::invokeMethod(conn, "probeConnectionState", Qt::QueuedConnection);
     }
 
-    connectionWindow->show();
+    showWindow(connectionWindow);
 }
