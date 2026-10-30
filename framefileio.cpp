@@ -4493,7 +4493,8 @@ bool FrameFileIO::isTeslaAPFile(QString filename)
     while (!inFile.atEnd())
     {
         TeslaAPCANRecord record;
-        inFile.read((char *)&record, sizeof(TeslaAPCANRecord));
+        //web-savvycan: a short read at the end is not a record (it left the record uninitialised)
+        if (inFile.read((char *)&record, sizeof(TeslaAPCANRecord)) != qint64(sizeof(TeslaAPCANRecord))) break;
         if (record.id > 0x7FF) isValidFile = false;
         if ((record.ctr >> 4) > 8) isValidFile = false;
         if ((record.ctr & 0xF) > 6) isValidFile = false;
@@ -4524,13 +4525,14 @@ bool FrameFileIO::loadTeslaAPFile(QString filename, QVector<CommFrame>* frames)
         }
 
         TeslaAPCANRecord record;
-        inFile.read((char *)&record, sizeof(TeslaAPCANRecord));
+        //web-savvycan: a short read at the end is not a record (it left the record uninitialised)
+        if (inFile.read((char *)&record, sizeof(TeslaAPCANRecord)) != qint64(sizeof(TeslaAPCANRecord))) break;
 
         thisFrame.setReceived(true);
         thisFrame.setExtendedFrameFormat(false); //format is incapable of extended frames
         thisFrame.setFrameType(CommFrame::CANDataFrame);
         qint64 tempStamp;
-        tempStamp = record.sec * 1000000 + (record.nano/1000);
+        tempStamp = qint64(quint64(record.sec) * 1000000ULL + quint64(record.nano / 1000)); //web-savvycan: no signed overflow on garbage
         thisFrame.setTimeStamp(CommFrame::TimeStamp(0, tempStamp));
         thisFrame.setFrameId(record.id);
         int numBytes = (record.ctr >> 4);

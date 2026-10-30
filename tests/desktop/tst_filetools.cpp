@@ -16,6 +16,9 @@
 
 using namespace FileTools;
 
+// SavvyCAN's DBCFile doesn't free its messages and signals when deleted (dbc/, stage 3's): not this test's leak.
+extern "C" const char *__lsan_default_suppressions() { return "leak:DBCFile::parseSignalLine\nleak:DBCFile::parseMessageLine\nleak:DBCFile::loadFile\n"; }
+
 namespace {
 
 // Text of a tree path's children: child("IDs found on both sides") etc.

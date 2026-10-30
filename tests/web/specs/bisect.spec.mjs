@@ -30,7 +30,9 @@ async function split(app, page, set, frames, what) {
   expect(await page.evaluate((s) => window.webSavvyCAN.bisectSet(s), set), `${what}: set`).toBe(true);
   await app.click('button', 'Calculate Split');
   const w = want(frames);
-  await expect.poll(async () => (await state(page)).splitCount, { message: `${what}: split frames` }).toBe(w.count);
+  // done when the window's label shows it too (the page runs on while a split goes through the trace)
+  await expect.poll(async () => { const x = await state(page); return [x.splitCount, x.splitLabel]; },
+    { message: `${what}: split frames` }).toEqual([w.count, String(w.count)]);
   const s = await state(page);
   expect(s.splitIds, `${what}: frames per ID`).toEqual(Object.fromEntries(Object.entries(w.ids).map(([k, v]) => [String(k), v])));
   expect([s.splitFirstUs, s.splitLastUs], `${what}: first and last time`).toEqual([w.first, w.last]);

@@ -294,8 +294,9 @@ void SearchWindow::fitGrid(int highestByte)
     if (ui->gridData->getBytesToDraw() == bytes) return;
     ui->gridData->setBytesToDraw(bytes);
     const int cols = bytes > 32 ? 32 : bytes > 8 ? 16 : 8;
-    const int rows = bytes > 16 ? 16 : 8;
-    ui->gridData->setMinimumSize(qMax(240, cols * 20 + 24), qMax(240, rows * 18 + 24)); // every row shown (16 for FD)
+    // wider for more columns; never taller than the .ui's 240 (the window is as tall as the page in the browser: a
+    // taller grid would be pushed under the Value Filter box); the grid scales its cells to the room it gets
+    ui->gridData->setMinimumSize(qMax(240, cols * 16 + 24), bytes > 32 ? 160 : 240);
     ui->gridData->update();
 }
 

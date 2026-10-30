@@ -69,8 +69,8 @@ test('a 1-hour log of 600 000 frames: bisector, frame search and file comparison
     r = await timed(page, 'split at 50 %', async () => {
       await page.evaluate(() => window.webSavvyCAN.bisectSet({ mode: 'percent', percent: 50, lower: false }));
       await app.click('button', 'Calculate Split');
-      await expect.poll(async () => (await page.evaluate(() => window.webSavvyCAN.bisect())).splitCount,
-        { timeout: 60_000 }).toBe(N / 2);
+      await expect.poll(async () => (await page.evaluate(() => window.webSavvyCAN.bisect())).splitLabel,
+        { timeout: 60_000 }).toBe(String(N / 2));
     });
     let b = await page.evaluate(() => window.webSavvyCAN.bisect());
     result.bisectSplitS = r.s;
@@ -85,7 +85,7 @@ test('a 1-hour log of 600 000 frames: bisector, frame search and file comparison
     expect(afterSplit.heapUsed - base.heapUsed, `the split's memory: ${result.splitHeapMB} MB`).toBeLessThan(N / 2 * 100);
     await page.evaluate((id) => window.webSavvyCAN.bisectSet({ mode: 'id', lowId: id, highId: id, lower: true }), canId(0x7e8));
     await app.click('button', 'Calculate Split');
-    await expect.poll(async () => (await page.evaluate(() => window.webSavvyCAN.bisect())).splitCount, { timeout: 60_000 }).toBe(want7e8);
+    await expect.poll(async () => (await page.evaluate(() => window.webSavvyCAN.bisect())).splitLabel, { timeout: 60_000 }).toBe(String(want7e8));
     b = await page.evaluate(() => window.webSavvyCAN.bisect());
     expect(b.splitFirstUs, '0x7E8 from the second half hour').toBeGreaterThanOrEqual(T0 + SPAN / 2);
     await page.keyboard.press('Escape');
