@@ -11,7 +11,13 @@ DBCLoadSaveWindow::DBCLoadSaveWindow(const FrameListView *frames, QWidget *paren
     QDialog(parent),
     ui(new Ui::DBCLoadSaveWindow)
 {
+#ifdef Q_OS_WASM
+    // web-savvycan: as the graphing window: a Qt::Window is frameless and covers the main window's menus in the
+    // browser; as a dialog it has a title bar and a close button
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#else
     setWindowFlags(Qt::Window);
+#endif
 
     dbcHandler = DBCHandler::getReference();
     referenceFrames = frames;
@@ -112,8 +118,21 @@ void DBCLoadSaveWindow::updateSettings()
             settings.setValue("DBC/AssocBus_" + QString::number(i), file->getAssocBus());
             settings.setValue("DBC/MatchingCriteria_" + QString::number(i), file->messageHandler->getMatchingCriteria());
             settings.setValue("DBC/FilterLabeling_" + QString::number(i), file->messageHandler->filterLabeling() ? 1 : 0);
+#ifdef Q_OS_WASM
+            // web-savvycan: the file itself for the next visit (the page's file system is gone then)
+            QFile f(file->getFullFilename());
+            const QString key = "DBC/Content_" + QString::number(i);
+            if (f.size() <= DBCHandler::kMaxRememberedBytes && f.open(QIODevice::ReadOnly))
+                settings.setValue(key, QString::fromLatin1(f.readAll().toBase64()));
+            else
+                settings.remove(key);
+#endif
         }
     }
+#ifdef Q_OS_WASM
+    for (int i = filecount; settings.contains("DBC/Content_" + QString::number(i)); i++)
+        settings.remove("DBC/Content_" + QString::number(i));
+#endif
     emit updatedDBCSettings();
 }
 
@@ -153,6 +172,26 @@ void DBCLoadSaveWindow::newFile()
 
 void DBCLoadSaveWindow::loadFile()
 {
+#ifdef Q_OS_WASM
+    // web-savvycan: in the browser the file comes from the computer through the browser's own file picker (as File >
+    // Load Log File); it is kept in the page's file system (DBCHandler::browserPath) and loaded from there by its
+    // extension, as the dialog's filter picks the loader on the desktop.
+    QFileDialog::getOpenFileContent(tr("DBC File (*.dbc);;Tesla JSON File (*.json);;Secret CSV Signal Defs (*.csv)"),
+                                    [this](const QString &name, const QByteArray &content) {
+        if (name.isEmpty()) return; //the picker was cancelled
+        const QString path = DBCHandler::browserPath(name);
+        QFile out(path);
+        if (!out.open(QIODevice::WriteOnly) || out.write(content) != content.size()) return;
+        out.close();
+        DBCFile *file;
+        if (name.endsWith(".json", Qt::CaseInsensitive)) file = dbcHandler->loadJSONFile(path);
+        else if (name.endsWith(".csv", Qt::CaseInsensitive)) file = dbcHandler->loadSecretCSVFile(path);
+        else file = dbcHandler->loadDBCFile(path);
+        if (file) addFileRow(file);
+        else QMessageBox::warning(this, tr("DBC File Manager"), tr("%1 could not be loaded.").arg(name));
+    });
+    return;
+#endif
     DBCFile *file = nullptr;
     QString filename;
     QFileDialog dialog;
@@ -191,7 +230,13 @@ void DBCLoadSaveWindow::loadFile()
         }
     }
 
-    if(file) {
+    if (file) addFileRow(file);
+}
+
+// A loaded file's row in the table (its bus, matching criteria and label filtering from the file); settings saved.
+void DBCLoadSaveWindow::addFileRow(DBCFile *file)
+{
+    {
         inhibitCellProcessing=true;
         int idx = ui->tableFiles->rowCount();
         ui->tableFiles->insertRow(ui->tableFiles->rowCount());
@@ -233,7 +278,12 @@ void DBCLoadSaveWindow::saveFile()
     if (idx < 0) return;
     dbcHandler->saveDBCFile(idx);
     //then update the list to show the new file name (if it changed)
+    inhibitCellProcessing = true;
     ui->tableFiles->setItem(idx, 0, new QTableWidgetItem(dbcHandler->getFileByIdx(idx)->getFilename()));
+    inhibitCellProcessing = false;
+#ifdef Q_OS_WASM
+    updateSettings(); // web-savvycan: the saved file is what the next visit loads
+#endif
 }
 
 void DBCLoadSaveWindow::removeFile()

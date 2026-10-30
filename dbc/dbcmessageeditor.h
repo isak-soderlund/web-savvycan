@@ -38,6 +38,8 @@ private:
     void readSettings();
     void writeSettings();
     void generateSampleText();
+    QColor shownBackground() const;
+    QColor shownForeground() const;
 };
 
 #endif // DBCMESSAGEEDITOR_H

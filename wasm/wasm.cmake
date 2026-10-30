@@ -10,6 +10,8 @@ target_sources(SavvyCAN PRIVATE
     wasm/webserial/webserialbackend_wasm.cpp
     wasm/disklog/webdisklog.cpp wasm/disklog/webdisklog.h   # continuous logging: a download on stop
     testhook.cpp testhook.h                                 # window.webSavvyCAN for the browser tests
+    testhook_filetools.cpp                                  # its file-based RE tools part (stage 4)
+    testhook_retools.cpp                                    # ... its live RE tools part (stage 4)
 )
 # The JS halves go into SavvyCAN.js itself (nothing extra in dist/, no change to the page).
 foreach(js wasm/webserial/webserial.js wasm/disklog/disklog.js)

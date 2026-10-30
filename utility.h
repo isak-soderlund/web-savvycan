@@ -297,105 +297,63 @@ public:
         return (value1 * (1.0 - samplePoint)) + (value2 * samplePoint);
     }
 
+    /* web-savvycan: the bits a DBC-style signal covers, as SavvyCAN numbers them (bit 7 of byte 0 is 7, bit 0 of byte 1
+     * is 8, ... up to 511 in a 64-byte CAN FD frame): Intel counts up from the start bit; Motorola starts at the start
+     * bit (the signal's most significant bit) and counts down within the byte, then goes on at bit 7 of the next byte.
+     * signalLastByte() is the highest byte index the signal touches (-1 for a size < 1), so a frame of
+     * signalLastByte() + 1 bytes or more carries the whole signal. (SavvyCAN checked (startBit + size) / 8 bytes,
+     * which is wrong for Motorola: a signal in the last byte, start bit 63 size 8, "didn't fit" an 8-byte frame.)
+     */
+    static int signalLastByte(int startBit, int sigSize, bool littleEndian)
+    {
+        if (sigSize < 1 || startBit < 0) return -1;
+        if (littleEndian) return (startBit + sigSize - 1) / 8;
+        // Motorola: the first byte holds (startBit % 8) + 1 bits, every following byte 8
+        const int inFirst = (startBit % 8) + 1;
+        if (sigSize <= inFirst) return startBit / 8;
+        return startBit / 8 + (sigSize - inFirst + 7) / 8;
+    }
+    static bool signalFits(int dataLen, int startBit, int sigSize, bool littleEndian)
+    {
+        const int last = signalLastByte(startBit, sigSize, littleEndian);
+        return last >= 0 && last < dataLen;
+    }
+
     /* A unified function that can extract a signal from the (up to) 64 bits of data bytes in a CAN frame
      * handles both little and big endian signals (and floats too).
+     * web-savvycan: CAN FD: any start bit in a frame of up to 64 bytes (bits 0..511), up to 64 bits long (an int64; a
+     * longer size is taken as 64: 1 << 64 was undefined); 0 when the signal doesn't fit the frame (as before).
     */
-    static int64_t processIntegerSignal(const QByteArray data, int startBit, int sigSize, bool littleEndian, bool isSigned)
+    static int64_t processIntegerSignal(const QByteArray &data, int startBit, int sigSize, bool littleEndian, bool isSigned)
     {
+        if (sigSize > 64) sigSize = 64;
+        if (!signalFits(data.size(), startBit, sigSize, littleEndian)) return 0; //signal extends past the end of data
+        const unsigned char *bytes = reinterpret_cast<const unsigned char *>(data.constData());
 
         uint64_t result = 0;
-        int bit = 0;
-
-        int maxBytes = (startBit + sigSize) / 8;
-        if (data.size() < maxBytes) return 0; //if signal extends past the end of data then abort
-
+        int bit = startBit;
         if (littleEndian)
         {
-/*
-            int currByte = (startBit) / 8;
-            int currOffset = startBit - (currByte * 8);
-            int remainingBits = qMax(0, (sigSize - (8 - currOffset)) );
-            int prevBits = qMin((8 - currOffset), sigSize);
-            result = data[currByte] >> currOffset;
-            result &= ( (1 << sigSize) - 1); //doesn't hurt to do this even if sigSize is way larger than the # of bits we've got so far
-
-            while (remainingBits > 0)
-            {
-                currByte++;
-                if (remainingBits >= 8) //use this entire byte, its easy
-                {
-                    result += data[currByte] << prevBits;
-                    remainingBits -= 8;
-                    prevBits += 8;
-                }
-                else //use only part of this byte. We're going to need to mask it
-                {
-                    result += ((data[currByte] & ((1 << remainingBits) - 1) ) << prevBits);
-                    remainingBits = 0;
-                }
-            }*/
-
-            bit = startBit;
-            for (int bitpos = 0; bitpos < sigSize; bitpos++)
-            {
-                if (bit < 512) {
-                    int bytePos = bit / 8;
-                    if (bytePos >= data.length()) return 0; //error!
-                    if (data[bit / 8] & (1 << (bit % 8)))
-                        result += (1ULL << bitpos);
-                }
-                bit++;
-            }
-
+            for (int bitpos = 0; bitpos < sigSize; bitpos++, bit++)
+                if (bytes[bit / 8] & (1 << (bit % 8)))
+                    result |= (1ULL << bitpos);
         }
         else //motorola / big endian mode
         {
-            bit = startBit;
             for (int bitpos = 0; bitpos < sigSize; bitpos++)
             {
-                if (bit < 512) {
-                    int bytePos = bit / 8;
-                    if (bytePos >= data.length()) return 0; //error!
-                    if (data[bit / 8] & (1 << (bit % 8)))
-                        result += (1ULL << (sigSize - bitpos - 1));
-                }
-
+                if (bytes[bit / 8] & (1 << (bit % 8)))
+                    result |= (1ULL << (sigSize - bitpos - 1));
                 if ((bit % 8) == 0)
                     bit += 15;
                 else bit--;
-
             }
         }
 
-        if (isSigned)
-        {
-            uint64_t mask = (1ULL << (sigSize - 1));
-            if ((result & mask) == mask) //is the highest bit possible for this signal size set?
-            {
-                /*
-                 * if so we need to also set every bit higher in the result int too.
-                 * This leads to the below two lines that are nasty. Here's the theory behind that...
-                 * If the value is signed and the highest bit is set then it is negative. To create
-                 * a negative value out of this even though the variable result is 64 bit we have to
-                 * run 1's all of the way up to bit 63 in result. -1 is all ones for whatever size integer
-                 * you have. So, it's 64 1's in this case.
-                 * signedMask is done this way:
-                 * first you take the signal size and shift 1 up that far. Then subtract one. Lets
-                 * see that for a 16 bit signal:
-                 * (1 << 16) - 1 = the first 16 bits set as 1's. So far so good. We then negate the whole
-                 * thing which flips all bits. Thus signedMask ends up with 1's everwhere that the signal
-                 * doesn't take up in the 64 bit signed integer result. Then, result has an OR operation on
-                 * it with the old value and -1 masked so that the the 1 bits from -1 don't overwrite bits from the
-                 * actual signal. This extends the sign bits out so that the integer result reads as the proper negative
-                 * value. We dont need to do any of this if the sign bit wasn't set.
-                */
-                uint64_t signedMask = ~((1ULL << sigSize) - 1);
-                result = (-1LL & signedMask) | result;
-                return (int64_t)(result);
-            }
-        }
-
-        return result;
+        //signed: the signal's highest bit set means negative, so every bit above the signal is set too (sign extension)
+        if (isSigned && sigSize < 64 && (result & (1ULL << (sigSize - 1))))
+            result |= ~((1ULL << sigSize) - 1);
+        return (int64_t)result;
     }
 
     // split comma-separated list of quoted strings

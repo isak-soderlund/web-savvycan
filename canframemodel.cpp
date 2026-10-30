@@ -499,9 +499,9 @@ QVariant CommFrameModel::data(const QModelIndex &index, int role) const
         if (dbcHandler != nullptr && interpretFrames && !ignoreDBCColors)
         {
             DBC_MESSAGE *msg = dbcHandler->findMessage(thisFrame);
-            if (msg != nullptr)
+            if (msg != nullptr && msg->rowBackground().isValid()) // web-savvycan: none of its own: the theme's rows
             {
-                return msg->bgColor;
+                return msg->rowBackground();
             }
         }
 
@@ -522,9 +522,9 @@ QVariant CommFrameModel::data(const QModelIndex &index, int role) const
         if (dbcHandler != nullptr && interpretFrames && !ignoreDBCColors)
         {
             DBC_MESSAGE *msg = dbcHandler->findMessage(thisFrame);
-            if (msg != nullptr)
+            if (msg != nullptr && msg->rowForeground().isValid()) // web-savvycan: readable on its row (dbc_classes.h)
             {
-                return msg->fgColor;
+                return msg->rowForeground();
             }
         }
 
@@ -724,7 +724,9 @@ QVariant CommFrameModel::data(const QModelIndex &index, int role) const
                             if (sig->isMultiplexor)
                             {
                                 qDebug() << "Multiplexor. Diving into the tree";
-                                tempString.append(sig->processSignalTree(thisFrame));
+                                const QString tree = sig->processSignalTree(thisFrame);
+                                if (!tree.isEmpty()) tempString.append(tree + "\n"); // web-savvycan: the next signal on its own line
+
                             }
                         }
                         else if (sig->isMultiplexed && overwriteDups) //wasn't in this exact frame but is in the message. Use cached value

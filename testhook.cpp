@@ -254,6 +254,7 @@ EM_JS(void, wsc_install_hook, (), {
 });
 
 static void installFrameInfoHook(); // Frame Data Analysis, at the end of this file
+static void installDbcHook();       // DBC (stage 3), at the end of this file
 // ---- Temporal Graph (stage 4): what RE Tools > Temporal Graph shows. Its own block (and its own EM_JS below),
 // so it merges apart from the other windows' hooks.
 #include "re/temporalgraphwindow.h"
@@ -373,6 +374,9 @@ void TestHook::install(CommFrameModel *model)
     installFrameInfoHook();
     wsc_install_temporal_hook();
     wsc_install_memory_hook();
+    installDbcHook();
+    TestHook::installFileTools();
+    installReTools();
 }
 
 // ---- Frame Data Analysis (RE Tools > Frame Data Analysis, the heatmap tool) -------------------------------------
@@ -471,3 +475,283 @@ static void installFrameInfoHook()
 {
     wsc_install_frameinfo_hook();
 }
+
+// ---- DBC (stage 3): File > DBC File Manager, Interpret Frames, Signal Viewer, the DBC editors, graphs by signal name.
+// webSavvyCAN.dbc(): the loaded files with their messages and signals; .traceDecoded(n): the last n rows of the trace
+// as shown (the Data column's text, with Interpret Frames its decoded lines, and the rows' colours); the others drive
+// the windows where Qt's combo boxes, tables and trees aren't reachable through the accessibility tree.
+#include "dbc/dbchandler.h"
+#include "dbc/dbcloadsavewindow.h"
+#include "dbc/dbcmaineditor.h"
+#include "dbc/dbcmessageeditor.h"
+#include "dbc/dbcsignaleditor.h"
+#include "signalviewerwindow.h"
+#include <QCheckBox>
+#include <QComboBox>
+#include <QMenu>
+#include <QTableView>
+#include <QTableWidget>
+#include <QTreeWidget>
+
+template <typename T> static T *visibleWindow()
+{
+    for (QWidget *w : QApplication::topLevelWidgets())
+        if (auto *t = qobject_cast<T *>(w); t && t->isVisible()) return t;
+    return nullptr;
+}
+
+static QJsonObject dbcState()
+{
+    QJsonObject o;
+    DBCHandler *h = DBCHandler::getReference();
+    QJsonArray files;
+    for (int i = 0; i < h->getFileCount(); i++) {
+        DBCFile *f = h->getFileByIdx(i);
+        QJsonObject fo;
+        fo.insert("name", f->getFilename());
+        fo.insert("path", f->getFullFilename());
+        fo.insert("bus", f->getAssocBus());
+        fo.insert("dirty", f->getDirtyFlag());
+        QJsonArray msgs;
+        for (DBC_MESSAGE *m : f->messageHandler->getMsgsAsList()) {
+            QJsonObject mo;
+            mo.insert("id", double(m->ID));
+            mo.insert("ext", m->extendedID);
+            mo.insert("name", m->name);
+            mo.insert("len", int(m->len));
+            mo.insert("fd", m->canFD);
+            mo.insert("brs", m->bitRateSwitch);
+            mo.insert("sender", m->sender ? m->sender->name : QString());
+            mo.insert("bg", m->bgColor.isValid() ? m->bgColor.name() : QString());
+            mo.insert("fg", m->fgColor.isValid() ? m->fgColor.name() : QString());
+            QJsonArray sigs;
+            for (DBC_SIGNAL *s : m->sigHandler->getSignalsAsList()) {
+                QJsonObject so;
+                so.insert("name", s->name);
+                so.insert("startBit", s->startBit);
+                so.insert("size", s->signalSize);
+                so.insert("intel", s->intelByteOrder);
+                so.insert("type", int(s->valType));
+                so.insert("factor", s->factor);
+                so.insert("offset", s->bias);
+                so.insert("min", s->min);
+                so.insert("max", s->max);
+                so.insert("unit", s->unitName);
+                so.insert("mux", s->isMultiplexor);
+                so.insert("muxed", s->isMultiplexed);
+                so.insert("muxValues", s->multiplexDbcString(DBC_SIGNAL::MuxStringFormat_UI));
+                QJsonArray vals;
+                for (const DBC_VAL_ENUM_ENTRY &v : s->valList) vals.append(QJsonArray{double(v.value), v.descript});
+                so.insert("values", vals);
+                sigs.append(so);
+            }
+            mo.insert("signals", sigs);
+            msgs.append(mo);
+        }
+        fo.insert("messages", msgs);
+        files.append(fo);
+    }
+    o.insert("files", files);
+    o.insert("interpret", g_model->getInterpretMode());
+    if (DBCLoadSaveWindow *w = visibleWindow<DBCLoadSaveWindow>())
+        if (QTableWidget *t = w->findChild<QTableWidget *>("tableFiles")) {
+            QJsonArray rows;
+            for (int r = 0; r < t->rowCount(); r++)
+                rows.append(t->item(r, 0) ? t->item(r, 0)->text() : QString());
+            o.insert("managerRows", rows);
+        }
+    return o;
+}
+
+// The last n rows of the trace as it shows them: the Data column's text and the rows' colours
+static QJsonArray traceDecoded(int n)
+{
+    QJsonArray rows;
+    const int count = g_model->rowCount();
+    for (int r = qMax(0, count - n); r < count; r++) {
+        const QModelIndex data = g_model->index(r, int(Column::Data));
+        QJsonObject row;
+        row.insert("id", g_model->index(r, int(Column::FrameId)).data().toString());
+        row.insert("text", data.data(Qt::DisplayRole).toString());
+        const QVariant bg = data.data(Qt::BackgroundRole), fg = data.data(Qt::ForegroundRole);
+        row.insert("bg", bg.canConvert<QColor>() ? bg.value<QColor>().name() : bg.value<QBrush>().color().name());
+        row.insert("fg", fg.canConvert<QColor>() ? fg.value<QColor>().name() : fg.value<QBrush>().color().name());
+        rows.append(row);
+    }
+    return rows;
+}
+
+static QComboBox *combo(QWidget *w, const char *name) { return w ? w->findChild<QComboBox *>(name) : nullptr; }
+// a combo box's item picked by its text (exact, else the first that contains it), as a click in its list would
+static bool pickText(QComboBox *box, const QString &text)
+{
+    if (!box) return false;
+    int i = box->findText(text);
+    if (i < 0) i = box->findText(text, Qt::MatchContains);
+    if (i < 0) return false;
+    box->setCurrentIndex(i);
+    return true;
+}
+
+static QJsonObject signalViewerState()
+{
+    QJsonObject o;
+    SignalViewerWindow *w = visibleWindow<SignalViewerWindow>();
+    o.insert("open", w != nullptr);
+    if (!w) return o;
+    QTableWidget *t = w->findChild<QTableWidget *>("tableViewer");
+    QJsonArray rows;
+    for (int r = 0; t && r < t->rowCount(); r++) {
+        QJsonObject row;
+        row.insert("node", t->item(r, 0) ? t->item(r, 0)->text() : QString());
+        row.insert("signal", t->item(r, 1) ? t->item(r, 1)->text() : QString());
+        row.insert("value", t->item(r, 2) ? t->item(r, 2)->text() : QString());
+        rows.append(row);
+    }
+    o.insert("rows", rows);
+    QJsonArray nodes;
+    if (QComboBox *b = combo(w, "cbNodes"))
+        for (int i = 0; i < b->count(); i++) nodes.append(b->itemText(i));
+    o.insert("nodes", nodes);
+    return o;
+}
+
+// The DBC editors that are open: the message editor's and the signal editor's fields and bit grid
+static QJsonObject dbcEditorState()
+{
+    QJsonObject o;
+    o.insert("main", visibleWindow<DBCMainEditor>() != nullptr);
+    if (DBCMainEditor *m = visibleWindow<DBCMainEditor>())
+        if (QTreeWidget *t = m->findChild<QTreeWidget *>("treeDBC")) o.insert("treeTop", t->topLevelItemCount());
+    if (DBCMessageEditor *e = visibleWindow<DBCMessageEditor>()) {
+        QJsonObject me;
+        for (const char *name : {"lineMsgName", "lineFrameID", "lineFrameLen", "lineComment"})
+            if (QLineEdit *l = e->findChild<QLineEdit *>(name)) me.insert(name, l->text());
+        for (const char *name : {"checkCanFD", "checkBRS", "checkExtended"})
+            if (QCheckBox *c = e->findChild<QCheckBox *>(name)) me.insert(name, c->isChecked());
+        o.insert("message", me);
+    }
+    if (DBCSignalEditor *e = visibleWindow<DBCSignalEditor>()) {
+        QJsonObject se;
+        for (const char *name : {"txtName", "txtBitLength", "txtFactor", "txtBias", "txtUnitName"})
+            if (QLineEdit *l = e->findChild<QLineEdit *>(name)) se.insert(name, l->text());
+        if (CANDataGrid *g = e->findChild<CANDataGrid *>("bitfield")) {
+            se.insert("gridBytes", g->getBytesToDraw());
+            QJsonArray used;   // the bits the grid gives a signal name (the message's signals)
+            for (int b = 0; b < 512; b++) if (!g->getUsedSignalName(b).isEmpty()) used.append(b);
+            se.insert("usedBits", used);
+        }
+        o.insert("signal", se);
+    }
+    return o;
+}
+
+// All points of graph i of the newest graphing window (at most max)
+static QJsonObject graphPoints(int i, int max)
+{
+    QJsonObject o;
+    GraphingWindow *win = graphWindow();
+    if (!win || i < 0 || i >= win->graphs().count() || !win->graphs()[i].ref) return o;
+    const GraphParams &g = win->graphs()[i];
+    QJsonArray keys, values;
+    int n = 0;
+    for (auto it = g.ref->data()->constBegin(); it != g.ref->data()->constEnd() && n < max; ++it, ++n) {
+        keys.append(it->key);
+        values.append(it->value);
+    }
+    o.insert("name", g.graphName);
+    o.insert("signal", g.associatedSignal ? g.associatedSignal->name : QString());
+    o.insert("keys", keys);
+    o.insert("values", values);
+    return o;
+}
+
+extern "C" {
+EMSCRIPTEN_KEEPALIVE const char *wsc_dbc_state() { return keep(QJsonDocument(dbcState()).toJson(QJsonDocument::Compact)); }
+EMSCRIPTEN_KEEPALIVE const char *wsc_trace_decoded(int n) { return keep(QJsonDocument(traceDecoded(n)).toJson(QJsonDocument::Compact)); }
+EMSCRIPTEN_KEEPALIVE const char *wsc_signal_viewer() { return keep(QJsonDocument(signalViewerState()).toJson(QJsonDocument::Compact)); }
+EMSCRIPTEN_KEEPALIVE const char *wsc_dbc_editors() { return keep(QJsonDocument(dbcEditorState()).toJson(QJsonDocument::Compact)); }
+EMSCRIPTEN_KEEPALIVE const char *wsc_graph_points(int i, int max) { return keep(QJsonDocument(graphPoints(i, max)).toJson(QJsonDocument::Compact)); }
+// The DBC File Manager's row i selected, as a click on it (Save, Edit, Remove act on the selected row)
+EMSCRIPTEN_KEEPALIVE int wsc_dbc_select_file(int i)
+{
+    DBCLoadSaveWindow *w = visibleWindow<DBCLoadSaveWindow>();
+    QTableWidget *t = w ? w->findChild<QTableWidget *>("tableFiles") : nullptr;
+    if (!t || i < 0 || i >= t->rowCount()) return 0;
+    t->setCurrentCell(i, 0);
+    return 1;
+}
+// In the open DBC editor, the tree's message (by its name) or signal (msg + signal name) double-clicked: its editor opens
+EMSCRIPTEN_KEEPALIVE int wsc_dbc_edit(const char *msgName, const char *sigName)
+{
+    DBCMainEditor *m = visibleWindow<DBCMainEditor>();
+    QTreeWidget *tree = m ? m->findChild<QTreeWidget *>("treeDBC") : nullptr;
+    if (!tree) return 0;
+    const QString msg = QString::fromUtf8(msgName), sig = QString::fromUtf8(sigName);
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        QTreeWidgetItem *item = *it;
+        const QStringList words = item->text(0).split(' ');
+        bool isMsg = words.count() > 1 && words[1] == msg && item->parent();       // "0x1DB Name - comment"
+        bool hit = sig.isEmpty() ? isMsg
+                                 : (item->parent() && item->parent()->text(0).split(' ').value(1) == msg
+                                    && (words[0] == sig || item->text(0).contains(") " + sig + " ")));
+        if (!hit) continue;
+        tree->setCurrentItem(item);
+        emit tree->doubleClicked(tree->currentIndex());
+        return 1;
+    }
+    return 0;
+}
+// Signal Viewer's Node / Message / Signal boxes set by their text (then "Add To Viewer" is clicked by the test)
+EMSCRIPTEN_KEEPALIVE int wsc_signal_viewer_pick(const char *node, const char *msg, const char *sig)
+{
+    SignalViewerWindow *w = visibleWindow<SignalViewerWindow>();
+    return w && pickText(combo(w, "cbNodes"), QString::fromUtf8(node)) && pickText(combo(w, "cbMessages"), QString::fromUtf8(msg))
+           && pickText(combo(w, "cbSignals"), QString::fromUtf8(sig)) ? 1 : 0;
+}
+// Add New Graph's "Graph a DBC Signal" boxes set by their text (then "Copy Signal Parameters" is clicked by the test)
+EMSCRIPTEN_KEEPALIVE int wsc_graph_dialog_pick(const char *node, const char *msg, const char *sig)
+{
+    NewGraphDialog *d = graphDialog();
+    return d && pickText(combo(d, "cbNodes"), QString::fromUtf8(node)) && pickText(combo(d, "cbMessages"), QString::fromUtf8(msg))
+           && pickText(combo(d, "cbSignals"), QString::fromUtf8(sig)) ? 1 : 0;
+}
+// The trace's context menu over line `line` of the Data cell of the row `fromEnd` rows before the newest (0 = the
+// newest), as a right click there; the row is expanded first, as a click does. The test then picks its entry by name.
+EMSCRIPTEN_KEEPALIVE int wsc_trace_context_menu(int fromEnd, int line)
+{
+    MainWindow *mw = MainWindow::getReference();
+    QTableView *view = mw ? mw->findChild<QTableView *>("canFramesView") : nullptr;
+    const int row = g_model->rowCount() - 1 - fromEnd;
+    if (!view || row < 0) return 0;
+    view->resizeRowToContents(row);
+    view->scrollTo(g_model->index(row, int(Column::Data)));
+    const int y = view->rowViewportPosition(row) + line * view->fontMetrics().height() + view->fontMetrics().height() / 2;
+    const int x = view->columnViewportPosition(int(Column::Data)) + 10;
+    emit view->customContextMenuRequested(QPoint(x, y));
+    return 1;
+}
+}
+
+EM_JS(void, wsc_install_dbc_hook, (), {
+    const str = (s) => stringToNewUTF8(String(s));
+    const call = (f, ...strs) => { const p = strs.map(str); try { return f(...p); } finally { p.forEach(_free); } };
+    Object.assign(window.webSavvyCAN, {
+        dbc: () => JSON.parse(UTF8ToString(_wsc_dbc_state())),
+        traceDecoded: (n) => JSON.parse(UTF8ToString(_wsc_trace_decoded(n | 0))),
+        signalViewer: () => JSON.parse(UTF8ToString(_wsc_signal_viewer())),
+        dbcEditors: () => JSON.parse(UTF8ToString(_wsc_dbc_editors())),
+        graphPoints: (i, max = 1000000) => JSON.parse(UTF8ToString(_wsc_graph_points(i | 0, max | 0))),
+        dbcSelectFile: (i) => _wsc_dbc_select_file(i | 0) === 1,
+        dbcEdit: (msg, sig = '') => call(_wsc_dbc_edit, msg, sig) === 1,
+        signalViewerPick: (node, msg, sig) => call(_wsc_signal_viewer_pick, node, msg, sig) === 1,
+        graphDialogPick: (node, msg, sig) => call(_wsc_graph_dialog_pick, node, msg, sig) === 1,
+        traceContextMenu: (fromEnd, line) => _wsc_trace_context_menu(fromEnd | 0, line | 0) === 1,
+    });
+});
+
+static void installDbcHook()
+{
+    wsc_install_dbc_hook();
+}
+// ---- end of DBC

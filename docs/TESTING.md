@@ -2,7 +2,9 @@
 
 Stage 1 (RESOLVE.md "MVP"): connect to rc1 from Chrome, watch the frames, log them to a file, light/dark theme. Then
 what came after (steps 9-14): auto-connect, graphs, loading a log file, Temporal Graph and Frame Data Analysis (the
-heatmap).
+heatmap); stage 3 (steps 15-18): DBC files, Interpret Frames, the DBC editor, signals by name, Save Decoded Frames;
+stage 4's file-based RE tools (steps 19-22): Capture Bisector, File Comparison, DBC Comparison, Frame Search; and its
+live RE tools (steps 23-26): Sniffer, Flow View, Range State, Single/Multi State.
 Everything below has passed in headless Chromium against a **fake** rc1, and with the **real** rc1 and a real bus on
 the rig (see "What the rig has checked"); this is the check with your Chrome, your OS and your car.
 
@@ -93,6 +95,57 @@ second line `dirty` means uncommitted changes were in it).
     to file**: a download `FrameDetails.txt`. Check an FD ID with 64-byte frames and a classic one.
 14. **A long log.** Log (step 4) for more than 72 min (a charging session): the file's times keep increasing past
     71.6 min (rc1's clock is 32-bit µs; the app makes it 64-bit), no jump back to 0.
+15. **DBC.** File > **DBC File Manager** > **Load**: Chrome's file picker; pick your car's DBC (e.g. the Leaf's
+    `EV-can_AZE0.dbc`; `tests/web/fixtures/stage3_test.dbc` is a small one with CAN FD messages). Its row appears (bus
+    -1 = all). Tick **Interpret Frames** in the main window: rows of the DBC's messages show `<Message>` and, when you
+    click a row, `Signal: value unit` lines; the values make sense for the car (speed, SOC, voltage). Dark theme: every
+    row readable (a message's own colour kept, text black or white on it). Reload the page: the DBC is still loaded.
+16. **DBC editor.** In the File Manager select the file > **Edit**: the tree of nodes, messages, signals; double-click
+    a message (length up to 64, CAN FD, BRS) and a signal (the bit grid; 64 bytes for an FD message). Change a signal,
+    **Save** in the File Manager: a download of the DBC; load it in the desktop SavvyCAN (or Load it back here): the
+    change is in it.
+17. **Signals by name.** RE Tools > New Graphing Window > Graph > **Add New Graph** > Graph a DBC Signal: node,
+    message, signal, **Copy Signal Parameters**, Add this graph: the graph shows the signal's values (as in the trace).
+    Or right-click a `Signal: value` line of an expanded trace row > **Add to a new graphing window**. RE Tools >
+    **Signal Viewer**: add a few signals: their values follow the bus live.
+18. **Save Decoded Frames.** File > **Save Decoded Frames** and **Save Decoded Frames CSV**: downloads
+    (`SavvyCAN_decoded.txt` / `.csv`) with every frame of the trace and its decoded signals.
+19. **Capture Bisector.** Load a log (step 11), RE Tools > **Capture Bisector**: the main list's frame count and every ID
+    in the two ID lists. Pick Frame Number (or Percentage), Lower or Upper Section, **Calculate Split**: *Saved Frames
+    after split* shows how many; **Replace main list with split frames**: the trace holds only those (other windows
+    follow). Repeat to narrow down when a frame appears; ID Range and Bus Number split the same way. **Save split frames
+    to a new file**: a download `BisectedFrames.csv` that File > Load Log File (and the desktop SavvyCAN) reads back.
+20. **File Comparison.** RE Tools > **File Comparison**: **Load New File** (side 1) and **Load A File** (side 2, more files
+    add to it) open Chrome's file picker. The tree lists IDs found on one side only and, for IDs on both, the bits and
+    each byte's values seen on one side only (all 64 bytes of FD frames). Try two logs of the same car, one with a
+    button pressed. *Show only data unique to Side 1* applies at the next load; **Clear Frames** empties side 2; **Save
+    Details to File**: a download. Two logs of an hour each load in seconds.
+21. **DBC Comparison.** RE Tools > **DBC Comparison**: Load New File / Load A File pick two DBC files (they don't go into
+    the DBC File Manager). The tree: nodes and messages missing on either side, messages with signals missing, signals
+    whose start bit, size, factor or offset changed. **Save Details to File**: a download.
+22. **Frame Search.** RE Tools > **Frame Search** on a loaded log: ID (tick Enable), Frame Length, Direction, the bits
+    (start bit, number of bits, Intel/signed, scale, bias; click the grid, which shows 64 bytes for FD), then *Specific
+    value* (decimal, `0x..` hex or `0b..` binary) or *Any change*, **Search**: "Match 1 of N" and that row selected in the
+    trace; **Next >** / **< Previous** step through. Try a byte past byte 8 of an FD frame. With a DBC loaded (step 15,
+    also while the window is open): *Search a DBC Signal*: node, message, signal, **Copy Signal Parameters** fills the
+    ID and bits; a value typed as the signal shows it (e.g. a temperature in °C) finds its frames.
+23. **Sniffer.** On a live bus, RE Tools > **Sniffer**: one row per ID, bytes going up green, down red; IDs that stop
+    turn red and go after 5 s (Never Expire keeps them). Leave the car (or bus) as it is and press **Notch** a few
+    times over a few seconds: the colours stop. Now do one thing (a button, a door, the steering): only its bytes light
+    up. **Unnotch**: everything again. Try View Bits, Fade inactive bytes, an unchecked ID in Filters; an FD ID shows up
+    to 64 byte columns. Dark theme: readable.
+24. **Flow View.** RE Tools > **Flow View**, pick an ID: the bytes (table and grid) of one frame, the graphs around it.
+    Step with the arrows, play, pause, drag the timeline; type a value in a byte's **Seek** cell: playing stops there;
+    click a bit in the grid (it turns blue): playing stops where that bit changes (also past byte 8 of an FD ID). Tick
+    **Live Mode**: it follows the newest frame. Leave it running long on a busy bus: smooth, memory not growing.
+25. **Range State.** On a log or after a while of live traffic, RE Tools > **Range State** > **Recalculate Candidate
+    Signals** (e.g. min 8, max 16, granularity 8): a list of candidates; arrow through it and look at the graphs for
+    speed-, temperature- or pedal-like curves. The page stays responsive while it works (a 64-byte ID at granularity 1
+    takes seconds).
+26. **Single/Multi State.** RE Tools > **Single/Multi State**, Realtime, Number of States 2: **Go for it**, then do as
+    the big label says: "Go to state 1" (e.g. button released), "Go to state 2" (pressed), each time for the toggle
+    time, waiting at "Wait....". At DONE the list shows the ID and bits that followed you. Try 3 states with a 3-way
+    switch. "From logged data": the fields of the checked IDs with exactly that many values in the trace.
 
 Please note for each step: works / doesn't (what you saw, a screenshot), Chrome's version and the OS, and for any
 problem the browser console (View > Developer > JavaScript Console): copy its red lines.
@@ -115,6 +168,24 @@ replaced (a bridge to rc1's tty, because Chromium's own Web Serial loses USB ser
   IDs (every bit's changes and sets as sent);
 - a log of 75 min (450 000 frames) past rc1's clock wrap at 71.6 min: every row, times increasing across the wrap.
 
+Passed 2026-10-30 on `stage34` (stages 3 and 4 merged), rc1 firmware 0.1.4, CAN FD 500k/2M, each checked against the
+frames the peer sent (`rig/dbc.spec`, `rig/retools.spec`), with the existing rig specs above passing again:
+- **DBC** (the test DBC `tests/web/fixtures/stage3_test.dbc`): Interpret Frames decodes all 1 200 frames of the peer's
+  DBC messages (classic, 12- and 64-byte FD, a 29-bit FD ID, a multiplexed message, an ID not in the DBC): 2 850
+  signal values, each as the DBC says; Signal Viewer follows the bus live (every viewed signal took several values
+  while the peer sent) and ends at the newest frame's value of each;
+- **Sniffer**: every ID with its newest bytes (64 for the FD ID), all 4 000 frames counted, the counter byte marked
+  changing, the constant byte never;
+- **Flow View**: every frame of one ID byte for byte (classic and 64-byte FD), rc1's times 5 ms apart as sent; Live
+  Mode takes the new frames and stands on the newest;
+- **Range State**: exactly SavvyCAN's candidates on the 4 000 frames sent, the planted triangles among them (classic,
+  and at bit 400 of the FD ID), none from the random bytes; the candidate's graph spans 1000..3000;
+- **Single/Multi State**, Realtime: the peer toggled its state bits on the window's cue ("Go to state 1/2"): exactly
+  the three planted fields found (0x120 bits 19 and 26, the FD ID's bit 270), nothing from counters, triangle or
+  random bytes;
+- **Frame Search**: a counter value at the four known frames (classic, and byte 40 of the FD frames), a state bit's
+  changes exactly where the peer changed it.
+
 ## What only the fake has checked
 
 The automated suite (`tests/web/run.sh`) runs the real app build in headless Chromium, but the device, the USB link
@@ -136,3 +207,6 @@ checked by it, so checked only by this test:
 
 - With a **screen reader** (Qt's accessibility layer switched on), unplugging rc1 makes Qt 6.12 throw an error in its
   accessibility code and the window stops drawing; reload the page. Without a screen reader unplugging is fine.
+- With a **screen reader** on (2026-10-30): choosing RE Tools > **Frame Search** again while its window is already open,
+  then clicking a button in it, hangs the page (Qt 6.12's accessibility layer after the window's `raise()`); reload the
+  page. Without a screen reader it works.

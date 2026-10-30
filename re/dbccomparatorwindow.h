@@ -21,6 +21,11 @@ public:
     explicit DBCComparatorWindow(QWidget *parent = 0);
     ~DBCComparatorWindow();
 
+    // for the tests (testhook)
+    DBCFile *first() const { return firstDBC; }
+    DBCFile *second() const { return secondDBC; }
+    double lastCompareMs() const { return compareMs; }
+
 private slots:
     void loadFirstFile();
     void loadSecondFile();
@@ -38,6 +43,10 @@ private:
     void closeEvent(QCloseEvent *event);
     bool eventFilter(QObject *obj, QEvent *event);
     QString loadDBC(DBCFile **file);
+#ifdef Q_OS_WASM
+    void pickDBC(DBCFile **slot, class QLabel *label);
+#endif
+    double compareMs = 0;
     void readSettings();
     void writeSettings();
 };

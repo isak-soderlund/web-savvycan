@@ -7,6 +7,7 @@
 #include "connections/canconmanager.h"
 #include "SnifferDelegate.h"
 #include "utility.h"
+#include "theme.h"
 
 SnifferWindow::SnifferWindow(QWidget *parent) :
     QDialog(parent),
@@ -19,14 +20,21 @@ SnifferWindow::SnifferWindow(QWidget *parent) :
     inhibitSectionResizeEvent = false;
 
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    // web-savvycan: a framed dialog in the browser (a Qt::Window is frameless over the main window's menus)
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+#else
     setWindowFlags(Qt::Window);
+#endif
     ui->treeView->setModel(&mModel);
 
     sniffDel = new SnifferDelegate();
     defaultDel = ui->treeView->itemDelegate();
 
     /* set column width */
-    ui->treeView->setColumnWidth(tc::ID, 80);
+    // web-savvycan: wide enough for a 29-bit ID ("0x18FF0001"; 80 px cut even "0x00120" in the browser's font)
+    idColumnWidth = ui->treeView->fontMetrics().horizontalAdvance("0x18FF0001") + 20;
+    ui->treeView->setColumnWidth(tc::ID, idColumnWidth);
     ui->treeView->setColumnWidth(tc::LAST, 1);
     for(int i=tc::DATA_0 ; i<=tc::LAST ; i++)
         ui->treeView->setColumnWidth(i, 50);
@@ -71,6 +79,13 @@ SnifferWindow::SnifferWindow(QWidget *parent) :
     );
     connect(ui->spinNotchInterval, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int i){mNotchTimer.setInterval(i);});
     connect(ui->spinExpireInterval, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int i){mModel.setExpireInterval(i);});
+    // web-savvycan: the cells are drawn in the theme's colours; a switch redraws them at once
+    connect(Theme::instance(), &Theme::changed, this, [this]() { ui->treeView->viewport()->update(); });
+}
+
+QListWidget *SnifferWindow::idList() const
+{
+    return ui->listWidget;
 }
 
 SnifferWindow::~SnifferWindow()
@@ -89,7 +104,7 @@ void SnifferWindow::readSettings()
         move(Utility::constrainedWindowPos(settings.value("Sniffer/WindowPos", QPoint(50, 50)).toPoint()));
         ui->treeView->setColumnWidth(0, settings.value("Sniffer/DeltaColumn", 110).toUInt());
         ui->treeView->setColumnWidth(1, settings.value("Sniffer/FrequencyColumn", 110).toUInt());
-        ui->treeView->setColumnWidth(2, settings.value("Sniffer/IDColumn", 70).toUInt());
+        ui->treeView->setColumnWidth(2, settings.value("Sniffer/IDColumn", idColumnWidth).toUInt());
         if (!settings.value("Main/EqualDataSniff", false).toBool())
         {
             for (int i = 0; i < MAX_BYTES; i++)
@@ -146,6 +161,7 @@ void SnifferWindow::closeEvent(QCloseEvent *event)
     Q_UNUSED(event);
     /* stop timer */
     mGUITimer.stop();
+    mNotchTimer.stop();
     /* disconnect reception of frames */
     disconnect(CANConManager::getInstance(), 0, this, 0);
     writeSettings();

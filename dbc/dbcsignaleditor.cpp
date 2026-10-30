@@ -14,6 +14,9 @@ DBCSignalEditor::DBCSignalEditor(QWidget *parent) :
     ui(new Ui::DBCSignalEditor)
 {
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint); // web-savvycan: framed in the browser
+#endif
 
     readSettings();
 
@@ -256,6 +259,9 @@ DBCSignalEditor::DBCSignalEditor(QWidget *parent) :
                     if (temp > (int)(dbcMessage->len * 8)) return;
                 }
                 else if (temp > 64) return;
+                // web-savvycan: numbers are decoded into 64 bits (a longer one was undefined behaviour); only text
+                // (STRING) signals are longer, up to the frame (512 bits in CAN FD)
+                if (currentSignal->valType != STRING && temp > 64) return;
 
                 if (currentSignal->valType == SP_FLOAT) temp = 32;
                 if (currentSignal->valType == DP_FLOAT) temp = 64;
@@ -723,7 +729,7 @@ void DBCSignalEditor::refreshBitGrid()
 
     int startBit, endBit;
 
-    startBit = currentSignal->startBit;
+    startBit = qBound(0, currentSignal->startBit, 511); // web-savvycan: within the 64 bytes of the grid
 
     bitpattern[startBit / 8] |= 1 << (startBit % 8); //make the start bit a different color to set it apart
     ui->bitfield->setReference(bitpattern, false);
@@ -743,14 +749,13 @@ void DBCSignalEditor::refreshBitGrid()
     {
         //much more irritating than the intel version...
         int size = currentSignal->signalSize;
-        while (size > 0)
+        while (size > 0 && startBit <= 511) // web-savvycan: stops at the end of the grid (it drew bit 511 again and again)
         {
             int byt = startBit / 8;
             bitpattern[byt] |= 1 << (startBit % 8);
             size--;
             if ((startBit % 8) == 0) startBit += 15;
             else startBit--;
-            if (startBit > 511) startBit = 511;
         }
     }
 
@@ -845,9 +850,12 @@ void DBCSignalEditor::bitfieldRightClicked(int bit)
     QString sigName = ui->bitfield->getUsedSignalName(bit);
     if (sigName.length() < 1) return;
 
+    DBC_SIGNAL *owner = dbcMessage->sigHandler->findSignalByName(sigName);
+    if (!owner) return; // web-savvycan: a name left from another message (currentSignal became null)
+
     pushToUndoBuffer(); // undo to resume editing the previous signal
 
-    currentSignal = dbcMessage->sigHandler->findSignalByName(sigName);
+    currentSignal = owner;
 
     if (currentSignal)
     {
@@ -865,6 +873,7 @@ void DBCSignalEditor::generateUsedBits()
     memset(usedBits, 0, 64);
 
     if (!dbcMessage || !dbcMessage->sigHandler) return;
+    for (int b = 0; b < 512; b++) ui->bitfield->setUsedSignalName(b, QString()); // web-savvycan: not the last message's
 
     QList<DBC_SIGNAL *> sigs = dbcMessage->sigHandler->getSignalsAsList();
 
@@ -880,12 +889,14 @@ void DBCSignalEditor::generateUsedBits()
             if (!sig->multiplexesIdenticalToSignal(currentSignal)) continue; //buzz off
         }
         startBit = sig->startBit;
+        // web-savvycan: only the bits within the message (and the grid's 64 bytes) are marked; a signal starting past
+        // the message's length wrote past the 64-byte array, a message of length 0 shifted by -1
+        const int maxBit = qMin(int(dbcMessage->len * 8), 512) - 1;
+        if (startBit < 0 || startBit > maxBit) continue;
 
         if (sig->intelByteOrder)
         {
             endBit = startBit + sig->signalSize - 1;
-            if (startBit < 0) startBit = 0;
-            int maxBit = (dbcMessage->len * 8) - 1;
             if (endBit > maxBit) endBit = maxBit;
             for (int y = startBit; y <= endBit; y++)
             {
@@ -898,7 +909,7 @@ void DBCSignalEditor::generateUsedBits()
         {
             //much more irritating than the intel version...
             int size = sig->signalSize;
-            while (size > 0)
+            while (size > 0 && startBit <= maxBit)
             {
                 int byt = startBit / 8;
                 usedBits[byt] |= 1 << (startBit % 8);
@@ -906,8 +917,6 @@ void DBCSignalEditor::generateUsedBits()
                 size--;
                 if ((startBit % 8) == 0) startBit += 15;
                 else startBit--;
-                int maxBit = (dbcMessage->len * 8) - 1;
-                if (startBit > maxBit) startBit = maxBit;
             }
         }
     }

@@ -20,11 +20,20 @@ public:
 
     void updatedFrames(int numFrames);
 
+    // for the tests (testhook): the matching rows of the trace, the current one, the last search's time
+    const QVector<int> &matches() const { return matchingIndices; }
+    int currentMatch() const { return currentMatchIndex; }
+    double lastSearchMs() const { return searchMs; }
+
 signals:
     void jumpToFrameIndex(int frameIndex);
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
 private slots:
     void loadNodes();
+    void reloadDbc();
     void loadMessages(int idx);
     void loadSignals(int idx);
     void copySignalToParamsUI();
@@ -39,8 +48,9 @@ private slots:
 
 private:
     void performSearch();
-    double decodeValue(const CommFrame &frame) const;
     void updateNavigationState();
+    void fitGrid(int highestByte);
+    void handleIdUpdate();
 
     Ui::SearchWindow *ui;
     const FrameListView *modelFrames;
@@ -51,6 +61,10 @@ private:
 
     QVector<int> matchingIndices;
     int currentMatchIndex;
+    // web-savvycan: the trace's first frame when the matches were found (new frames keep them valid while it stays)
+    CommFrame firstAtSearch;
+    int frameLenHint = 0;   // the typed ID's frame length (the bit grid's size)
+    double searchMs = 0;
 };
 
 #endif // SEARCHWINDOW_H

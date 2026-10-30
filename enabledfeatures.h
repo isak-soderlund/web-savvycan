@@ -70,18 +70,18 @@ constexpr bool on(Feature f)
     case Feature::ThemeSwitch:        return true;
 
     case Feature::Graphs:             return true;  // stage 2 (started 2026-10-29)
-    case Feature::DBC:                return false; // stage 3
-    case Feature::SignalViewer:       return false; // stage 3
-    case Feature::Sniffer:            return false; // stage 4
+    case Feature::DBC:                return true;  // stage 3 (2026-10-30)
+    case Feature::SignalViewer:       return true;  // stage 3 (2026-10-30)
+    case Feature::Sniffer:            return true;  // stage 4: live RE tools (2026-10-30)
     case Feature::FrameInfo:          return true;  // stage 4, brought forward: the heatmap tool with CAN FD (owner 2026-10-29)
     case Feature::TemporalGraph:      return true;  // stage 4, brought forward (owner 2026-10-29)
-    case Feature::FlowView:           return false; // stage 4
-    case Feature::RangeState:         return false; // stage 4
-    case Feature::DiscreteState:      return false; // stage 4
-    case Feature::Bisector:           return false; // stage 4
-    case Feature::FileComparator:     return false; // stage 4
-    case Feature::DBCComparator:      return false; // stage 4
-    case Feature::FrameSearch:        return false; // stage 4
+    case Feature::FlowView:           return true;  // stage 4: live RE tools (2026-10-30)
+    case Feature::RangeState:         return true;  // stage 4: live RE tools (2026-10-30)
+    case Feature::DiscreteState:      return true;  // stage 4: live RE tools (2026-10-30)
+    case Feature::Bisector:           return true;  // stage 4: file-based RE tools (2026-10-30)
+    case Feature::FileComparator:     return true;  // stage 4: file-based RE tools (2026-10-30)
+    case Feature::DBCComparator:      return true;  // stage 4: file-based RE tools (its own DBC loading)
+    case Feature::FrameSearch:        return true;  // stage 4: file-based RE tools (2026-10-30)
     case Feature::FrameSender:        return false; // stage 5
     case Feature::Playback:           return false; // stage 5
     case Feature::Fuzzing:            return false; // stage 5

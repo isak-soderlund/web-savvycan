@@ -13,7 +13,12 @@ SignalViewerWindow::SignalViewerWindow(const FrameListView *frames, QWidget *par
     ui(new Ui::SignalViewerWindow)
 {
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    // web-savvycan: as the graphing window: framed in the browser (a Qt::Window is frameless there)
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+#else
     setWindowFlags(Qt::Window);
+#endif
 
     modelFrames = frames;
 
@@ -52,6 +57,9 @@ SignalViewerWindow::SignalViewerWindow(const FrameListView *frames, QWidget *par
     connect(ui->btnLoad, SIGNAL(clicked(bool)), this, SLOT(loadSignalsFile()));
     connect(ui->btnAppend, SIGNAL(clicked(bool)), this, SLOT(appendSignalsFile()));
     connect(ui->btnClear, SIGNAL(clicked(bool)), this, SLOT(clearSignalsTable()));
+    connect(dbcHandler, &DBCHandler::signalsRemoved, this, &SignalViewerWindow::dropRemovedSignals);
+    // web-savvycan: a DBC loaded while the window exists is listed (SavvyCAN listed the files of when it was made)
+    connect(dbcHandler, &DBCHandler::filesChanged, this, &SignalViewerWindow::loadNodes);
 
     loadNodes();
 }
@@ -61,41 +69,43 @@ SignalViewerWindow::~SignalViewerWindow()
     delete ui;
 }
 
+// web-savvycan: each signal shows its newest value, so the new frames are gone through from the newest back and the
+// search stops once every signal has its value (SavvyCAN went forward over them by index, which skipped every update
+// once the trace's ring was full, and showed nothing after a file was loaded (-1)). -1 / -2 (cleared, a file loaded,
+// a new set): the values are cleared and the whole trace searched the same way.
 void SignalViewerWindow::updatedFrames(int numFrames)
 {
+    if (signalList.isEmpty()) return;
+    qsizetype count = modelFrames->count();
+    if (numFrames < 0)
+    {
+        for (int i = 0; i < ui->tableViewer->rowCount(); i++)
+            if (QTableWidgetItem *item = ui->tableViewer->item(i, VALUE_COL)) item->setText(QString());
+        count = qMin<qsizetype>(count, 1000000); // a signal whose message isn't in the trace: the newest million frames searched
+    }
+    else count = qMin<qsizetype>(count, numFrames);
+
+    QList<bool> done(signalList.count(), false);
+    int left = signalList.count();
     CommFrame thisFrame;
-
-    if (numFrames == -1) //all frames deleted. Don't care
+    const qsizetype total = modelFrames->count();
+    for (qsizetype i = total - 1; i >= total - count && left > 0; i--)
     {
-    }
-    else if (numFrames == -2) //all new set of frames. Reset
-    {
-        for (int i = 0; i < modelFrames->count(); i++)
-        {
-            thisFrame = modelFrames->at(i);
-            processFrame(thisFrame);
-        }
-    }
-    else //just got some new frames. See if they are relevant.
-    {
-        if (numFrames > modelFrames->count()) return;
-
-        for (int i = modelFrames->count() - numFrames; i < modelFrames->count(); i++)
-        {
-            thisFrame = modelFrames->at(i);
-            processFrame(thisFrame);
-        }
+        thisFrame = modelFrames->at(i);
+        left -= processFrame(thisFrame, done);
     }
 }
 
-void SignalViewerWindow::processFrame(CommFrame &frame)
+// The values of the signals not yet done that this frame carries; returns how many it set.
+int SignalViewerWindow::processFrame(const CommFrame &frame, QList<bool> &done)
 {
     QString sigString;
-    DBC_SIGNAL *sig;
+    int set = 0;
     for (int i = 0; i < signalList.count(); i++)
     {
-        sig = signalList.at(i);
-        if (!sig) return;
+        if (done[i]) continue;
+        DBC_SIGNAL *sig = signalList.at(i);
+        if (!sig) continue;
         if (sig->parentMessage->ID == frame.frameId())
         {
             if (sig->isSignalInMessage(frame)) //filter out multiplexed signals that aren't in this message.
@@ -109,10 +119,25 @@ void SignalViewerWindow::processFrame(CommFrame &frame)
                         ui->tableViewer->setItem(i, VALUE_COL, item);
                     }
                     else item->setText(sigString);
+                    done[i] = true;
+                    set++;
                 }
             }
         }
     }
+    return set;
+}
+
+// A DBC signal, message or file was removed: its rows go (their pointers would point at freed memory).
+void SignalViewerWindow::dropRemovedSignals()
+{
+    for (int i = signalList.count() - 1; i >= 0; i--)
+    {
+        if (dbcHandler->isLiveSignal(signalList.at(i))) continue;
+        signalList.removeAt(i);
+        ui->tableViewer->removeRow(i);
+    }
+    loadNodes();
 }
 
 void SignalViewerWindow::removeSelectedSignal()
@@ -240,6 +265,7 @@ void SignalViewerWindow::addSignal(DBC_SIGNAL *sig)
     ui->tableViewer->setItem(rowIdx, 0, nodeitem);
     QTableWidgetItem *msgitem = new QTableWidgetItem(sig->name);
     ui->tableViewer->setItem(rowIdx, 1, msgitem);
+    updatedFrames(-2); // web-savvycan: its newest value from the trace at once (SavvyCAN waited for the next frame)
 }
 
 void SignalViewerWindow::saveSignalsFile()
@@ -279,8 +305,25 @@ void SignalViewerWindow::clearSignalsTable(bool askForConfirmation)
     ui->tableViewer->setRowCount(0);
 }
 
+// The view as SavvyCAN's signal viewer definition (SV1 lines)
+QByteArray SignalViewerWindow::definitionsText() const
+{
+    QByteArray out;
+    for (DBC_SIGNAL *sig : signalList)
+    {
+        out += "SV1," + QByteArray::number(sig->parentMessage->ID, 16) + ',' + sig->parentMessage->name.toUtf8() + ','
+               + sig->name.toUtf8() + '\n';
+    }
+    return out;
+}
+
 void SignalViewerWindow::saveDefinitions()
 {
+#ifdef Q_OS_WASM
+    // web-savvycan: in the browser a download (or Chrome's save picker)
+    QFileDialog::saveFileContent(definitionsText(), QStringLiteral("SignalView.sdf"));
+    return;
+#endif
     QString filename;
     QFileDialog dialog(this);
     QSettings settings;
@@ -306,22 +349,9 @@ void SignalViewerWindow::saveDefinitions()
         if (!outFile->open(QIODevice::WriteOnly | QIODevice::Text))
             return;
 
-        DBC_SIGNAL *sig;
-        for (int i = 0; i < signalList.count(); i++)
-        {
-            sig = signalList.at(i);
-
-            outFile->write("SV1");
-            outFile->putChar(',');
-            outFile->write(QString::number(sig->parentMessage->ID, 16).toUtf8());
-            outFile->putChar(',');
-            outFile->write(sig->parentMessage->name.toUtf8());
-            outFile->putChar(',');
-            outFile->write(sig->name.toUtf8());
-
-            outFile->write("\n");
-        }
+        outFile->write(definitionsText());
         outFile->close();
+        delete outFile;
     }
 }
 
@@ -334,10 +364,15 @@ void SignalViewerWindow::loadDefinitions(bool append)
     QStringList filters;
     filters.append(QString(tr("SignalViewer definition (*.sdf)")));
 
-    QList<DBC_SIGNAL *> loadedSignals;
-
     if (dbcHandler == nullptr) return;
     if (dbcHandler->getFileCount() == 0) dbcHandler->createBlankFile();
+#ifdef Q_OS_WASM
+    // web-savvycan: in the browser the file comes through the browser's file picker
+    QFileDialog::getOpenFileContent(tr("SignalViewer definition (*.sdf)"), [this, append](const QString &name, const QByteArray &content) {
+        if (!name.isEmpty()) applyDefinitions(content, append);
+    });
+    return;
+#endif
 
     dialog.setFileMode(QFileDialog::ExistingFile);
     dialog.setNameFilters(filters);
@@ -349,61 +384,35 @@ void SignalViewerWindow::loadDefinitions(bool append)
         filename = dialog.selectedFiles()[0];
         settings.setValue("SignalViewer/LoadSaveDirectory", dialog.directory().path());
 
-        QFile *inFile = new QFile(filename);
-        QByteArray line;
-
-        if (!inFile->open(QIODevice::ReadOnly | QIODevice::Text))
+        QFile inFile(filename);
+        if (!inFile.open(QIODevice::ReadOnly | QIODevice::Text))
             return;
+        applyDefinitions(inFile.readAll(), append);
+    }
+}
 
-        while (!inFile->atEnd()) {
-            line = inFile->readLine().simplified();
-            if (line.length() > 2)
-            {
-                QList<QByteArray> tokens = line.split(',');
-
-                DBC_SIGNAL *sig;
-
-                if (tokens[0] == "SV1") //signal viewer save format v1
-                {
-                    // = tokens[1].toUInt(nullptr, 16);
-
-                    int msgId = tokens[1].toUInt(nullptr, 16);
-                    QString msgName = QString(tokens[2]);
-                    QString sigName = QString(tokens[3]);
-                    DBC_MESSAGE *msg;;
-                    if( (msg = dbcHandler->findMessage(msgId)) )
-                    {
-                        sig = msg->sigHandler->findSignalByName(sigName);
-                        if(sig)
-                            loadedSignals.append(sig);
-                    }
-                    else if ( (msg = dbcHandler->findMessage(msgName)) )
-                    {
-                        //this is not a very safe way to match since messages names can be duplicated
-                        sig = msg->sigHandler->findSignalByName(sigName);
-                        if(sig)
-                            loadedSignals.append(sig);
-                    }
-                    else
-                    {
-                        qDebug() << "Couldn't find the message by ID or name! " << msgName << "  " << sigName;
-                    }
-                }
-            }
-        }
-        inFile->close();
-
-        if(loadedSignals.count() > 0)
-        {
-            if(append == false)
-            {
-                clearSignalsTable(false);
-            }
-
-            for (int i=0; i<loadedSignals.count(); i++)
-            {
-                addSignal(loadedSignals[i]);
-            }
-        }
+// SV1 lines: each signal found by its message ID (else its message name) and name joins the view (or replaces it)
+void SignalViewerWindow::applyDefinitions(const QByteArray &text, bool append)
+{
+    QList<DBC_SIGNAL *> loadedSignals;
+    for (const QByteArray &raw : text.split('\n'))
+    {
+        const QByteArray line = raw.simplified();
+        if (line.length() <= 2) continue;
+        QList<QByteArray> tokens = line.split(',');
+        if (tokens[0] != "SV1" || tokens.count() < 4) continue; //signal viewer save format v1
+        uint32_t msgId = tokens[1].toUInt(nullptr, 16);
+        QString msgName = QString(tokens[2]);
+        QString sigName = QString(tokens[3]);
+        DBC_MESSAGE *msg = dbcHandler->findMessage(msgId);
+        if (!msg) msg = dbcHandler->findMessage(msgName); //this is not a very safe way to match since messages names can be duplicated
+        DBC_SIGNAL *sig = msg ? msg->sigHandler->findSignalByName(sigName) : nullptr;
+        if (sig) loadedSignals.append(sig);
+        else qDebug() << "Couldn't find the message by ID or name! " << msgName << "  " << sigName;
+    }
+    if (loadedSignals.count() > 0)
+    {
+        if (append == false) clearSignalsTable(false);
+        for (DBC_SIGNAL *sig : std::as_const(loadedSignals)) addSignal(sig);
     }
 }
