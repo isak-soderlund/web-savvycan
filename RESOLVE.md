@@ -422,7 +422,7 @@ it disappears"). The desktop build keeps SavvyCAN's separate windows.
   questions), message boxes, progress dialogs and Qt's standard dialogs: short questions that block the app anyway.
   A window can opt out with the property `webSavvyCanFloating`.
 - **The tab bar** is in the menu bar row, after the menus (the row is 34 px high, the menus' text centred on the
-  tabs'). The first tab, "Frames", is the main screen and can't be closed. A tool's tab has a × (shown on the current
+  tabs'). The first tab, "Frames", is the main screen: pinned (always in view when the tool tabs scroll), not closable. A tool's tab has a × (shown on the current
   and the hovered tab): it closes the window as SavvyCAN's close does (`closeEvent`, settings written; a window that
   refuses keeps its tab). Opening an open window from its menu switches to its tab (`MainWindow`'s `show...` slots go
   through `showWindow()` -> `WindowTabs::present()`); the graphing windows, of which SavvyCAN opens a new one each
