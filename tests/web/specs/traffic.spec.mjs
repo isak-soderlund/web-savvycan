@@ -55,7 +55,8 @@ test('overload: rc1 at 5x its real rate (40 000/s); the dropped-frames counter a
 });
 
 // Unplugging: as users run it, with no accessibility layer (with it, Qt 6.12 throws "setAttribute of undefined" on unplug
-// and stops drawing; README), plain mouse clicks on Qt's canvas at the positions of the 1280x800 viewport. GVRET is the New Connection dialog's default and the
+// and stops drawing; README), plain mouse clicks on Qt's canvas at the positions of the 1280x800 viewport (the connection window is a tab since
+// 2026-10-30). GVRET is the New Connection dialog's default and the
 // granted port is preselected, so no combo box is needed.
 test.describe('unplugged mid-stream, no accessibility layer', () => {
   test.use({ fakeOptions: { serial: { granted: true } } });
@@ -68,17 +69,17 @@ test.describe('unplugged mid-stream, no accessibility layer', () => {
       await page.waitForTimeout(700);
     };
     const addConnection = async (addY) => {
-      await click(420, addY);                                // Add New Device Connection (moves up once a row is listed)
+      await click(427, addY);                                // Add New Device Connection (moves up once a row is listed)
       await click(630, 605);                                 // New Connection: Create New Connection
       await page.waitForFunction(() => window.webSavvyCAN.stats().connected, null, { timeout: 20000 });
       await page.waitForTimeout(5000);                       // Bus Details filled in from the device (ESP32 start)
-      await click(282, 604);                                 // Enable Bus
-      await click(496, 691);                                 // Save Bus Settings
+      await click(180, 617);                                 // Enable Bus
+      await click(503, 704);                                 // Save Bus Settings
       await page.waitForFunction(() => window.__rc1.stats().channel.open, null, { timeout: 10000 });
     };
-    await click(148, 11);                                    // Connection
-    await click(230, 37);                                    // Open Connection Window
-    await addConnection(432);
+    await click(205, 19);                                    // Connection (the menu row with the tabs)
+    await click(282, 47);                                    // Open Connection Window (a tab filling the page)
+    await addConnection(445);
     await fake.setTraffic(page, 'leaf');
     await page.waitForTimeout(1500);
     await page.evaluate(() => window.__rc1.unplug());
@@ -87,7 +88,7 @@ test.describe('unplugged mid-stream, no accessibility layer', () => {
     expect(before).toBeGreaterThan(0);
     await page.evaluate(() => window.__rc1.replug());
     await page.waitForTimeout(1000);
-    await addConnection(401);
+    await addConnection(414);
     await fake.setTraffic(page, 'leaf', { seconds: 1 });
     await page.waitForTimeout(1300);
     const [s, a] = await settle(page);

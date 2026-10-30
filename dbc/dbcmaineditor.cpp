@@ -1,4 +1,5 @@
 #include "dbcmaineditor.h"
+#include "showwindow.h"   // web-savvycan: to the front (its tab in the browser)
 #include "ui_dbcmaineditor.h"
 
 #include <QMenu>
@@ -280,7 +281,7 @@ void DBCMainEditor::onTreeDoubleClicked(const QModelIndex &index)
         nodeEditor->setFileIdx(fileIdx);
         nodeEditor->setNodeRef(node);
         nodeEditor->refreshView();
-        nodeEditor->show();
+        showWindow(nodeEditor);
         break;
     case DBCItemTypes::MESG: //a message
         idString = firstCol->text(0).split(" ")[0];
@@ -291,7 +292,7 @@ void DBCMainEditor::onTreeDoubleClicked(const QModelIndex &index)
         msgEditor->setFileIdx(fileIdx);
         //msgEditor->setWindowModality(Qt::WindowModal);
         msgEditor->refreshView();
-        msgEditor->show(); //show allows the rest of the forms to keep going
+        showWindow(msgEditor); //show allows the rest of the forms to keep going
         break;
     case DBCItemTypes::SIG: //a signal
         msgID = getParentMessageID(firstCol);
@@ -313,7 +314,7 @@ void DBCMainEditor::onTreeDoubleClicked(const QModelIndex &index)
             sigEditor->setFileIdx(fileIdx);
             //sigEditor->setWindowModality(Qt::WindowModal);
             sigEditor->refreshView();
-            sigEditor->show();
+            showWindow(sigEditor);
         }
         break;
     }
@@ -363,7 +364,7 @@ void DBCMainEditor::onRebaseMessages()
     if(nodeRebaseEditor->refreshView())
     {
         nodeRebaseEditor->setModal(true);
-        nodeRebaseEditor->show();
+        showWindow(nodeRebaseEditor);
     }
 }
 
@@ -384,7 +385,7 @@ void DBCMainEditor::onDuplicateNode()
     if(nodeDuplicateEditor->refreshView())
     {
         nodeDuplicateEditor->setModal(true);
-        nodeDuplicateEditor->show();
+        showWindow(nodeDuplicateEditor);
     }
 }
 

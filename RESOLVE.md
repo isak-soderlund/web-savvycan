@@ -12,7 +12,7 @@ The Resolve fork of SavvyCAN (collin80/SavvyCAN, branch `QT6WIP`, forked at 9c3b
 
 | Document | What |
 | --- | --- |
-| `docs/requirements.md` SW-10 | Exactly SavvyCAN's interface, exceptions only for CAN FD and browser limits; CAN FD out of the box; light/dark switch; logging straight to disk; no crash on a busy bus |
+| `docs/requirements.md` SW-10 | Exactly SavvyCAN's interface, exceptions only for CAN FD and browser limits (browser: windows are tabs, owner 2026-10-30, "Tabs instead of windows" below); CAN FD out of the box; light/dark switch; logging straight to disk; no crash on a busy bus |
 | `docs/savvycan-fork-plan.md` | Decisions and the staged rollout (connection + logging, graphs, DBC, RE tools, ...) |
 | `docs/research/savvycan-improve.md` | Root causes of the crashes and slow graphs (G, M, W ids), FD gaps, theming |
 | `docs/research/savvycan-web.md` | WebAssembly spike (patch + screenshot), browser limits, logging, hosting |
@@ -78,7 +78,7 @@ Switched on so far (`enabledfeatures.h`): **Graphs** and, brought forward from s
 
 | What | How |
 | --- | --- |
-| RE Tools > New Graphing Window | SavvyCAN's graphing window. In the browser a framed dialog (title bar, close button), as the connection window: a `Qt::Window` would be frameless over the main window's menus |
+| RE Tools > New Graphing Window | SavvyCAN's graphing window. In the browser a tab of the main window ("Tabs instead of windows", 2026-10-30; before: a framed dialog) |
 | Live graphs | A graph of a frame ID grows as frames arrive and **follows the newest data** by default (View > Follow End of Graph in the graph window, as SavvyCAN has it, now on from the start). While following, the value axis grows to take in new values (never shrinks) |
 | A log file from the computer | File > Load Log File opens the browser's own file picker (Chrome: `showOpenFilePicker`); the file type is detected from the contents (SavvyCAN's autodetect: GVRET CSV, candump, PCAN, Vector ASC/BLF, ...). SavvyCAN's own GVRET CSV is parsed straight from the bytes the browser hands over (the leaner loader, below); other formats go to the in-memory file system for SavvyCAN's loaders and are deleted after. **GVRET CSV up to 1000 MB** (~14 M frames: 27-36 s, 0.8 GB of the page's memory after, 2.1 GB at the peak); **other formats up to 200 MB** (SavvyCAN's loaders: a 1 M-frame candump log, 46 MB, 18 s and 254 MB at the peak) |
 | Time axis | In the app's time style (File > Preferences: microseconds by default, or seconds, or clock) |
@@ -102,7 +102,7 @@ Tests: `tests/web` smoke spec (in CI) loads a GVRET CSV through the file picker 
 | What | How |
 | --- | --- |
 | File > DBC File Manager | SavvyCAN's table (file, associated bus, matching criteria, label filters; Create new DBC, Load, Remove, Move Up/Down, Save, Edit). In the browser **Load** opens the browser's file picker (as File > Load Log File; `.dbc`, Tesla `.json`, the "secret" `.csv`, by extension); the file lives in the page's in-memory file system (`/dbc/<n>/<name>`). **Save** writes it there and hands it to the browser (a download, or Chrome's save picker), named as the file. **Remembered for the next visit**: SavvyCAN's `DBC/*` settings plus the file itself (`DBC/Content_<i>`, base64, in the page's `localStorage`), up to 1 MB a file; what was last loaded or saved, not unsaved edits (as the desktop reloads the file from disk) |
-| DBC editors | Main editor (tree of nodes, messages, signals), message, signal, node, node rebase/duplicate editors: framed dialogs in the browser. Message editor: length up to 64, CAN FD and BRS (QT6WIP's); colour pickers start from the colour shown, Cancel changes nothing (it set black). Signal editor: the 64-byte bit grid of an FD message; numbers up to 64 bits long (a text signal up to the frame); bits past the message or the grid no longer written past its 64-byte arrays; the grid's signal names cleared per message (a right click on a stale name made the current signal null) |
+| DBC editors | Main editor (tree of nodes, messages, signals), message, signal, node, node rebase/duplicate editors: tabs in the browser ("Tabs instead of windows"; before 2026-10-30 framed dialogs). Message editor: length up to 64, CAN FD and BRS (QT6WIP's); colour pickers start from the colour shown, Cancel changes nothing (it set black). Signal editor: the 64-byte bit grid of an FD message; numbers up to 64 bits long (a text signal up to the frame); bits past the message or the grid no longer written past its 64-byte arrays; the grid's signal names cleared per message (a right click on a stale name made the current signal null) |
 | Interpret Frames | The trace's decoded rows (`<Message>`, comment, `Name: value unit`), FD frames included. Multiplexed signals as SavvyCAN (the multiplexor, then the children its value selects; the next signal now starts on its own line) |
 | Graphs by signal name | Add New Graph > "Graph a DBC Signal" (node, message, signal, Copy Signal Parameters) and the trace's right-click "Add to a new / latest graphing window" over a decoded line: the graph follows the DBC signal (scale, offset, float types). A right click below a cell's text no longer reads past its lines |
 | RE Tools > Signal Viewer | The newest value of each signal added (node, message, signal; Save/Load/Append View as SavvyCAN's `.sdf`, in the browser through the file picker and a download). Fixed: it went over the new frames by index, which skipped every update once the trace's ring was full and showed nothing after a file was loaded; now each tick goes from the newest frame back until every signal has its value, and a signal shows its newest value as soon as it is added |
@@ -175,7 +175,7 @@ RE Tools > Frame Data Analysis ("the heatmap tool", owner 2026-10-29: brought fo
 
 | What | How |
 | --- | --- |
-| The window | SavvyCAN's: the ID list, the details tree (lengths, intervals, per byte changed bits, range, value histogram; Bitfield Histogram; Bitchange Heatmap; J1939/GMLAN for 29-bit IDs), the bit-change **heatmap**, the bit histogram, the interval histogram and a graph per byte. In the browser a framed dialog, as the graphing window, first opened at the .ui's 1142 x 651 (SavvyCAN's remembered-size default 794 x 694 is too narrow for a 64-byte heatmap) |
+| The window | SavvyCAN's: the ID list, the details tree (lengths, intervals, per byte changed bits, range, value histogram; Bitfield Histogram; Bitchange Heatmap; J1939/GMLAN for 29-bit IDs), the bit-change **heatmap**, the bit histogram, the interval histogram and a graph per byte. In the browser a tab filling the page ("Tabs instead of windows"; as a framed dialog before 2026-10-30 it opened at the .ui's 1142 x 651: SavvyCAN's remembered-size default 794 x 694 is too narrow for a 64-byte heatmap) |
 | CAN FD (fix W1) | Every per-byte and per-bit table holds 64 bytes / 512 bits (SavvyCAN's `minData[8]`, `dataHistogram[256][8]`, `bitfieldHistogram[64]`, `bitFlipHeat[64]`, ... overflowed on frames over 8 bytes); the heatmap grid as large as the longest frame (`CANDataGrid` 8x8, 16x8, 16x16 or 32x16 bits); a byte graph for every byte (8 for classic as SavvyCAN, up to 64 in a scroll area); the bit histogram over every bit. Also fixed: a byte's reference is the first frame that has it (an ID with longer and shorter frames read uninitialised bytes), "Data Length" no longer "8 to 64", the bit histogram drew every bit twice |
 | Live | As SavvyCAN: an ID is analysed when it is selected (and the first one when the window opens); new IDs join the list as frames come (from the trace's newest frames, so the ring-buffer trace works; every new ID of a tick, SavvyCAN stopped at the selected one). Select the ID again for the newer frames. Memory: the window keeps the ID set and the last analysis only |
 | Large captures | No copy of the ID's frames (their rows, 8 bytes each, during the analysis); byte graphs of at most 8 000 points (past 4 000 frames each pair is a run's min and max); one analysis as the window opens (was two). 30 000 64-byte frames of one ID: 0.56 s in headless Chromium (2026-10-29), the UI waits that long |
@@ -203,7 +203,7 @@ Brought forward from stage 4 (owner 2026-10-29): RE Tools > Temporal Graph, whic
 | The map | `TemporalDensity` (`re/temporalgraphwindow.h`): frame counts per (time column, ID). At most **512 columns**, each a power of two µs wide; the width doubles as the capture grows (columns added in pairs), so 10 s and 10 h both fit. **One row per distinct ID** (11-bit and 29-bit apart, in ID order, labelled in hex), at most 2048 rows; frames of further IDs are counted and named in the summary line, not drawn. About 2 KB of counts per ID plus the map's cells (12 bytes each): ~0.25 MB for 30 IDs, whatever the number of frames |
 | Drawing | One `QCPColorMap` of the counts (log colour scale, empty cells transparent), a summary line (IDs, frames, span, column width); no point per frame. One gradient (blue to red) for light and dark; the plot is themed as every plot |
 | Live | `framesUpdated(n)` adds the new frames: O(new frames) per GUI tick. New frames are found by the newest frame counted, not by an index (the trace is a ring; a filtered list's tail isn't counted twice). The counts keep the **whole session**, also after the trace's ring has dropped the oldest frames. -1/-2 (cleared, a file loaded, a new set) count the list again, in slices of ~25 ms, so the page keeps running on a big capture; the ">2000 frames, may crash" question is gone. The view shows the whole capture and follows it until the user zooms or pans (R: whole capture again) |
-| Browser | A framed dialog (title bar, close button), as the graphing window. Time axis in the app's time style |
+| Browser | A tab of the main window ("Tabs instead of windows"). Time axis in the app's time style |
 | QCustomPlot | `QCPColorMapData`: cell count in `size_t` and capped at 2^31, no cell access without an array, `fill()` of any value (it was a `memset` of a double) |
 | Limits | The map's resolution is the column width (span / 256..512): zooming in shows wider cells, not finer ones. Over 2048 distinct IDs, the rest are counted, not shown. In overwrite mode with the filtered list (Main/UseFiltered) live counts follow the trace's rows, not the bus |
 
@@ -229,7 +229,7 @@ natively): `re/retools.{h,cpp}`.
 | Range State | Candidate signals that range smoothly (sensitivity, min/max size, granularity, byte order, signedness, ID filter); a candidate's graph | SavvyCAN's test unchanged (`rangeSignalLooksGood`, line for line, checked against the original natively), 64-bit (`1 << 32` and the values overflowed). One pass over the trace into compact rows per ID (was a full scan and a `reserve()` of the whole trace per ID). FD: start bits up to 511 (packed into 8 bits, they ran into the length). No crash for an ID whose frames left the trace. The event loop every 100 ms while it searches. Line in the theme's colour |
 | Single/Multi State | Bits that follow a user action. **Realtime:** "Go to state N" for each state in turn (countdown, hold, wait), Iterations times; **From logged data:** fields with exactly Number of States values | SavvyCAN's window had **no search** (`calculateResults()` empty in both modes) and its state counter ran one past. Now: realtime records each ID's frames per state (after the first quarter of each hold, the time to get there; `StateSampler`: an even spread of at most 2048 frames per ID and state, all within 32 MB); a field of Min..Max bits (Intel numbering) matches when in every state >= 90 % of its frames have one value and the values differ between states. Logged: fields with exactly N values over the trace. Both: only fields whose first and last bits change, smallest first, none containing a match (a toggling bit is reported once). Up to 64 bytes. Status colours lighter in dark |
 
-All four: a framed dialog in the browser; -1/-2 (Clear, a file loaded) rebuild from the list (W2); the ID lists fill
+All four: a tab in the browser ("Tabs instead of windows"); -1/-2 (Clear, a file loaded) rebuild from the list (W2); the ID lists fill
 from the trace's newest frames. `testhook_retools.cpp` (own file): `sniffer()`, `flowView()`, `rangeState()`,
 `discreteState()` and their actions.
 
@@ -280,7 +280,7 @@ desktop and in the browser, with CAN FD. Their logic is in `re/filetools.{h,cpp}
 
 | What | How |
 | --- | --- |
-| Browser | Framed dialogs (title bar, close button), as the graphing window. Saved files are downloads: the bisector's split as SavvyCAN's GVRET CSV (`BisectedFrames.csv`, what Load Log File and SavvyCAN read; no format choice in the browser), the comparisons' details as `FileComparison.txt` / `DBCComparison.txt` |
+| Browser | Tabs of the main window ("Tabs instead of windows"). Saved files are downloads: the bisector's split as SavvyCAN's GVRET CSV (`BisectedFrames.csv`, what Load Log File and SavvyCAN read; no format choice in the browser), the comparisons' details as `FileComparison.txt` / `DBCComparison.txt` |
 | Capture Bisector | SavvyCAN's splits (frame number, percentage, ID range, bus; lower/upper part). The split is kept in a compact `FrameStore` (36 bytes a classic frame, 92 a 64-byte FD one; SavvyCAN's `QVector<CommFrame>`: ~100-160 in the browser); one pass over the trace in slices under one lock each (SavvyCAN read each row up to three times). The ID lists from a set in one pass (SavvyCAN looked each frame's ID up in a list: frames x IDs) and kept up to date: a loaded file (-1) refreshes them as -2 does, new live frames add their IDs and the count. **Replace main list** moves the split into the trace and tells every window (`framesUpdated(-2)`, as Crop Log; SavvyCAN told none: W2); the split is then empty (moved, not copied) |
 | File Comparison | Both sides through the window's own buttons: in the browser the browser's file picker (`QFileDialog::getOpenFileContent`) and File > Load Log File's type detection and limits (GVRET CSV up to 1000 MB, others 200 MB), through one small shared helper `FrameFileIO::loadLogData` (GVRET CSV parsed in place into a store; other formats via SavvyCAN's loaders from a temporary file). **Each file is summarised as it loads and its frames dropped** (chunk by chunk): per ID the values seen per byte and the bits ever set for all 64 bytes (~2.1 KB an ID) and the DBC signals' values; SavvyCAN kept every frame of both files and its `int values[8][256]` / 64-bit bitmap overflowed on FD frames. Side 2 still takes more files until Clear Frames. The tree as SavvyCAN's, a byte node per byte of the longest frame; no tree items made that aren't shown (SavvyCAN leaked 256 per byte per comparison) |
 | DBC Comparison | Its own two DBC files (in the browser: the picker, a temporary file for SavvyCAN's DBC loader, deleted after; not the DBC File Manager's DBCs). Fixed: the loop over the second DBC's signals ran on the message index (`for (int j = 0; i < ...; i++)`: skipped messages, read past the list); unchanged signals' tree items leaked; the DBCs leaked at close. A DBC is put in place only once loaded whole (a second pick while the first was still loading compared half a file) |
@@ -401,6 +401,48 @@ happens (no chooser, no error). File > Preferences > **Connect to the last devic
 (`Main/SaveRestoreConnections`, upstream's "Save/Restore CAN bus connections"; on by default in the browser).
 Tests: `tests/web` autoconnect spec; with the real rc1 on the rig (`rig/autoconnect.spec`, GVRET and LAWICEL with CAN FD,
 2026-10-29), through the bridge, not Chrome's own Web Serial (which loses USB serial ports on the rig's Linux).
+
+## Tabs instead of windows (browser; owner 2026-10-30)
+
+**Decision (owner, 2026-10-30), an exception to SW-10's "exactly SavvyCAN's interface" for the browser:** every
+non-modal window opens as a tab of the main window, like a browser's tabs. Why: a page has no window manager. All of
+SavvyCAN's windows were Qt for WebAssembly windows in one canvas; the main window fills the page, so a click on it
+raised it above a graph (or Frame Data Analysis, Temporal Graph, the connection window...) and buried that window,
+with no taskbar or window list to get it back (the owner's report: "as soon as I press beside the graph I just added
+it disappears"). The desktop build keeps SavvyCAN's separate windows.
+
+- **One place:** `wasm/windowtabs.{h,cpp}` (browser build only; installed by `MainWindow` after its menus are set up).
+  An application event filter catches every top-level window when it is shown: a non-modal one (window or dialog)
+  moves into the main window as a tab, filling the page below the menu bar row (in a scroll area, for a window larger
+  than the page). Windows switched on later get tabs without code of their own.
+- **Tabs:** every non-modal window: the graphing windows, Frame Data Analysis, Temporal Graph, the connection window,
+  Preferences, Help, and stage 3/4's windows (DBC File Manager and its editors, Signal Viewer, Sniffer, Flow View,
+  Range State, Single/Multi State, Bisector, File and DBC Comparison, Frame Search, ...).
+- **Still dialogs over the current tab:** modal ones (`exec()`/`open()`: About, Add New Graph, New Connection, file
+  questions), message boxes, progress dialogs and Qt's standard dialogs: short questions that block the app anyway.
+  A window can opt out with the property `webSavvyCanFloating`.
+- **The tab bar** is in the menu bar row, after the menus (the row is 34 px high, the menus' text centred on the
+  tabs'). The first tab, "Frames", is the main screen: pinned (always in view when the tool tabs scroll), not closable. A tool's tab has a × (shown on the current
+  and the hovered tab): it closes the window as SavvyCAN's close does (`closeEvent`, settings written; a window that
+  refuses keeps its tab). Opening an open window from its menu switches to its tab (`MainWindow`'s `show...` slots go
+  through `showWindow()` -> `WindowTabs::present()`); the graphing windows, of which SavvyCAN opens a new one each
+  time, get numbered tabs ("Graph 2"; tabs are named by the window title, or by its menu entry where the title says less: Graph, Frame Data Analysis, Connection, Preferences). A window the app closes itself loses its tab; shown again, it gets one.
+  Escape doesn't close a tab (QDialog's Escape would have).
+- **A tab in the background is covered, not hidden** (`QStackedLayout::StackAll`): the windows stay "visible" to Qt, as
+  a window behind another one on the desktop. Live graphs keep taking frames, and a window's `showEvent` (Frame Data
+  Analysis re-reads its ID list there) doesn't run again on every switch.
+- **Look:** Chrome-like: the strip a shade darker than the window colour, the current tab in the window colour joining
+  the page below, quieter titles on the others, a hover colour, thin separators, tabs 120-220 px that shrink to 84 px
+  with an elided title (full title in the tooltip) before the bar scrolls. Colours from the theme's palette.
+- **The website's bar shares the row** (`/resolve-can/savvycan`, its texts at the row's right end): the app publishes
+  `window.savvycanTopBar` (`height`, `tabTop`, `tabsLeft`, `tabsNatural`) and the event `savvycan-topbar`; the page
+  decides which texts fit beside the tabs at their full width, by measured widths (first "Chrome based browser must be
+  used" goes, then the source text; the source stays in Help > About, which names the build's commit) and answers
+  with `savvycanTopBar.setReserve(px)`, the width its texts take; the tabs stop before them and only shrink once both
+  texts are gone.
+- **Tests:** `tests/web/specs/tabs.spec.mjs`; the test hook's `tabs()`, `selectTab(i)`, `closeTab(i)`,
+  `openWindow(name)`. The hook finds windows through `WindowTabs::windows()`/`isOpen()` (they aren't top-levels any
+  more): a window's hook must do the same (not `QApplication::topLevelWidgets()` + `isVisible()`).
 
 ## Stages switched on: `enabledfeatures.h`
 

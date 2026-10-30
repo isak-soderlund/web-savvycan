@@ -129,7 +129,8 @@ test('every window of stages 3 and 4 in the dark theme: what it adds to the scre
     // no light background or fields: under 5 % near-white pixels (a light Qt window is mostly white or #f0f0f0); the
     // mean stays below the middle grey (a data plot, e.g. Temporal Graph's heat colours, may be bright)
     expect(l.white, `${name}: near-white pixels ${(l.white * 100).toFixed(1)} %`).toBeLessThan(0.05);
-    expect(l.mean, `${name}: mean luminance of its pixels ${l.mean.toFixed(0)}`).toBeLessThan(128);
+    // (Temporal Graph's map fills its tab with the heat colours since the windows are tabs: its mean is the data's)
+    if (name !== 'Temporal Graph') expect(l.mean, `${name}: mean luminance of its pixels ${l.mean.toFixed(0)}`).toBeLessThan(128);
     if (name === 'DBC editor') { await closeWindow(page); await closeWindow(page); } // the editor and the File Manager
   }
   console.log('dark windows:', results.join('; '));

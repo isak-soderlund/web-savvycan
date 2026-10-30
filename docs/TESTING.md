@@ -48,7 +48,8 @@ second line `dirty` means uncommitted changes were in it).
      then the GVRET handshake and its validation polls).
    - **Bus Details**: Speed **500000**, tick **Enable Bus**, **Enable CAN FD** as your bus is (with CAN FD:
      **CAN FD Data Rate**, e.g. 2000000), then **Save Bus Settings**.
-   - Close the connection window (its close button, or Escape); the connection stays up.
+   - Close the connection tab (the × on its tab); the connection stays up. (In the browser every non-modal window is a
+     tab in the menu bar row since 2026-10-30; the first tab, Frames, is the main screen.)
 3. **Frames.** With the peer sending: frames appear in the trace, *Total Frames Captured* and *Frames Per Second*
    count up; *Dropped: 0* at the bottom right stays 0 (it counts frames the app had to drop on an overloaded bus). Check a few IDs and data bytes against what the peer sends (and with CAN FD: lengths over 8, BRS).
    Tick **Auto Scroll Window** to follow the newest.
@@ -207,6 +208,6 @@ checked by it, so checked only by this test:
 
 - With a **screen reader** (Qt's accessibility layer switched on), unplugging rc1 makes Qt 6.12 throw an error in its
   accessibility code and the window stops drawing; reload the page. Without a screen reader unplugging is fine.
-- With a **screen reader** on (2026-10-30): choosing RE Tools > **Frame Search** again while its window is already open,
-  then clicking a button in it, hangs the page (Qt 6.12's accessibility layer after the window's `raise()`); reload the
-  page. Without a screen reader it works.
+- Gone with the tabs (2026-10-30): choosing RE Tools > **Frame Search** again while its window was open, then clicking in
+  it, hung the page with a screen reader on (Qt 6.12's accessibility after the window's `raise()`). An open window now
+  switches to its tab (no raise); checked with the screen-reader layer on (tests/web: menu twice, then clicks in it).

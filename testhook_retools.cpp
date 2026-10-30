@@ -10,6 +10,7 @@
 // call, so what the tests do is what a click does.
 
 #include "testhook.h"
+#include "wasm/windowtabs.h"
 #include "re/sniffer/snifferwindow.h"
 #include "re/sniffer/snifferitem.h"
 #include "re/flowviewwindow.h"
@@ -51,8 +52,8 @@ const char *json(const QJsonArray &a) { return keep(QJsonDocument(a).toJson(QJso
 
 template <class W> W *openWindow()
 {
-    for (QWidget *w : QApplication::topLevelWidgets())
-        if (auto *t = qobject_cast<W *>(w); t && t->isVisible()) return t;
+    for (QWidget *w : WindowTabs::windows())   // tabs of the main window in the browser (wasm/windowtabs.h)
+        if (auto *t = qobject_cast<W *>(w); t && WindowTabs::isOpen(t)) return t;
     return nullptr;
 }
 

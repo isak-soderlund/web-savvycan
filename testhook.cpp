@@ -9,6 +9,7 @@
 #include "re/graphingwindow.h"
 #include "re/newgraphdialog.h"
 #include "candatagrid.h"
+#include "wasm/windowtabs.h"
 #include "qcustomplot.h"
 #include <QApplication>
 #include <QLineEdit>
@@ -77,12 +78,14 @@ static const char *keep(const QByteArray &utf8)
     buffer = utf8;
     return buffer.constData();
 }
+// The windows are found through WindowTabs (in the browser they are tabs of the main window, not top-levels); "open"
+// is a window with its tab (in front or not), or a visible top-level (a modal dialog).
 // The newest graphing window (the tests open one at a time).
 static GraphingWindow *graphWindow()
 {
     GraphingWindow *found = nullptr;
-    for (QWidget *w : QApplication::topLevelWidgets())
-        if (auto *g = qobject_cast<GraphingWindow *>(w); g && g->isVisible()) found = g;
+    for (QWidget *w : WindowTabs::windows())
+        if (auto *g = qobject_cast<GraphingWindow *>(w); g && WindowTabs::isOpen(g)) found = g;
     return found;
 }
 
@@ -145,8 +148,8 @@ static QJsonObject graphState()
 // The Add New Graph dialog that is open (Graph > Add New Graph runs it with exec()).
 static NewGraphDialog *graphDialog()
 {
-    for (QWidget *w : QApplication::topLevelWidgets())
-        if (auto *d = qobject_cast<NewGraphDialog *>(w); d && d->isVisible()) return d;
+    for (QWidget *w : WindowTabs::windows())
+        if (auto *d = qobject_cast<NewGraphDialog *>(w); d && WindowTabs::isOpen(d)) return d;
     return nullptr;
 }
 
@@ -262,8 +265,8 @@ static void installDbcHook();       // DBC (stage 3), at the end of this file
 
 static TemporalGraphWindow *temporalWindow()
 {
-    for (QWidget *w : QApplication::topLevelWidgets())
-        if (auto *t = qobject_cast<TemporalGraphWindow *>(w); t && t->isVisible()) return t;
+    for (QWidget *w : WindowTabs::windows())
+        if (auto *t = qobject_cast<TemporalGraphWindow *>(w); t && WindowTabs::isOpen(t)) return t;
     return nullptr;
 }
 
@@ -367,6 +370,35 @@ EM_JS(void, wsc_install_memory_hook, (), {
 });
 // ---- end of memory
 
+// ---- Tabs (wasm/windowtabs.h): webSavvyCAN.tabs(): the tab bar (titles, which is current, each tab's place, the
+// row's height, the bar's width and its natural width, the page's reserve); selectTab(i) / closeTab(i) as a click on
+// the tab or its close button.
+extern "C" {
+EMSCRIPTEN_KEEPALIVE const char *wsc_tabs() { return keep(QJsonDocument(WindowTabs::state()).toJson(QJsonDocument::Compact)); }
+EMSCRIPTEN_KEEPALIVE int wsc_select_tab(int i) { return WindowTabs::selectTab(i) ? 1 : 0; }
+EMSCRIPTEN_KEEPALIVE int wsc_close_tab(int i) { return WindowTabs::closeTab(i) ? 1 : 0; }
+// A window as its menu opens it (MainWindow's show... slot, by its index in kOpenSlots), from the event loop.
+static const char *const kOpenSlots[] = {"showGraphingWindow", "showFrameDataAnalysis", "showTemporalGraphWindow",
+                                         "showConnectionSettingsWindow", "showSettingsDialog"};
+EMSCRIPTEN_KEEPALIVE int wsc_open_window(int i)
+{
+    if (i < 0 || i >= int(sizeof kOpenSlots / sizeof *kOpenSlots)) return 0;
+    return QMetaObject::invokeMethod(MainWindow::getReference(), kOpenSlots[i], Qt::QueuedConnection) ? 1 : 0;
+}
+}
+
+EM_JS(void, wsc_install_tabs_hook, (), {
+    Object.assign(window.webSavvyCAN, {
+        tabs: () => JSON.parse(UTF8ToString(_wsc_tabs())),
+        selectTab: (i) => _wsc_select_tab(i | 0) === 1,
+        closeTab: (i) => _wsc_close_tab(i | 0) === 1,
+        // 'graph', 'frameInfo', 'temporal', 'connection', 'preferences'
+        openWindow: (name) =>
+            _wsc_open_window({ graph: 0, frameInfo: 1, temporal: 2, connection: 3, preferences: 4 }[name] ?? -1) === 1,
+    });
+});
+// ---- end of tabs
+
 void TestHook::install(CommFrameModel *model)
 {
     g_model = model;
@@ -374,6 +406,7 @@ void TestHook::install(CommFrameModel *model)
     installFrameInfoHook();
     wsc_install_temporal_hook();
     wsc_install_memory_hook();
+    wsc_install_tabs_hook();
     installDbcHook();
     TestHook::installFileTools();
     installReTools();
@@ -391,8 +424,8 @@ void TestHook::install(CommFrameModel *model)
 
 static FrameInfoWindow *frameInfoWindow()
 {
-    for (QWidget *w : QApplication::topLevelWidgets())
-        if (auto *f = qobject_cast<FrameInfoWindow *>(w); f && f->isVisible()) return f;
+    for (QWidget *w : WindowTabs::windows())
+        if (auto *f = qobject_cast<FrameInfoWindow *>(w); f && WindowTabs::isOpen(f)) return f;
     return nullptr;
 }
 
@@ -440,8 +473,10 @@ static QJsonObject frameInfoState()
     for (QCustomPlot *plot : win->findChildren<QCustomPlot *>())
         if (plot->isVisible()) shown++;
     o.insert("plotsVisible", shown); // the byte graphs and the two histograms
-    o.insert("x", win->x());
-    o.insert("y", win->y());
+    // its place on the page (in the browser a tab: below the tab row)
+    const QPoint at = win->isWindow() ? win->pos() : win->mapTo(win->window(), QPoint(0, 0));
+    o.insert("x", at.x());
+    o.insert("y", at.y());
     o.insert("width", win->width());
     o.insert("height", win->height());
     return o;
@@ -495,8 +530,8 @@ static void installFrameInfoHook()
 
 template <typename T> static T *visibleWindow()
 {
-    for (QWidget *w : QApplication::topLevelWidgets())
-        if (auto *t = qobject_cast<T *>(w); t && t->isVisible()) return t;
+    for (QWidget *w : WindowTabs::windows())   // tabs of the main window in the browser (wasm/windowtabs.h)
+        if (auto *t = qobject_cast<T *>(w); t && WindowTabs::isOpen(t)) return t;
     return nullptr;
 }
 

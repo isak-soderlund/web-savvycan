@@ -5,6 +5,7 @@
 // webSavvyCAN.bisect() / bisectSet({...}), fileCompare(), dbcCompare(), search() / searchSet({...}): below.
 
 #include "testhook.h"
+#include "wasm/windowtabs.h"
 #include "bisectwindow.h"
 #include "mainwindow.h"
 #include "re/dbccomparatorwindow.h"
@@ -42,8 +43,8 @@ const char *keep(const QJsonObject &o)
 
 template <class W> W *window()
 {
-    for (QWidget *w : QApplication::topLevelWidgets())
-        if (auto *t = qobject_cast<W *>(w); t && t->isVisible()) return t;
+    for (QWidget *w : WindowTabs::windows())   // tabs of the main window in the browser (wasm/windowtabs.h)
+        if (auto *t = qobject_cast<W *>(w); t && WindowTabs::isOpen(t)) return t;
     return nullptr;
 }
 

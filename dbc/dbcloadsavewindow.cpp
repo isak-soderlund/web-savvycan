@@ -1,4 +1,5 @@
 #include "dbcloadsavewindow.h"
+#include "showwindow.h"   // web-savvycan: to the front (its tab in the browser)
 #include "ui_dbcloadsavewindow.h"
 #include <QComboBox>
 #include <QFileDialog>
@@ -335,7 +336,7 @@ void DBCLoadSaveWindow::editFile()
     if (idx < 0) return;
 
     editorWindow->setFileIdx(idx);
-    editorWindow->show();
+    showWindow(editorWindow);
 }
 
 void DBCLoadSaveWindow::matchingCriteriaChanged(int index)
@@ -427,7 +428,7 @@ void DBCLoadSaveWindow::cellDoubleClicked(int row, int col)
     Q_UNUSED(col)
     currentlyEditingFile = dbcHandler->getFileByIdx(row);
     editorWindow->setFileIdx(row);
-    editorWindow->show();
+    showWindow(editorWindow);
 }
 
 void DBCLoadSaveWindow::swapTableRows(bool up)
