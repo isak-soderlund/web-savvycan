@@ -2,7 +2,9 @@
 
 Stage 1 (RESOLVE.md "MVP"): connect to rc1 from Chrome, watch the frames, log them to a file, light/dark theme. Then
 what came after (steps 9-14): auto-connect, graphs, loading a log file, Temporal Graph and Frame Data Analysis (the
-heatmap); stage 3 (steps 15-18): DBC files, Interpret Frames, the DBC editor, signals by name, Save Decoded Frames.
+heatmap); stage 3 (steps 15-18): DBC files, Interpret Frames, the DBC editor, signals by name, Save Decoded Frames;
+stage 4's file-based RE tools (steps 19-22): Capture Bisector, File Comparison, DBC Comparison, Frame Search; and its
+live RE tools (steps 23-26): Sniffer, Flow View, Range State, Single/Multi State.
 Everything below has passed in headless Chromium against a **fake** rc1, and with the **real** rc1 and a real bus on
 the rig (see "What the rig has checked"); this is the check with your Chrome, your OS and your car.
 
@@ -124,7 +126,9 @@ second line `dirty` means uncommitted changes were in it).
 22. **Frame Search.** RE Tools > **Frame Search** on a loaded log: ID (tick Enable), Frame Length, Direction, the bits
     (start bit, number of bits, Intel/signed, scale, bias; click the grid, which shows 64 bytes for FD), then *Specific
     value* (decimal, `0x..` hex or `0b..` binary) or *Any change*, **Search**: "Match 1 of N" and that row selected in the
-    trace; **Next >** / **< Previous** step through. Try a byte past byte 8 of an FD frame.
+    trace; **Next >** / **< Previous** step through. Try a byte past byte 8 of an FD frame. With a DBC loaded (step 15,
+    also while the window is open): *Search a DBC Signal*: node, message, signal, **Copy Signal Parameters** fills the
+    ID and bits; a value typed as the signal shows it (e.g. a temperature in °C) finds its frames.
 23. **Sniffer.** On a live bus, RE Tools > **Sniffer**: one row per ID, bytes going up green, down red; IDs that stop
     turn red and go after 5 s (Never Expire keeps them). Leave the car (or bus) as it is and press **Notch** a few
     times over a few seconds: the colours stop. Now do one thing (a button, a door, the steering): only its bytes light
@@ -164,6 +168,24 @@ replaced (a bridge to rc1's tty, because Chromium's own Web Serial loses USB ser
   IDs (every bit's changes and sets as sent);
 - a log of 75 min (450 000 frames) past rc1's clock wrap at 71.6 min: every row, times increasing across the wrap.
 
+Passed 2026-10-30 on `stage34` (stages 3 and 4 merged), rc1 firmware 0.1.4, CAN FD 500k/2M, each checked against the
+frames the peer sent (`rig/dbc.spec`, `rig/retools.spec`), with the existing rig specs above passing again:
+- **DBC** (the test DBC `tests/web/fixtures/stage3_test.dbc`): Interpret Frames decodes all 1 200 frames of the peer's
+  DBC messages (classic, 12- and 64-byte FD, a 29-bit FD ID, a multiplexed message, an ID not in the DBC): 2 850
+  signal values, each as the DBC says; Signal Viewer follows the bus live (every viewed signal took several values
+  while the peer sent) and ends at the newest frame's value of each;
+- **Sniffer**: every ID with its newest bytes (64 for the FD ID), all 4 000 frames counted, the counter byte marked
+  changing, the constant byte never;
+- **Flow View**: every frame of one ID byte for byte (classic and 64-byte FD), rc1's times 5 ms apart as sent; Live
+  Mode takes the new frames and stands on the newest;
+- **Range State**: exactly SavvyCAN's candidates on the 4 000 frames sent, the planted triangles among them (classic,
+  and at bit 400 of the FD ID), none from the random bytes; the candidate's graph spans 1000..3000;
+- **Single/Multi State**, Realtime: the peer toggled its state bits on the window's cue ("Go to state 1/2"): exactly
+  the three planted fields found (0x120 bits 19 and 26, the FD ID's bit 270), nothing from counters, triangle or
+  random bytes;
+- **Frame Search**: a counter value at the four known frames (classic, and byte 40 of the FD frames), a state bit's
+  changes exactly where the peer changed it.
+
 ## What only the fake has checked
 
 The automated suite (`tests/web/run.sh`) runs the real app build in headless Chromium, but the device, the USB link
@@ -185,3 +207,6 @@ checked by it, so checked only by this test:
 
 - With a **screen reader** (Qt's accessibility layer switched on), unplugging rc1 makes Qt 6.12 throw an error in its
   accessibility code and the window stops drawing; reload the page. Without a screen reader unplugging is fine.
+- With a **screen reader** on (2026-10-30): choosing RE Tools > **Frame Search** again while its window is already open,
+  then clicking a button in it, hangs the page (Qt 6.12's accessibility layer after the window's `raise()`); reload the
+  page. Without a screen reader it works.

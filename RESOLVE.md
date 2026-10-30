@@ -17,6 +17,19 @@ The Resolve fork of SavvyCAN (collin80/SavvyCAN, branch `QT6WIP`, forked at 9c3b
 | `docs/research/savvycan-improve.md` | Root causes of the crashes and slow graphs (G, M, W ids), FD gaps, theming |
 | `docs/research/savvycan-web.md` | WebAssembly spike (patch + screenshot), browser limits, logging, hosting |
 
+## Stages: where they are (2026-10-30)
+
+- **Stage 4, reverse-engineering tools: all ten on** (below): Frame Data Analysis, Temporal Graph, the live tools
+  (Sniffer, Flow View, Range State, Single/Multi State) and the file-based tools (Capture Bisector, File Comparison,
+  DBC Comparison, Frame Search).
+- **Stage 3, DBC: on** (below): DBC File Manager, the editors, Interpret Frames, graphs by signal name, Signal Viewer,
+  Save Decoded Frames.
+- Stages 3 and 4 were built on three branches (`stage3-dbc`, `stage4-live`, `stage4-files`) and merged on `stage34`
+  (2026-10-30): the browser suite, the desktop tests (plain and ASan) and the real-rc1 rig specs pass on the merge, the
+  rig with new specs for the DBC windows and every live and file-based tool ("Stage 3 and 4 together" below).
+- **Stage 2, graphs: on** (plus Load Log File, brought forward). **Stage 1, the MVP: done.**
+- Stages 5 (sending), 6 (protocols) and 7 (files) are off: `enabledfeatures.h`.
+
 ## MVP: log from rc1 in the browser (stage 1)
 
 The smallest version that is useful: connect to rc1 from Chrome, watch the frames, log them to disk.
@@ -148,7 +161,15 @@ remembered after a reload; a 1 000-message DBC and 100 000 frames (times). Pictu
 `tests/desktop` `tst_dbc`: bit numbering, the fixture's signals decoded (FD, 64-bit, floats, value descriptions,
 multiplexing), save and load back, removals (ASan clean).
 
-## Frame Data Analysis (stage 4, switched on 2026-10-29)
+## Stage 4: reverse-engineering tools (all ten on since 2026-10-30)
+
+Every window of SavvyCAN's RE Tools menu that stage 4 covers is on: Frame Data Analysis and Temporal Graph (brought
+forward on 2026-10-29), the live tools (Sniffer, Flow View, Range State, Single/Multi State) and the file-based tools
+(Capture Bisector, File Comparison, DBC Comparison, Frame Search), on the desktop and in the browser, with CAN FD and
+the dark theme. The live and file-based tools were built on branches of their own (`stage4-live`, `stage4-files`) and
+merged with stage 3 on `stage34` (2026-10-30).
+
+### Frame Data Analysis (switched on 2026-10-29)
 
 RE Tools > Frame Data Analysis ("the heatmap tool", owner 2026-10-29: brought forward from stage 4), working with CAN FD.
 
@@ -172,7 +193,30 @@ levels of all 512 bits (64 of the classic ID) equal those computed from the fram
 30 000 frames of one FD ID (bounded byte graphs, exact counts, time); live fd-mix traffic (the list fills while the
 window is open, analyses equal the trace's frames, twice); Save details to file. Pictures in light and dark.
 
-## Stage 4: live RE tools (switched on 2026-10-30)
+### Temporal Graph (switched on 2026-10-29)
+
+Brought forward from stage 4 (owner 2026-10-29): RE Tools > Temporal Graph, which IDs appear when.
+
+| What | How |
+| --- | --- |
+| The crash | SavvyCAN's map was ID range / 30 x seconds x 4 cells, sized in `int` in QCustomPlot (G1, G2): 20 000 frames of J1939-style 29-bit IDs over 60 s ask for 1.6 G cells and the page aborts ("Aborted()", measured on the unchanged window 2026-10-29); plus a circle per frame redrawn on every pan and zoom (G3), and no live update (G4) |
+| The map | `TemporalDensity` (`re/temporalgraphwindow.h`): frame counts per (time column, ID). At most **512 columns**, each a power of two µs wide; the width doubles as the capture grows (columns added in pairs), so 10 s and 10 h both fit. **One row per distinct ID** (11-bit and 29-bit apart, in ID order, labelled in hex), at most 2048 rows; frames of further IDs are counted and named in the summary line, not drawn. About 2 KB of counts per ID plus the map's cells (12 bytes each): ~0.25 MB for 30 IDs, whatever the number of frames |
+| Drawing | One `QCPColorMap` of the counts (log colour scale, empty cells transparent), a summary line (IDs, frames, span, column width); no point per frame. One gradient (blue to red) for light and dark; the plot is themed as every plot |
+| Live | `framesUpdated(n)` adds the new frames: O(new frames) per GUI tick. New frames are found by the newest frame counted, not by an index (the trace is a ring; a filtered list's tail isn't counted twice). The counts keep the **whole session**, also after the trace's ring has dropped the oldest frames. -1/-2 (cleared, a file loaded, a new set) count the list again, in slices of ~25 ms, so the page keeps running on a big capture; the ">2000 frames, may crash" question is gone. The view shows the whole capture and follows it until the user zooms or pans (R: whole capture again) |
+| Browser | A framed dialog (title bar, close button), as the graphing window. Time axis in the app's time style |
+| QCustomPlot | `QCPColorMapData`: cell count in `size_t` and capped at 2^31, no cell access without an array, `fill()` of any value (it was a `memset` of a double) |
+| Limits | The map's resolution is the column width (span / 256..512): zooming in shows wider cells, not finer ones. Over 2048 distinct IDs, the rest are counted, not shown. In overwrite mode with the filtered list (Main/UseFiltered) live counts follow the trace's rows, not the bus |
+
+Tests: `tests/web` `temporal.spec`: a 1-hour log of 600 000 frames (30 IDs: Leaf, J1939-style 29-bit, 11- and
+29-bit CAN FD 64 bytes with BRS; one ID only in the second half hour) loaded and the window opened: every ID with its
+frame count, the whole hour on the time axis, 0x7E8 from the second half, one plottable, < 1 MB; it opens in
+0.4 s with no event-loop gap over 253 ms (the 40 MB file itself loads in ~1.5 s through File > Load Log File since the leaner loader; ~70 s before). Live: a Leaf bus, then 20 s of 64-byte FD at
+16 000 frames/s with a 50 000-frame trace ring: every frame counted exactly once across the ring's wraps (323 344
+frames, 275 000 of them evicted from the trace), 45 IDs, memory flat (0.35-0.40 MB for counts and map). Pictures in light and dark.
+A native harness of the same code (Qt 6.4, offscreen) built the 600 000 frames in 77 ms and counted 1.19 M live frames
+across 1.14 M ring evictions exactly.
+
+### Live RE tools (switched on 2026-10-30)
 
 RE Tools > **Sniffer**, **Flow View**, **Range State** and **Single/Multi State**: SavvyCAN's windows and controls,
 with CAN FD, the dark theme, bounded memory and live updates on the ring-buffer trace. What they share (no UI, tested
@@ -228,6 +272,75 @@ constant through each held state and differ between states matches too (16 such 
 sniffer keeps at most 4096 IDs. Flow View's time axis is in µs or seconds (SavvyCAN's setting), not the app's time
 style.
 
+### File-based RE tools (switched on 2026-10-30)
+
+RE Tools > **Capture Bisector**, **File Comparison**, **DBC Comparison** and **Frame Search**, SavvyCAN's windows, on the
+desktop and in the browser, with CAN FD. Their logic is in `re/filetools.{h,cpp}` (apart from the windows, so
+`tests/desktop` `tst_filetools` runs it, also under ASan/UBSan).
+
+| What | How |
+| --- | --- |
+| Browser | Framed dialogs (title bar, close button), as the graphing window. Saved files are downloads: the bisector's split as SavvyCAN's GVRET CSV (`BisectedFrames.csv`, what Load Log File and SavvyCAN read; no format choice in the browser), the comparisons' details as `FileComparison.txt` / `DBCComparison.txt` |
+| Capture Bisector | SavvyCAN's splits (frame number, percentage, ID range, bus; lower/upper part). The split is kept in a compact `FrameStore` (36 bytes a classic frame, 92 a 64-byte FD one; SavvyCAN's `QVector<CommFrame>`: ~100-160 in the browser); one pass over the trace in slices under one lock each (SavvyCAN read each row up to three times). The ID lists from a set in one pass (SavvyCAN looked each frame's ID up in a list: frames x IDs) and kept up to date: a loaded file (-1) refreshes them as -2 does, new live frames add their IDs and the count. **Replace main list** moves the split into the trace and tells every window (`framesUpdated(-2)`, as Crop Log; SavvyCAN told none: W2); the split is then empty (moved, not copied) |
+| File Comparison | Both sides through the window's own buttons: in the browser the browser's file picker (`QFileDialog::getOpenFileContent`) and File > Load Log File's type detection and limits (GVRET CSV up to 1000 MB, others 200 MB), through one small shared helper `FrameFileIO::loadLogData` (GVRET CSV parsed in place into a store; other formats via SavvyCAN's loaders from a temporary file). **Each file is summarised as it loads and its frames dropped** (chunk by chunk): per ID the values seen per byte and the bits ever set for all 64 bytes (~2.1 KB an ID) and the DBC signals' values; SavvyCAN kept every frame of both files and its `int values[8][256]` / 64-bit bitmap overflowed on FD frames. Side 2 still takes more files until Clear Frames. The tree as SavvyCAN's, a byte node per byte of the longest frame; no tree items made that aren't shown (SavvyCAN leaked 256 per byte per comparison) |
+| DBC Comparison | Its own two DBC files (in the browser: the picker, a temporary file for SavvyCAN's DBC loader, deleted after; not the DBC File Manager's DBCs). Fixed: the loop over the second DBC's signals ran on the message index (`for (int j = 0; i < ...; i++)`: skipped messages, read past the list); unchanged signals' tree items leaked; the DBCs leaked at close. A DBC is put in place only once loaded whole (a second pick while the first was still loading compared half a file) |
+| Frame Search | Signals anywhere in a 64-byte frame (start bit 0..511, 1..64 bits; SavvyCAN let the length go to 512, past `processIntegerSignal`'s 64), the bit grid as large as the frames (8/16/32/64 bytes: the ID's frames, the length filter, the bits picked), a value as decimal, `0x` hex or `0b` binary (integers compared exactly as bits, also 64-bit and a signed signal's pattern), only frames that hold the whole signal match a value (SavvyCAN read a too-short frame as 0, and frames not covering the start bit matched any value). Matches stay valid while new frames only add to the trace (they were cleared on every GUI tick), cleared when the trace's ring drops frames, on a load, clear or filter change. Searches the trace in slices |
+| Large captures | Every pass yields to the page at most every 100 ms (`FrameFileIO::keepUiAlive`) |
+
+Measured (headless Chromium, `retools-big.spec`, 2026-10-30) on the 1-hour log of 600 000 frames (40 MB, 30 IDs, FD 64):
+bisector opens in 0.3 s, a 50 % split 51 ms (300 000 frames: 12.8 MB in the store, the heap +14.4 MB), frame search
+83 ms (468 matches); file comparison of the log and a variant: each 600 000-frame file through the picker 0.56-0.64 s,
+the comparison 5 ms, the two summaries 131 KB, the heap +2.8 MB after both files (not 2 x 600 000 frames); the page's
+event loop never paused more than 210 ms (0 ms for the bisector and the search). DBC Comparison: 1000 messages each
+side compared in < 1 s, but **SavvyCAN's DBC loader takes ~10 s for a 3000-line DBC in the browser** (it runs the event
+loop every 100 lines; measured before the merge with stage 3, whose loader runs the events at most every 100 ms: a
+1 000-message DBC then loads in 2.7 s through the File Manager).
+
+Limits: like SavvyCAN an ID is one number (11- and 29-bit of the same value are one ID) in all four; the bisector
+splits by frame number/percentage, not by a time typed in (as SavvyCAN; the frames are in time order); the file
+comparison keeps up to 10 000 distinct values per DBC signal and ID (then notes it), and a DBC loaded after the files
+applies from the next file loaded; the bisector's Save in the browser is GVRET CSV only. Frame Search's DBC signal
+group lists the DBC File Manager's files (stage 3): filled again when a DBC is loaded or removed while the window is
+open and each time it is shown (`DBCHandler::filesChanged`, added with the merge; Signal Viewer follows it too: SavvyCAN
+filled both lists only when the window was made).
+
+Tests: `tests/web` `bisect.spec` (a frame only in a 1 s window found by halves, Replace, percentage, ID, bus; the saved
+split read back), `filecompare.spec` (two logs differing in known IDs/bytes/bits incl. byte 40 and bit 511 of FD frames,
+a candump log added, unique to side 1, save, clear), `dbccompare.spec` (known node/message/signal differences, an FD
+signal at byte 63; 1000 messages), `search.spec` (byte 40 hex, a Motorola pattern ending at bit 511, short frames, scale,
+any change, Tx/length; row for row; Next/Previous select the trace's rows), `retools-big.spec` (above); pictures light
+and dark (`results/{bisect,filecompare,dbccompare,search}-{light,dark}.png`). `tests/desktop` `tst_filetools`: the same
+logic natively (bisect rules, FD summaries and tree, the DBC tree from two DBC files, search values/patterns/fit,
+`loadLogData`), plain and ASan/UBSan.
+
+### Stage 3 and 4 together (merged 2026-10-30)
+
+What only shows with both stages on, and what the merge changed:
+- **Frame Search's DBC signals** (*Search a DBC Signal*) list the DBC File Manager's files now that stage 3 is on. SavvyCAN
+  filled the node box only when the window was made, so a DBC loaded later never showed in it (nor in Signal Viewer's):
+  `DBCHandler::filesChanged` (a file loaded, created or moved) refills both, Frame Search also each time it is shown,
+  keeping the node, message and signal picked. `search.spec`: the boxes fill while the window is open, Copy Signal
+  Parameters (a Motorola signal with an offset; an Intel word at byte 40 of a 64-byte FD frame), a physical value found
+  row for row.
+- **A DBC loaded while the live tools run** (`combined.spec`): Sniffer and Flow View in Live Mode keep following the
+  bus, the trace decodes the DBC's messages exactly, the open Signal Viewer lists the new DBC.
+- **Dark theme, every window** (`combined.spec`): the DBC File Manager and editor, Signal Viewer, the eight RE tools,
+  Frame Data Analysis and Temporal Graph opened in dark: none adds a light background (0.0-0.3 % near-white pixels;
+  mean luminance 48-90, Temporal Graph 121 from its heat colours).
+- `candatagrid.cpp` has both branches' changes: stage 3's signal text colours (black or white on each signal's colour)
+  and stage 4-live's bit numbers laid out once (`QStaticText`).
+- `tst_filetools` no longer needs LSan suppressions for `DBCFile` (stage 3 frees DBC files): clean under ASan.
+- **Qt 6.12 with the accessibility layer on** (every browser test; a screen reader user): choosing RE Tools > Frame
+  Search while its window is open (`show()` + `raise()`, SavvyCAN's code) and then clicking in it hangs the page
+  (the page busy in Qt's code; without the accessibility layer it works). The specs open each window once and drive a
+  window that is under another through the test hook. docs/TESTING.md "Known issues".
+- **Real rc1** (rig, 2026-10-30, rc1 firmware 0.1.4, CAN FD 500k/2M; `tests/web/rig` `dbc` and `retools` specs, the
+  peer's new `dbc` and `re` patterns): Interpret Frames decodes all 1 200 frames of the DBC's messages (2 850 signal
+  values) as the DBC says; Signal Viewer live and at the newest value; Sniffer every ID with its newest bytes and every
+  frame counted; Flow View every frame of an ID byte for byte; Range State exactly SavvyCAN's candidates with the
+  planted triangles; Single/Multi State realtime finds exactly the bits the peer toggled on the window's cue (17 s
+  run); Frame Search a value at the known frames. Everything else on the rig passed again on the merge.
+
 ## Done: logs longer than 71.6 minutes (2026-10-29, Next item 1)
 
 GVRET sends a frame's time as 32-bit µs, so 2^32 µs (71.6 min) after the device's clock started the times began
@@ -246,29 +359,6 @@ from the Kvaser, 450 000 rows in the download, all in order, none missing; times
 = 4 295.0 s), 10 000 µs apart across the wrap as before it, never going back (steps 0.2-19.9 ms: the peer's timing).
 `MQTT_BUS` (not in the browser build) has the same
 int32 time basis as upstream's GVRET had.
-
-## Temporal Graph (stage 4, switched on 2026-10-29)
-
-Brought forward from stage 4 (owner 2026-10-29): RE Tools > Temporal Graph, which IDs appear when.
-
-| What | How |
-| --- | --- |
-| The crash | SavvyCAN's map was ID range / 30 x seconds x 4 cells, sized in `int` in QCustomPlot (G1, G2): 20 000 frames of J1939-style 29-bit IDs over 60 s ask for 1.6 G cells and the page aborts ("Aborted()", measured on the unchanged window 2026-10-29); plus a circle per frame redrawn on every pan and zoom (G3), and no live update (G4) |
-| The map | `TemporalDensity` (`re/temporalgraphwindow.h`): frame counts per (time column, ID). At most **512 columns**, each a power of two µs wide; the width doubles as the capture grows (columns added in pairs), so 10 s and 10 h both fit. **One row per distinct ID** (11-bit and 29-bit apart, in ID order, labelled in hex), at most 2048 rows; frames of further IDs are counted and named in the summary line, not drawn. About 2 KB of counts per ID plus the map's cells (12 bytes each): ~0.25 MB for 30 IDs, whatever the number of frames |
-| Drawing | One `QCPColorMap` of the counts (log colour scale, empty cells transparent), a summary line (IDs, frames, span, column width); no point per frame. One gradient (blue to red) for light and dark; the plot is themed as every plot |
-| Live | `framesUpdated(n)` adds the new frames: O(new frames) per GUI tick. New frames are found by the newest frame counted, not by an index (the trace is a ring; a filtered list's tail isn't counted twice). The counts keep the **whole session**, also after the trace's ring has dropped the oldest frames. -1/-2 (cleared, a file loaded, a new set) count the list again, in slices of ~25 ms, so the page keeps running on a big capture; the ">2000 frames, may crash" question is gone. The view shows the whole capture and follows it until the user zooms or pans (R: whole capture again) |
-| Browser | A framed dialog (title bar, close button), as the graphing window. Time axis in the app's time style |
-| QCustomPlot | `QCPColorMapData`: cell count in `size_t` and capped at 2^31, no cell access without an array, `fill()` of any value (it was a `memset` of a double) |
-| Limits | The map's resolution is the column width (span / 256..512): zooming in shows wider cells, not finer ones. Over 2048 distinct IDs, the rest are counted, not shown. In overwrite mode with the filtered list (Main/UseFiltered) live counts follow the trace's rows, not the bus |
-
-Tests: `tests/web` `temporal.spec`: a 1-hour log of 600 000 frames (30 IDs: Leaf, J1939-style 29-bit, 11- and
-29-bit CAN FD 64 bytes with BRS; one ID only in the second half hour) loaded and the window opened: every ID with its
-frame count, the whole hour on the time axis, 0x7E8 from the second half, one plottable, < 1 MB; it opens in
-0.4 s with no event-loop gap over 253 ms (the 40 MB file itself loads in ~1.5 s through File > Load Log File since the leaner loader; ~70 s before). Live: a Leaf bus, then 20 s of 64-byte FD at
-16 000 frames/s with a 50 000-frame trace ring: every frame counted exactly once across the ring's wraps (323 344
-frames, 275 000 of them evicted from the trace), 45 IDs, memory flat (0.35-0.40 MB for counts and map). Pictures in light and dark.
-A native harness of the same code (Qt 6.4, offscreen) built the 600 000 frames in 77 ms and counted 1.19 M live frames
-across 1.14 M ring evictions exactly.
 
 ## Next (owner 2026-10-29)
 
@@ -311,44 +401,6 @@ happens (no chooser, no error). File > Preferences > **Connect to the last devic
 (`Main/SaveRestoreConnections`, upstream's "Save/Restore CAN bus connections"; on by default in the browser).
 Tests: `tests/web` autoconnect spec; with the real rc1 on the rig (`rig/autoconnect.spec`, GVRET and LAWICEL with CAN FD,
 2026-10-29), through the bridge, not Chrome's own Web Serial (which loses USB serial ports on the rig's Linux).
-
-## Stage 4: file-based RE tools (switched on 2026-10-30)
-
-RE Tools > **Capture Bisector**, **File Comparison**, **DBC Comparison** and **Frame Search**, SavvyCAN's windows, on the
-desktop and in the browser, with CAN FD. Their logic is in `re/filetools.{h,cpp}` (apart from the windows, so
-`tests/desktop` `tst_filetools` runs it, also under ASan/UBSan).
-
-| What | How |
-| --- | --- |
-| Browser | Framed dialogs (title bar, close button), as the graphing window. Saved files are downloads: the bisector's split as SavvyCAN's GVRET CSV (`BisectedFrames.csv`, what Load Log File and SavvyCAN read; no format choice in the browser), the comparisons' details as `FileComparison.txt` / `DBCComparison.txt` |
-| Capture Bisector | SavvyCAN's splits (frame number, percentage, ID range, bus; lower/upper part). The split is kept in a compact `FrameStore` (36 bytes a classic frame, 92 a 64-byte FD one; SavvyCAN's `QVector<CommFrame>`: ~100-160 in the browser); one pass over the trace in slices under one lock each (SavvyCAN read each row up to three times). The ID lists from a set in one pass (SavvyCAN looked each frame's ID up in a list: frames x IDs) and kept up to date: a loaded file (-1) refreshes them as -2 does, new live frames add their IDs and the count. **Replace main list** moves the split into the trace and tells every window (`framesUpdated(-2)`, as Crop Log; SavvyCAN told none: W2); the split is then empty (moved, not copied) |
-| File Comparison | Both sides through the window's own buttons: in the browser the browser's file picker (`QFileDialog::getOpenFileContent`) and File > Load Log File's type detection and limits (GVRET CSV up to 1000 MB, others 200 MB), through one small shared helper `FrameFileIO::loadLogData` (GVRET CSV parsed in place into a store; other formats via SavvyCAN's loaders from a temporary file). **Each file is summarised as it loads and its frames dropped** (chunk by chunk): per ID the values seen per byte and the bits ever set for all 64 bytes (~2.1 KB an ID) and the DBC signals' values; SavvyCAN kept every frame of both files and its `int values[8][256]` / 64-bit bitmap overflowed on FD frames. Side 2 still takes more files until Clear Frames. The tree as SavvyCAN's, a byte node per byte of the longest frame; no tree items made that aren't shown (SavvyCAN leaked 256 per byte per comparison) |
-| DBC Comparison | Its own two DBC files (in the browser: the picker, a temporary file for SavvyCAN's DBC loader, deleted after; not the DBC File Manager's DBCs, `Feature::DBC` stays off here). Fixed: the loop over the second DBC's signals ran on the message index (`for (int j = 0; i < ...; i++)`: skipped messages, read past the list); unchanged signals' tree items leaked; the DBCs leaked at close. A DBC is put in place only once loaded whole (a second pick while the first was still loading compared half a file) |
-| Frame Search | Signals anywhere in a 64-byte frame (start bit 0..511, 1..64 bits; SavvyCAN let the length go to 512, past `processIntegerSignal`'s 64), the bit grid as large as the frames (8/16/32/64 bytes: the ID's frames, the length filter, the bits picked), a value as decimal, `0x` hex or `0b` binary (integers compared exactly as bits, also 64-bit and a signed signal's pattern), only frames that hold the whole signal match a value (SavvyCAN read a too-short frame as 0, and frames not covering the start bit matched any value). Matches stay valid while new frames only add to the trace (they were cleared on every GUI tick), cleared when the trace's ring drops frames, on a load, clear or filter change. Searches the trace in slices |
-| Large captures | Every pass yields to the page at most every 100 ms (`FrameFileIO::keepUiAlive`) |
-
-Measured (headless Chromium, `retools-big.spec`, 2026-10-30) on the 1-hour log of 600 000 frames (40 MB, 30 IDs, FD 64):
-bisector opens in 0.3 s, a 50 % split 51 ms (300 000 frames: 12.8 MB in the store, the heap +14.4 MB), frame search
-83 ms (468 matches); file comparison of the log and a variant: each 600 000-frame file through the picker 0.56-0.64 s,
-the comparison 5 ms, the two summaries 131 KB, the heap +2.8 MB after both files (not 2 x 600 000 frames); the page's
-event loop never paused more than 210 ms (0 ms for the bisector and the search). DBC Comparison: 1000 messages each
-side compared in < 1 s, but **SavvyCAN's DBC loader takes ~10 s for a 3000-line DBC in the browser** (it runs the event
-loop every 100 lines; the DBC loader is stage 3's).
-
-Limits: like SavvyCAN an ID is one number (11- and 29-bit of the same value are one ID) in all four; the bisector
-splits by frame number/percentage, not by a time typed in (as SavvyCAN; the frames are in time order); the file
-comparison keeps up to 10 000 distinct values per DBC signal and ID (then notes it), and a DBC loaded after the files
-applies from the next file loaded; Frame Search's DBC signal group lists DBC File Manager files, so it is empty until
-stage 3; the bisector's Save in the browser is GVRET CSV only.
-
-Tests: `tests/web` `bisect.spec` (a frame only in a 1 s window found by halves, Replace, percentage, ID, bus; the saved
-split read back), `filecompare.spec` (two logs differing in known IDs/bytes/bits incl. byte 40 and bit 511 of FD frames,
-a candump log added, unique to side 1, save, clear), `dbccompare.spec` (known node/message/signal differences, an FD
-signal at byte 63; 1000 messages), `search.spec` (byte 40 hex, a Motorola pattern ending at bit 511, short frames, scale,
-any change, Tx/length; row for row; Next/Previous select the trace's rows), `retools-big.spec` (above); pictures light
-and dark (`results/{bisect,filecompare,dbccompare,search}-{light,dark}.png`). `tests/desktop` `tst_filetools`: the same
-logic natively (bisect rules, FD summaries and tree, the DBC tree from two DBC files, search values/patterns/fit,
-`loadLogData`), plain and ASan/UBSan.
 
 ## Stages switched on: `enabledfeatures.h`
 
