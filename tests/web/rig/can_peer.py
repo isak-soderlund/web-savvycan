@@ -11,7 +11,8 @@ frames, through SocketCAN with nothing but the standard library. Used by peer.mj
   can_peer.py release                rc1's own SocketCAN interface (gs_usb) down: while it is up the firmware gives
                                      the CAN channel to gs_usb and refuses it on the serial port; prints the names
                                      it took down (JSON list)
-  can_peer.py reclaim NAME...        those interfaces up again
+  can_peer.py reclaim NAME...        those interfaces up again (with the bitrate they had when released, if rc1 was
+                                     unplugged in between and the interface came back without one)
 
 Patterns: classic (8-byte frames, sequence number in data[0..3], IDs 0x100.. in turn), fd-mix (every FD length with
 BRS on and off, 11/29-bit, classic and remote frames: the fake rc1's fd-mix), fd64 (64-byte BRS frames, sequence
@@ -181,16 +182,41 @@ def rc1_netdevs():
     return found
 
 
+RELEASED = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "can_peer-released.json")
+
+
 def cmd_release(a):
     down = [n for n, up in sorted(rc1_netdevs().items()) if up]
+    # their settings, for reclaim: an unplug in between makes the interface anew, without a bitrate
+    saved = {n: state(n) for n in down}
     for n in down:
         ip("set", n, "down")
+    if down:
+        with open(RELEASED, "w") as fh:
+            json.dump(saved, fh)
     print(json.dumps(down))
 
 
 def cmd_reclaim(a):
+    try:
+        saved = json.load(open(RELEASED))
+    except (OSError, ValueError):
+        saved = {}
+    present = rc1_netdevs()
     for n in a.names:
+        if n not in present:
+            print(f"reclaim: {n} is not rc1's now (present: {sorted(present)})", file=sys.stderr)
+            continue
+        cfg = saved.get(n, {})
+        if not state(n).get("bitrate") and cfg.get("bitrate"):  # made anew (rc1 unplugged and back): set it up again
+            args = ["set", n, "type", "can", "bitrate", str(cfg["bitrate"])]
+            args += ["dbitrate", str(cfg["dbitrate"]), "fd", "on"] if cfg.get("fd") and cfg.get("dbitrate") else []
+            ip(*args)
         ip("set", n, "up")
+    try:
+        os.remove(RELEASED)
+    except OSError:
+        pass
     print(json.dumps(a.names))
 
 
