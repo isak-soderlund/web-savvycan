@@ -1,5 +1,6 @@
 #include <QtDebug>
 #include "utility.h"
+#include "showwindow.h"   // web-savvycan: to the front (its tab in the browser)
 #include "helpwindow.h"
 #include "ui_helpwindow.h"
 
@@ -71,7 +72,7 @@ void HelpWindow::showHelp(QString help)
     ui->textHelp->setSource(url);
 
     readSettings();
-    self->show();
+    showWindow(self);
 }
 
 

@@ -8,6 +8,8 @@ class CommFrameModel;
 
 namespace TestHook {
 void install(CommFrameModel *model);   // once, after the main window exists
+void installFileTools();                // the file-based RE tools (testhook_filetools.cpp), called by install()
+void installReTools();                 // the live RE tools' hooks (testhook_retools.cpp), from install()
 }
 
 #endif // TESTHOOK_H

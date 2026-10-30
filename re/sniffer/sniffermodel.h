@@ -49,6 +49,16 @@ public:
     void setExpireInterval(int newVal);
     void updateNotchPoint();
 
+    // web-savvycan: at most kMaxIds IDs (a bus of random 29-bit IDs would grow the list without end with
+    // Never Expire); frames of further IDs are counted, not shown.
+    static constexpr int kMaxIds = 4096;
+    // For the test hook (testhook.cpp).
+    qint64 framesSeen() const { return mFramesSeen; }
+    qint64 framesOfHiddenIds() const { return mHiddenFrames; }
+    const QMap<quint32, SnifferItem*> &items() const { return mFilter ? mFilters : mMap; }
+    const QMap<quint32, SnifferItem*> &allItems() const { return mMap; }
+    bool filtering() const { return mFilter; }
+
 
 public slots:
     void update(CANConnection*, QVector<CommFrame>&);
@@ -59,15 +69,19 @@ signals:
     void idChange(int, bool);
 
 private:
+    void rebuildRows();
+
     QMap<quint32, SnifferItem*> mMap;
     QMap<quint32, SnifferItem*> mFilters;
+    QVector<SnifferItem*>       mRows;      // web-savvycan: the shown map's items in row order (index() was O(rows))
     bool                        mFilter;
     bool                        mNeverExpire;
     bool                        mFadeInactive;
     bool                        mMuteNotched;
-    bool                        mDarkMode;
     quint32                     mTimeSequence;
     quint32                     mExpireInterval;
+    qint64                      mFramesSeen = 0;
+    qint64                      mHiddenFrames = 0;
 };
 
 #endif // SNIFFERMODEL_H

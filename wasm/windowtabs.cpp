@@ -509,10 +509,19 @@ void Host::select(int index)
     QWidget *target = index == 0 ? mainPage : tabs[index - 1]->page;
     stack->setCurrentWidget(target);   // raised above the other pages
     busy = false;
+    // The keyboard focus into the page shown, once, and only to a widget of that page: the focus chain runs through
+    // every page (the others are covered, not hidden), and a focus moved to a covered page and back again made Qt's
+    // browser accessibility pass it to and fro between the two forever (the page hung, 2026-10-30).
     QWidget *focusOn = index == 0 ? mainPage : tabs[index - 1]->tool;
-    if (QWidget *f = focusOn->focusWidget(); f && f->isVisible()) f->setFocus(Qt::TabFocusReason);
-    else focusOn->setFocus(Qt::TabFocusReason);
-    if (index > 0 && !focusOn->hasFocus()) focusOn->nextInFocusChain()->setFocus(Qt::TabFocusReason);
+    QWidget *f = focusOn->focusWidget();
+    if (!f || !f->isVisible() || !focusOn->isAncestorOf(f)) {
+        f = nullptr;
+        for (QWidget *w = focusOn->nextInFocusChain(); w && w != focusOn; w = w->nextInFocusChain()) {
+            if (!focusOn->isAncestorOf(w)) break;
+            if (w->isVisible() && w->isEnabled() && (w->focusPolicy() & Qt::TabFocus)) { f = w; break; }
+        }
+    }
+    if (f && !f->hasFocus()) f->setFocus(Qt::OtherFocusReason);
     updateCloseButtons();
     bar->update();
 }

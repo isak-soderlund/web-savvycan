@@ -3,6 +3,7 @@
 #include "theme.h"
 
 #include <QPainter>
+#include <QStaticText>
 #include <QDebug>
 #include <QMouseEvent>
 #include <QRandomGenerator>
@@ -365,6 +366,7 @@ void CANDataGrid::paintGridCells()
             prevByte = refData[byteIdx];
             int bitIdx = ((neededXDivisions - 1) - x) & 7;
             bit = (byteIdx * 8) + bitIdx;
+            bool signalCell = false; // a cell in a signal's colour (the DBC signal editor)
             thisBit = false;
             prevBit = false;
             if ((thisByte & (1 << bitIdx)) == (1 << bitIdx)) thisBit = true;
@@ -415,6 +417,7 @@ void CANDataGrid::paintGridCells()
                                 }
                                 idx = idx % signalColors.length(); //can only use as many colors as have been defined
                                 painter->setBrush(QBrush(signalColors[idx]));
+                                signalCell = true;
                             }
                         }
                         else painter->setBrush(whiteBrush);
@@ -426,7 +429,8 @@ void CANDataGrid::paintGridCells()
             switch (textStates[byteIdx][bitIdx])
             {
             case GridTextState::NORMAL:
-                if (darkTheme) painter->setPen(QPen(textOn(painter->brush())));
+                if (signalCell) painter->setPen(QPen(textOnSignal(painter->brush().color()))); // web-savvycan (stage 3)
+                else if (darkTheme) painter->setPen(QPen(textOn(painter->brush())));
                 else if (thisBit && prevBit) painter->setPen(QPen(Qt::gray));
                 else painter->setPen(QPen(Qt::black));
                 painter->setFont(mainFont);
@@ -454,7 +458,17 @@ void CANDataGrid::paintGridCells()
             //if (thisBit) painter->setFont(boldFont);
            // else painter->setFont(mainFont);
             //painter->setFont(smallFont);
-            if (gridMode != GridMode::SIGNAL_VIEW)
+            if (gridMode != GridMode::SIGNAL_VIEW && textStates[byteIdx][bitIdx] != GridTextState::BOLD_BLUE)
+            {
+                // web-savvycan: the bit numbers' layouts are made once per font size (512 drawText layouts a paint
+                // were most of a 64-byte grid's time: Flow View redraws it 4 times a second in Live Mode); centred
+                // as drawText(AlignCenter) does
+                const QStaticText &label = bitLabel(bit);
+                const QSizeF size = label.size();
+                painter->drawStaticText(QPointF(nearX + x * xSector + (xSector - size.width()) / 2.0,
+                                                nearY + y * ySector + (ySector - size.height()) / 2.0), label);
+            }
+            else if (gridMode != GridMode::SIGNAL_VIEW)
                 painter->drawText(QRect(nearX + (x * xSector), nearY + (y * ySector), xSector, ySector), Qt::AlignCenter, QString::number(bit)); //center center of grid
             else
                 painter->drawText(QRect(nearX + (x * xSector), nearY + (y * ySector), xSector, ySector), Qt::AlignLeft, QString::number(bit)); //upper left of grid
@@ -473,7 +487,8 @@ void CANDataGrid::paintGridCells()
     if ( gridMode == GridMode::SIGNAL_VIEW )
     {
         painter->setFont(sigNameFont);
-        painter->setPen(QPen(Qt::black)); // on the signals' bright colours, in both themes
+        // web-savvycan (stage 3): each name black or white, whichever reads on its signal's colour (black on the dark
+        // blues and purples of the list could not be read)
 
         for (y = 0; y < neededYDivisions; y++)
         {
@@ -489,6 +504,9 @@ void CANDataGrid::paintGridCells()
                     if ((usedSigName.length() > 0) && (prevSigName != usedSigName) )
                     {
                         prevSigName = usedSigName;
+                        int colorIdx = 0;
+                        for (char c : usedSigName.toUtf8()) colorIdx += c;
+                        painter->setPen(QPen(textOnSignal(signalColors[colorIdx % signalColors.length()])));
 
                         int textWidth = smallMetric->horizontalAdvance(prevSigName);
 
@@ -533,6 +551,13 @@ void CANDataGrid::paintGridCells()
     }
 }
 
+// web-savvycan (stage 3): text that reads on a signal's colour in the DBC signal editor, in both themes
+QColor CANDataGrid::textOnSignal(const QColor &c)
+{
+    const int luma = (c.red() * 299 + c.green() * 587 + c.blue() * 114) / 1000;
+    return luma >= 140 ? QColor(Qt::black) : QColor(Qt::white);
+}
+
 // web-savvycan (dark theme): text that reads on a cell: dark on light solid colours, light on dark ones and on the
 // gradients and the hatch (drawn over the dark background).
 QColor CANDataGrid::textOn(const QBrush &brush) const
@@ -558,6 +583,25 @@ int CANDataGrid::getSignalRowRun(QString sigName, int startBit)
     }
 
     return width;
+}
+
+// web-savvycan: bit number n laid out in mainFont, kept until the font's size changes.
+const QStaticText &CANDataGrid::bitLabel(int bit)
+{
+    if (bitLabelFont != mainFont)
+    {
+        bitLabels.clear();
+        bitLabelFont = mainFont;
+    }
+    if (bitLabels.empty()) bitLabels.resize(512);
+    QStaticText &label = bitLabels[size_t(bit & 511)];
+    if (label.text().isEmpty())
+    {
+        label.setText(QString::number(bit));
+        label.setTextFormat(Qt::PlainText);
+        label.prepare(QTransform(), mainFont);
+    }
+    return label;
 }
 
 void CANDataGrid::paintCommonEnding()

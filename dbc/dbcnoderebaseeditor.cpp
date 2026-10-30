@@ -13,6 +13,9 @@ DBCNodeRebaseEditor::DBCNodeRebaseEditor(QWidget *parent) :
     ui(new Ui::DBCNodeRebaseEditor)
 {
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint); // web-savvycan: framed in the browser
+#endif
 
     readSettings();
 

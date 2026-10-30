@@ -218,3 +218,29 @@ test('many tabs stay reachable: they shrink to elided titles, then the bar scrol
   expect(s.tabs.map((t) => t.class)).toEqual(['MainWindow']);
   expect(s.current).toBe(0);
 });
+
+/** The page answers within 5 s (a hung page never answers an evaluate). */
+const answers = (page) => Promise.race([page.evaluate(() => true), new Promise((r) => setTimeout(() => r(false), 5000))]);
+
+test('reopening a window and clicking in it never hangs the page (screen-reader layer on)', async ({ app, page }) => {
+  // the connection tab closed by connect(), opened again with a live connection, then a click in it: hung the page
+  // through Qt's browser accessibility (focus passed to and fro with a covered page) before the fix in select()
+  await app.open();
+  await app.connect({ protocol: 'gvret', fd: false });
+  await app.menu('Connection', 'Open Connection Window');
+  await waitCurrent(page, 'ConnectionWindow');
+  await app.click('checkbox', 'Enable Console');
+  expect(await answers(page), 'the page answers after a click in the reopened connection tab').toBe(true);
+  await app.click('checkbox', 'Enable Console');
+  await app.closeConnectionWindow();
+  // TESTING.md's old known issue: RE Tools > Frame Search again while it was open, then a click in it
+  await app.menu('RE Tools', 'Frame Search');
+  await waitCurrent(page, 'SearchWindow');
+  await clickTab(page, 0);
+  await app.menu('RE Tools', 'Frame Search');
+  await waitCurrent(page, 'SearchWindow');
+  await page.mouse.click(640, 400);
+  await page.getByRole('button').last().click({ force: true, timeout: 5000 }).catch(() => {});
+  expect(await answers(page), 'the page answers after clicks in Frame Search opened again').toBe(true);
+  expect((await tabs(page)).tabs.filter((t) => t.class === 'SearchWindow').length, 'one Frame Search tab').toBe(1);
+});

@@ -1,6 +1,7 @@
 #include <QVariant>
 #include <QDebug>
 #include "snifferitem.h"
+#include <cstring>
 
 
 SnifferItem::SnifferItem(const CommFrame& pFrame, quint32 seq):
@@ -11,12 +12,16 @@ SnifferItem::SnifferItem(const CommFrame& pFrame, quint32 seq):
 
     if (dataLen > MAX_BYTES) dataLen = MAX_BYTES;
 
-    for (int i = 0; i < dataLen; i++) {
-        mNotch[i] = 0;
-        mMarker.data[i] = 0;
-        mMarker.dataTimestamp[i] = 0;
-        if (i < dataLen) mCurrent.data[i] = data[i];
-        else mCurrent.data[i] = 0;
+    // web-savvycan: every byte of every buffer set (only the first frame's length was: a longer frame of the same ID
+    // later, CAN FD, compared and showed bytes that were never written), and the times
+    mCurrent = fstCan{};
+    mLast = fstCan{};
+    mMarker = fstCan{};
+    memset(mNotch, 0, sizeof(mNotch));
+    mLastTime = mCurrentTime = 0;
+    mCurrSeqVal = seq;
+    for (int i = 0; i < MAX_BYTES; i++) {
+        mCurrent.data[i] = i < dataLen ? data[i] : 0;
         mCurrent.dataTimestamp[i] = seq;
     }
     mLastMarker = mMarker;
@@ -138,7 +143,7 @@ void SnifferItem::update(const CommFrame& pFrame, quint32 timeSeq, bool mute)
         }
     }
     mCurrent.len = dataLen;
-    mCurrentTime = pFrame.timeStamp().microSeconds();
+    mCurrentTime = pFrame.timeStamp().seconds() * 1000000ULL + pFrame.timeStamp().microSeconds(); // web-savvycan: seconds too
 
     /* update marker */
     //We "OR" our stored marker with the changed bits.

@@ -127,6 +127,7 @@ qt_add_executable(SavvyCAN WIN32 MACOSX_BUNDLE
     re/dbccomparatorwindow.cpp re/dbccomparatorwindow.h
     re/discretestatewindow.cpp re/discretestatewindow.h
     re/filecomparatorwindow.cpp re/filecomparatorwindow.h
+    re/filetools.cpp re/filetools.h
     re/flowviewwindow.cpp re/flowviewwindow.h
     re/frameinfowindow.cpp re/frameinfowindow.h
     re/fuzzingwindow.cpp re/fuzzingwindow.h
@@ -134,6 +135,7 @@ qt_add_executable(SavvyCAN WIN32 MACOSX_BUNDLE
     re/isotp_interpreterwindow.cpp re/isotp_interpreterwindow.h
     re/newgraphdialog.cpp re/newgraphdialog.h
     re/rangestatewindow.cpp re/rangestatewindow.h
+    re/retools.cpp re/retools.h
     re/searchwindow.cpp re/searchwindow.h
     re/sniffer/SnifferDelegate.cpp re/sniffer/SnifferDelegate.h
     re/sniffer/snifferitem.cpp re/sniffer/snifferitem.h

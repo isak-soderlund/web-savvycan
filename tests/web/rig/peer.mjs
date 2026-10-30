@@ -1,7 +1,8 @@
 // The rig's side of the real-rc1 tests: the CAN peer (can_peer.py on the Kvaser channel wired to rc1, WSC_RC1_PEER,
 // default hilcan1) and rc1's own SocketCAN interface, which must be down while the browser has rc1's channel.
 import { execFile, execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,14 +19,23 @@ export const peer = {
   /** The rig's own setting (500 kbit/s classic). */
   restore: () => run('restore'),
   state: () => run('state'),
-  /** Sends `pattern` frames; resolves to {sent, seconds, frames: [{id, ext, fd, brs, rtr, data}]}. */
-  send: (pattern, { count, rate = 1000, seconds, list = true } = {}) => runAsync('send', '--pattern', pattern,
+  /** Sends `pattern` frames; resolves to {sent, seconds, frames: [{id, ext, fd, brs, rtr, data}]}. `re`: `state` (the
+   * state bits' value) or `stateFile` (stateFile().file: followed while sending). */
+  send: (pattern, { count, rate = 1000, seconds, list = true, state, stateFile } = {}) => runAsync('send', '--pattern', pattern,
     ...(count ? ['--count', String(count)] : []), '--rate', String(rate), ...(seconds ? ['--seconds', String(seconds)] : []),
-    ...(list ? [] : ['--no-list'])),
+    ...(list ? [] : ['--no-list']), ...(state !== undefined ? ['--state', String(state)] : []),
+    ...(stateFile ? ['--state-file', stateFile] : [])),
   /** rc1's gs_usb interfaces down; returns the names that were up (give them to reclaim()). */
   release: () => run('release'),
   reclaim: (names) => (names && names.length ? run('reclaim', ...names) : []),
 };
+
+/** The `re` pattern's state on cue: a file the running peer follows (send(..., {stateFile})); set(n) writes it. */
+export function stateFile(name = 'rig-re-state') {
+  const file = join(tmpdir(), `${name}-${process.pid}`);
+  writeFileSync(file, '0');
+  return { file, set: (n) => writeFileSync(file, String(n)), remove: () => rmSync(file, { force: true }) };
+}
 
 /**
  * rc1's USB port off (data and 5 V) or on: WSC_RC1_USB is the command (gets `off` / `on`), default resolve-hil's

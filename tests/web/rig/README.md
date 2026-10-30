@@ -5,7 +5,7 @@ Only on the Resolve HIL rig (or a PC wired the same way): rc1 on USB, and a seco
 Kvaser Leaf v3, SocketCAN `hilcan1`) that sends known frames.
 
 ```
-tests/web/run.sh --rig                                   # every rig spec but @long (~3 min)
+tests/web/run.sh --rig                                   # every rig spec but @long (~8 min)
 tests/web/run.sh --rig -- rig/fd.spec.mjs                # one spec
 tests/web/run.sh --rig --long -- rig/timewrap.spec.mjs   # 75 min past rc1's 32-bit µs clock wrap
 xvfb-run -a node tests/web/rig/chrome_check.mjs          # Chromium's OWN Web Serial (no bridge): see below
@@ -21,8 +21,8 @@ the unplug test.
 | --- | --- |
 | `bridge.mjs` | The bridge: the suite's `navigator.serial` mock (`fake/rc1.js`) keeps every Chrome rule it has (user gesture, filters, `bufferSize` chunks, close rules, `disconnect`/`connect`), but its device is `RemoteDevice`: bytes and DTR/RTS go through the test's Node process to `serial_pipe.py`, which has rc1's tty open with pyserial. A shadow of the fake's protocol engine follows what the app asked rc1 for (mode, bus rates, `log()`), so the specs' checks read as with the fake; `encoded` counts the frames rc1 really sent. rc1 unplugged (the pipe loses the port): the page gets `disconnect`; the tty back: `connect` |
 | `serial_pipe.py` | pyserial side (from resolve-hil's `tools/web/serial_pipe.py`, the display's bridge), reads batched |
-| `can_peer.py` | The other node on rc1's bus, stdlib SocketCAN only: `setup` (classic or FD rates, sudo), `send` a pattern (`classic`, `fd64`: sequence numbers; `leaf`: the Leaf IDs; `fd-mix`: every FD length with BRS on/off, 11/29-bit, classic and remote) and print the frames sent; every frame must be **ACKed** (the interface's tx counter), else the queue is dropped and it exits 1 (rc1's channel isn't open); `release`/`reclaim` rc1's own SocketCAN interface (gs_usb, `can0`); `restore` the rig's 500 kbit/s classic |
-| `peer.mjs` | The specs' side: `peer.setup/send/restore`, `rigBus(test, bus)` (rc1 released from gs_usb and the peer set up for a spec file, both put back after), `arrived(page, n)` (waits for n frames: on the real rc1 the fake's `settle()` can't know what is still on its way), `usb('off' | 'on')` (rc1's hub port, data and 5 V) |
+| `can_peer.py` | The other node on rc1's bus, stdlib SocketCAN only: `setup` (classic or FD rates, sudo), `send` a pattern (`classic`, `fd64`: sequence numbers; `leaf`: the Leaf IDs; `fd-mix`: every FD length with BRS on/off, 11/29-bit, classic and remote; `re`: the fake's RE patterns, its state bits from `--state` or a `--state-file` the test writes on cue; `dbc`: the test DBC's messages) and print the frames sent; every frame must be **ACKed** (the interface's tx counter), else the queue is dropped and it exits 1 (rc1's channel isn't open); `release`/`reclaim` rc1's own SocketCAN interface (gs_usb, `can0`); `restore` the rig's 500 kbit/s classic |
+| `peer.mjs` | The specs' side: `peer.setup/send/restore`, `stateFile()` (the `re` state on cue), `rigBus(test, bus)` (rc1 released from gs_usb and the peer set up for a spec file, both put back after), `arrived(page, n)` (waits for n frames: on the real rc1 the fake's `settle()` can't know what is still on its way), `usb('off' | 'on')` (rc1's hub port, data and 5 V) |
 | `*.spec.mjs` | The rig specs (below), Playwright project `rig` (`WSC_RIG=1`; then only this project runs) |
 | `chrome_check.mjs` | The owner's check (docs/TESTING.md) with Chromium's own Web Serial, headed under Xvfb; rc1 allowed for http://127.0.0.1:8752 by Chromium policy (resolve-hil `host/chromium/resolve-hil-serial.json`) |
 
@@ -45,6 +45,8 @@ Settings (env): `WSC_RC1_TTY` (default: the first `/dev/serial/by-id/usb-resolve
 | unplug | rc1's hub port off (data and 5 V) mid-stream: disconnected, no page error; on again: reconnected (canvas clicks, no a11y layer, as traffic.spec), 500 frames exactly |
 | rate | back to back at the bus's limit: 40 000 classic frames at 1 Mbit/s, 20 000 64-byte BRS frames at 500k/4M: every frame, the newest 2000 in order, none dropped, no stall over 1 s (`results/rig-rate-*.json`) |
 | tools | a live graph of 0x1DA (every frame of it, last value, follows the end), Temporal Graph (every frame of every ID, rc1's time span), Frame Data Analysis of 64-byte FD IDs (every bit's changes and sets as the peer sent them); pictures `results/rig-*.png` |
+| dbc | CAN FD 500k/2M, the test DBC (`fixtures/stage3_test.dbc`) loaded through the File Manager, the peer's `dbc` pattern (its messages: classic, FD 12/64, a 29-bit FD ID, a multiplexed one, plus an ID not in it): Interpret Frames decodes every frame as the DBC says (`lib/dbc.mjs`'s decoder on the frames sent, every signal value); Signal Viewer live (each viewed signal takes several values while the peer sends) and at the end the newest frame's value; pictures light and dark |
+| retools | CAN FD 500k/2M, the peer's `re` pattern (the fake's RE patterns): Sniffer (every ID and its newest bytes, every frame counted, the counter marked changing, the constant not); Flow View (every frame of one ID byte for byte, classic and 64-byte FD, times as sent; Live Mode at the newest); Range State (exactly SavvyCAN's candidates on the frames sent, `lib/retools-ref.mjs`, the planted triangles found); Single/Multi State realtime (the peer's state bits toggled on the window's cue through `--state-file`: exactly the planted fields); Frame Search (a value at known frames, a bit's changes where the peer made them); `results/rig-discretestate.json` |
 | timewrap `@long` | 75 min of logging at 100 frames/s, past rc1's clock wrap at 71.6 min: every frame in the download, in order, times increasing and 10 ms apart, memory each minute (`results/rig-timewrap.json`) |
 
 ## Results
@@ -54,6 +56,14 @@ Settings (env): `WSC_RC1_TTY` (default: the first `/dev/serial/by-id/usb-resolve
 the page's 10 ms timer p95 2.3 / 34.5 ms. timewrap (75 min): the download's 450 000 rows every frame in order, times
 increasing straight across rc1's wrap at 2^32 µs (checked from the saved CSV: that run's own check failed on a test bug,
 `Math.min(...)` over 450 000 steps, fixed after; its memory figures were lost with it).
+
+2026-10-30, `stage34` (stages 3 and 4 merged, local dist), rc1 firmware 0.1.4: every spec but timewrap passed (20
+tests, 7.0 min); rate as before (classic 7 485 frames/s, FD64 4 620/s, nothing dropped; the page's timer p95 varies
+from run to run: 1-114 ms classic, 36-113 ms FD64 over three runs of main's and this build). The new ones: dbc (1 200 frames of the test DBC's messages decoded as the DBC says, 2 850 signal
+values; Signal Viewer live and at the newest values) and retools (Sniffer, Flow View, Range State, Single/Multi State
+realtime in 17 s, Frame Search, each as the peer sent). unplug had shown a rig bug: after rc1's port is off and on, its
+gs_usb interface comes back without a bitrate and the reclaim failed (`ip link set can0 up`: EINVAL), leaving can0
+down; `reclaim` now sets it up with the bitrate it had.
 
 `chrome_check.mjs` (Chromium 141, its own Web Serial, headed and headless): `getPorts()` lists rc1 and `open()`
 succeeds, but the first read fails "The device has been lost". strace: Chromium's first `read()` on the tty returns 0

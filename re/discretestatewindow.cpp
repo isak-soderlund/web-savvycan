@@ -2,16 +2,50 @@
 #include "ui_discretestatewindow.h"
 #include "mainwindow.h"
 #include "helpwindow.h"
+#include "theme.h"
+#include "connections/canconmanager.h"
+
+#include <QElapsedTimer>
+#include <algorithm>
+
+/*
+ * web-savvycan (stage 4): RE Tools > Single/Multi State. SavvyCAN's window had the interface and the realtime
+ * countdown but no search (calculateResults() was empty in both modes, and its state counter ran one state past
+ * "Number of States"). Here, with the same interface:
+ * - Realtime: each iteration asks for every state in turn ("Go to state 1", "Go to state 2", ...; a countdown before
+ *   each, "Wait...." after), Toggle Frequency seconds each. Frames from the bus (CANConManager, so the trace's ring
+ *   does not matter) are recorded per ID and state while a state is held, after its first quarter (time to get
+ *   there). Then every field of Min..Max bits (Intel bit numbering, its first and last bits changing) is a match when
+ *   in every state at least 90 % of its frames have one value and those values differ from state to state
+ *   (ReTools::discreteRealtime). Memory: ReTools::StateSampler (an even spread of at most 2048 frames per ID and
+ *   state, all together within 32 MB).
+ * - From logged data: per checked ID, fields of Min..Max bits that take exactly Number of States values over the
+ *   trace's frames (the comment SavvyCAN left: "record every unique value. IF the # of unique values is the same as
+ *   the number of states then we've got a match"), tightest fields only (ReTools::discreteLogged).
+ * - CAN FD: fields anywhere in 64 bytes.
+ * - Live: new IDs join the list from the trace's newest frames (the trace is a ring).
+ * - The status colours lighter in dark; in the browser a framed dialog.
+ */
 
 DiscreteStateWindow::DiscreteStateWindow(const FrameListView *frames, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::DiscreteStateWindow)
 {
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    // web-savvycan: a framed dialog in the browser (a Qt::Window is frameless over the main window's menus)
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+#else
     setWindowFlags(Qt::Window);
+#endif
 
+#ifdef Q_OS_WASM
+    resize(640, 560); // web-savvycan: see readSettings()
+#endif
     modelFrames = frames;
     operatingState = DWStates::IDLE;
+    ticksUntilStateChange = ticksPerStateChange = 0;
+    numToggleStates = currToggleState = numIterations = currIteration = 0;
 
     timer = new QTimer();
     timer->setInterval(100);
@@ -19,11 +53,21 @@ DiscreteStateWindow::DiscreteStateWindow(const FrameListView *frames, QWidget *p
     isRealtime = ui->rbRealtime->isChecked();
     typeChanged();
 
+    ui->treeMatches->setColumnCount(5);
+    ui->treeMatches->setHeaderLabels({tr("ID"), tr("Start bit"), tr("Bits"), tr("Values"), tr("Frames")});
+    ui->treeMatches->setRootIsDecorated(false);
+    setLabelColor(0);
+
     connect(ui->btnStart, SIGNAL(clicked(bool)), this, SLOT(handleStartButton()));
     connect(timer, SIGNAL(timeout()), this, SLOT(handleTick()));
     connect(MainWindow::getReference(), SIGNAL(framesUpdated(int)), this, SLOT(updatedFrames(int)));
     connect(ui->rbLogged, SIGNAL(clicked(bool)), this, SLOT(typeChanged()));
     connect(ui->rbRealtime, SIGNAL(clicked(bool)), this, SLOT(typeChanged()));
+    connect(CANConManager::getInstance(), &CANConManager::framesReceived, this, &DiscreteStateWindow::framesReceived);
+    connect(Theme::instance(), &Theme::changed, this, [this]() {
+        if (operatingState == DWStates::IDLE && ui->lblStatus->text() == "WAIT") setLabelColor(0);
+        else updateStateLabel();
+    });
 
     connect(ui->btnAll, &QAbstractButton::clicked,
             [=]()
@@ -64,13 +108,6 @@ DiscreteStateWindow::~DiscreteStateWindow()
 {
     removeEventFilter(this);
     timer->stop();
-
-    for (int i = 0; i < stateFrames.count(); i++)
-    {
-        stateFrames[i]->clear();
-        delete(stateFrames[i]);
-    }
-
     delete timer;
     delete ui;
 }
@@ -121,58 +158,46 @@ void DiscreteStateWindow::typeChanged()
     }
 }
 
+void DiscreteStateWindow::addFilterId(const CommFrame &frame)
+{
+    if (!ReTools::hasData(frame)) return;
+    const int id = int(frame.frameId());
+    if (idFilters.contains(id)) return;
+    idFilters.insert(id, true);
+    QListWidgetItem* listItem = new QListWidgetItem(Utility::formatCANID(frame.frameId(), frame.hasExtendedFrameFormat()), ui->listID);
+    listItem->setFlags(listItem->flags() | Qt::ItemIsUserCheckable); // set checkable flag
+    listItem->setCheckState(Qt::Checked); //default all filters to be set active
+}
+
 void DiscreteStateWindow::updatedFrames(int numFrames)
 {
-    CommFrame thisFrame;
-    if (numFrames == -1) //all frames deleted. Kill the display
+    if (numFrames == -1) //all frames deleted (or a file loaded in their place)
     {
         ui->listID->clear();
         idFilters.clear();
+        refreshFilterList();
     }
     else if (numFrames == -2) //all new set of frames. Reset
     {
         refreshFilterList();
     }
-    else //just got some new frames. See if they are relevant.
+    else if (numFrames > 0) //just got some new frames. See if they are relevant.
     {
-        if (numFrames > modelFrames->count()) return;
-        for (int i = modelFrames->count() - numFrames; i < modelFrames->count(); i++)
-        {
-            thisFrame = modelFrames->at(i);
-
-            if (!idFilters.contains(thisFrame.frameId()))
-            {
-                idFilters.insert(thisFrame.frameId(), true);
-                QListWidgetItem* listItem = new QListWidgetItem(Utility::formatCANID(thisFrame.frameId(), thisFrame.hasExtendedFrameFormat()), ui->listID);
-                listItem->setFlags(listItem->flags() | Qt::ItemIsUserCheckable); // set checkable flag
-                listItem->setCheckState(Qt::Checked); //default all filters to be set active
-            }
-
-            //if (operatingState == DWStates::IDLE) stateFrames[0]->append(thisFrame);
-            //else stateFrames[currToggleState + 1]->append(thisFrame);
-        }
+        // web-savvycan: the newest numFrames frames are the trace's tail (fewer if the ring kept fewer)
+        const int before = ui->listID->count();
+        for (const CommFrame &f : modelFrames->tail(numFrames)) addFilterId(f);
+        if (ui->listID->count() != before) ui->listID->sortItems();
     }
 }
 
 void DiscreteStateWindow::refreshFilterList()
 {
-    int id;
-
     idFilters.clear();
     ui->listID->clear();
 
-    for (int i = 0; i < modelFrames->length(); i++)
-    {
-        CommFrame thisFrame = modelFrames->at(i);
-        id = thisFrame.frameId();
-        if (!idFilters.contains(id))
-        {
-            idFilters.insert(id, true);
-            QListWidgetItem* listItem = new QListWidgetItem(Utility::formatCANID(id, thisFrame.hasExtendedFrameFormat()), ui->listID);
-            listItem->setFlags(listItem->flags() | Qt::ItemIsUserCheckable); // set checkable flag
-            listItem->setCheckState(Qt::Checked); //default all filters to be set active
-        }
-    }
+    const qsizetype count = modelFrames->count();
+    for (qsizetype i = 0; i < count; i += 4096)
+        for (const CommFrame &f : modelFrames->mid(i, 4096)) addFilterId(f);
 
     ui->listID->sortItems();
 }
@@ -197,7 +222,13 @@ void DiscreteStateWindow::readSettings()
     QSettings settings;
     if (settings.value("Main/SaveRestorePositions", false).toBool())
     {
-        resize(settings.value("DiscreteState/WindowSize", QSize(400, 300)).toSize());
+#ifdef Q_OS_WASM
+        // web-savvycan: first opened large enough to read the matches (400 x 300 showed one and a half rows)
+        const QSize defaultSize(640, 560);
+#else
+        const QSize defaultSize(400, 300);
+#endif
+        resize(settings.value("DiscreteState/WindowSize", defaultSize).toSize());
         move(Utility::constrainedWindowPos(settings.value("DiscreteState/WindowPos", QPoint(50, 50)).toPoint()));
     }
 
@@ -214,46 +245,49 @@ void DiscreteStateWindow::writeSettings()
     }
 }
 
+void DiscreteStateWindow::setLabelColor(int which)
+{
+    // SavvyCAN's red, blue and green; in dark lighter ones (pure blue can't be read on a dark window)
+    static const QColor light[3] = {Qt::red, Qt::blue, Qt::green};
+    static const QColor dark[3] = {QColor(0xff, 0x60, 0x60), QColor(0x6c, 0x9c, 0xff), QColor(0x40, 0xe0, 0x40)};
+    QPalette pal = ui->lblStatus->palette();
+    const QColor c = (Theme::isDark() ? dark : light)[qBound(0, which, 2)];
+    pal.setColor(QPalette::Active, QPalette::WindowText, c);
+    pal.setColor(QPalette::Inactive, QPalette::WindowText, c);
+    ui->lblStatus->setPalette(pal);
+}
+
 void DiscreteStateWindow::updateStateLabel()
 {
-    QPalette pal;
     switch(operatingState)
     {
     case DWStates::IDLE:
         ui->lblStatus->setText("IDLE");
-        pal = ui->lblStatus->palette();
-        pal.setColor(QPalette::WindowText, Qt::red);
-        ui->lblStatus->setPalette(pal);
+        setLabelColor(0);
         break;
     case DWStates::COUNTDOWN_SIGNAL:
         ui->lblStatus->setText(QString::number(ticksUntilStateChange * 0.1, 'f', 1) + "...");
-        pal = ui->lblStatus->palette();
-        pal.setColor(QPalette::WindowText, Qt::blue);
-        ui->lblStatus->setPalette(pal);
+        setLabelColor(1);
         break;
     case DWStates::COUNTDOWN_WAITING:
         ui->lblStatus->setText("Wait....");
-        pal = ui->lblStatus->palette();
-        pal.setColor(QPalette::WindowText, Qt::red);
-        ui->lblStatus->setPalette(pal);
+        setLabelColor(0);
         break;
     case DWStates::GETTING_SIGNAL:
         ui->lblStatus->setText("Go to state " + QString::number(currToggleState + 1));
-        pal = ui->lblStatus->palette();
-        pal.setColor(QPalette::WindowText, Qt::green);
-        ui->lblStatus->setPalette(pal);
+        setLabelColor(2);
         break;
     case DWStates::DONE:
         ui->lblStatus->setText("DONE");
-        pal = ui->lblStatus->palette();
-        pal.setColor(QPalette::WindowText, Qt::green);
-        ui->lblStatus->setPalette(pal);
+        setLabelColor(2);
         break;
     }
 }
 
 void DiscreteStateWindow::handleStartButton()
 {
+    results.clear();
+    ui->treeMatches->clear();
     if (isRealtime)
     {
         operatingState = DWStates::COUNTDOWN_SIGNAL;
@@ -264,18 +298,10 @@ void DiscreteStateWindow::handleStartButton()
 
         currToggleState = 0;
         currIteration = 0;
+        recordingNow = false;
+        samples.start(numToggleStates);
 
-        for (int i = stateFrames.count() - 1; i > 0; i--)
-        {
-            stateFrames[i]->clear();
-            stateFrames.removeAt(i);
-        }
-
-        for (int j = 0; j <= numToggleStates; j++)
-        {
-            stateFrames.append(new QVector<CommFrame>());
-        }
-
+        updateStateLabel();
         timer->start();
     }
     else
@@ -294,47 +320,76 @@ void DiscreteStateWindow::handleTick()
         break;
     case DWStates::COUNTDOWN_SIGNAL:
         ticksUntilStateChange--;
-        if (ticksUntilStateChange == 0)
+        if (ticksUntilStateChange <= 0)
         {
             ticksUntilStateChange = ticksPerStateChange;
             operatingState = DWStates::GETTING_SIGNAL;
+            recordingNow = false;
         }
         break;
     case DWStates::COUNTDOWN_WAITING:
         ticksUntilStateChange--;
-        if (ticksUntilStateChange == 0)
+        if (ticksUntilStateChange <= 0)
         {
             ticksUntilStateChange = ticksPerStateChange;
-            currIteration++;
-            if (currIteration > numIterations)
-            {
-                operatingState = DWStates::IDLE;
-                timer->stop();
-                calculateResults();
-            }
-            else operatingState = DWStates::COUNTDOWN_SIGNAL;
+            operatingState = DWStates::COUNTDOWN_SIGNAL;
         }
         break;
     case DWStates::GETTING_SIGNAL:
         ticksUntilStateChange--;
-        if (ticksUntilStateChange == 0)
+        // the first quarter of the period is the time to get there: not recorded
+        recordingNow = ticksUntilStateChange * 4 < ticksPerStateChange * 3;
+        if (ticksUntilStateChange <= 0)
         {
             ticksUntilStateChange = ticksPerStateChange;
-            operatingState = DWStates::COUNTDOWN_WAITING;
+            recordingNow = false;
+            // web-savvycan: states 0..numToggleStates-1 (SavvyCAN's counter went one past), an iteration is every
+            // state once, then the results
             currToggleState++;
-            if (currToggleState > numToggleStates) currToggleState = 0;
+            if (currToggleState >= numToggleStates)
+            {
+                currToggleState = 0;
+                currIteration++;
+            }
+            if (currIteration >= numIterations)
+            {
+                operatingState = DWStates::DONE;
+                timer->stop();
+                calculateResults();
+            }
+            else operatingState = DWStates::COUNTDOWN_WAITING;
         }
         break;
     }
     updateStateLabel();
 }
 
+void DiscreteStateWindow::framesReceived(CANConnection *, QVector<CommFrame> &frames)
+{
+    if (!isRealtime || operatingState != DWStates::GETTING_SIGNAL || !recordingNow) return;
+    for (const CommFrame &f : frames) samples.add(f, currToggleState);
+}
+
 void DiscreteStateWindow::calculateResults()
 {
-    int minBits, maxBits;
+    QElapsedTimer clock;
+    clock.start();
+    results.clear();
+    const int states = ui->spinStates->value();
+    const int minBits = ui->spinMinBits->value();
+    const int maxBits = ui->spinMaxBits->value();
     if (isRealtime)
     {
-
+        // every ID heard in every state, by ID
+        QList<quint64> keys = samples.entries().keys();
+        std::sort(keys.begin(), keys.end(), [](quint64 a, quint64 b) {
+            return ((a >> 32) != (b >> 32)) ? (a >> 32) < (b >> 32) : quint32(a) < quint32(b);
+        });
+        for (quint64 k : keys)
+        {
+            const ReTools::StateSampler::Entry &e = samples.entries()[k];
+            ReTools::discreteRealtime(e.id, e.ext, e.perState, minBits, maxBits, results);
+        }
     }
     else //use already loaded frames from main cache
     {
@@ -347,25 +402,47 @@ void DiscreteStateWindow::calculateResults()
         //unique value. IF the # of unique values is the same as the number of states then
         //we've got a match.It should be noted that the # of states must be at least 2 - the idle
         //state is 1 and then a second state at the minimum. Turn signals might be 3 states then
-
-        minBits = ui->spinMinBits->value();
-        maxBits = ui->spinMaxBits->value();
-        QHash<int, bool>::const_iterator it;
-        QList<CommFrame> frameCache;
-        for (it = idFilters.begin(); it != idFilters.end(); ++it)
+        // web-savvycan: one pass over the trace into compact rows per checked ID (no event loop meanwhile: the ring
+        // keeps its rows)
+        QMap<quint64, ReTools::IdFrames> perId;
+        const qsizetype count = modelFrames->count();
+        for (qsizetype i = 0; i < count; i += 4096)
         {
-            if (it.value())
+            for (const CommFrame &f : modelFrames->mid(i, 4096))
             {
-                frameCache.clear();
-                for (int i = 0; i < modelFrames->count(); i++)
-                {
-                    if (modelFrames->at(i).frameId() == (unsigned int)it.key()) frameCache.append(modelFrames->at(i));
-                }
-                for (int bits = maxBits; bits >= minBits; bits--)
-                {
-                    QList<int> values;
-                }
+                if (!ReTools::hasData(f) || !idFilters.value(int(f.frameId()), false)) continue;
+                const quint64 key = (f.hasExtendedFrameFormat() ? (quint64(1) << 32) : 0) | f.frameId();
+                perId[key].append(f);
             }
         }
+        for (auto it = perId.cbegin(); it != perId.cend(); ++it)
+            ReTools::discreteLogged(quint32(it.key()), (it.key() >> 32) != 0, it.value(), states, minBits, maxBits, results);
     }
+    runMs = clock.elapsed();
+    runCount++;
+    showResults();
+}
+
+void DiscreteStateWindow::showResults()
+{
+    ui->treeMatches->clear();
+    QList<QTreeWidgetItem *> items;
+    for (const ReTools::DiscreteMatch &m : results)
+    {
+        if (items.size() >= kMaxMatchesShown) break;
+        QStringList values;
+        for (size_t s = 0; s < m.values.size(); s++)
+            values << (isRealtime ? QString("state %1: %2").arg(int(s) + 1).arg(m.values[s]) : QString::number(m.values[s]));
+        QString frames = QString::number(m.frames);
+        if (isRealtime) frames += QString(" (%1 %)").arg(qRound(m.share * 100));
+        const int byte = m.startBit / 8, bit = m.startBit % 8;
+        items << new QTreeWidgetItem(QStringList{Utility::formatCANID(m.id, m.ext),
+                                                 QString("%1 (byte %2 bit %3)").arg(m.startBit).arg(byte).arg(bit),
+                                                 QString::number(m.bits), values.join(", "), frames});
+    }
+    if (int(results.size()) > kMaxMatchesShown)
+        items << new QTreeWidgetItem(QStringList{tr("%1 more not shown").arg(int(results.size()) - kMaxMatchesShown)});
+    if (results.empty()) items << new QTreeWidgetItem(QStringList{tr("No matches")});
+    ui->treeMatches->addTopLevelItems(items);
+    for (int c = 0; c < ui->treeMatches->columnCount(); c++) ui->treeMatches->resizeColumnToContents(c);
 }

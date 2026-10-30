@@ -55,7 +55,8 @@ SavvyCAN.xcodeproj
 .qtc_clangd/
 
 # web tests
-node_modules/
+# node_modules: a directory, or a link to another checkout's; never committed (a committed link broke every checkout)
+node_modules
 test-results/
 playwright-report/
 

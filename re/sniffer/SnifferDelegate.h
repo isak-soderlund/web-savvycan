@@ -18,11 +18,12 @@ signals:
 public slots:
 
 private:
-    QBrush blackBrush, whiteBrush, redBrush, greenBrush, grayBrush;
+    void chooseBrushes() const;
+    mutable QBrush blackBrush, whiteBrush, redBrush, greenBrush, grayBrush;
+    mutable bool mBrushesDark = false, mBrushesSet = false;
     QFont mainFont;
     QFontInfo* mainFontInfo;
     bool  mFadeInactive;
-    bool  mDarkMode;
 };
 
 #endif
