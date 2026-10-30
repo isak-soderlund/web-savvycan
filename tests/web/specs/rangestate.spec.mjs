@@ -99,6 +99,7 @@ test('range state: the candidates of SavvyCAN\'s test on the frames sent, the pl
     const want2 = rangeSearch(classic, p2);
     expect(s.candidates.map(key), 'exactly SavvyCAN\'s candidates (broad)').toEqual(want2.map(key));
     expect(s.candidates.filter((c) => c.id === 0x130), 'nothing from random bytes').toEqual([]);
+    const broadMs = s.lastRunMs;
     const gap2 = Math.max(0, ...probe2.longGaps);
     expect(gap2, `longest event-loop gap while searching: ${gap2} ms`).toBeLessThan(1000);
 
@@ -113,7 +114,7 @@ test('range state: the candidates of SavvyCAN\'s test on the frames sent, the pl
     expect(s.candidates.some((c) => c.startBit === 400 && !c.bigEndian && !c.signed)).toBe(true);
     const gap3 = Math.max(0, ...probe3.longGaps);
     expect(gap3, `longest event-loop gap while searching: ${gap3} ms`).toBeLessThan(1000);
-    const result = { framesPerId: N, run1: { candidates: want1.length }, broad: { candidates: want2.length, ms: (await rs(page)).lastRunMs },
+    const result = { framesPerId: N, run1: { candidates: want1.length }, broad: { candidates: want2.length, ms: broadMs },
       fd: { candidates: want3.length, ms: s.lastRunMs }, maxGapMs: Math.max(gap2, gap3) };
     saveResult('rangestate', result);
     test.info().annotations.push({ type: 'result', description: JSON.stringify(result) });

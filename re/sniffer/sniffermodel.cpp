@@ -100,8 +100,10 @@ QVariant SnifferModel::data(const QModelIndex &index, int role) const
         case Qt::ForegroundRole:
         {
             const bool mDarkMode = Theme::isDark();
-            if (!mFadeInactive ||  col < 2) return QApplication::palette().brush(QPalette::Text);
-            int v = item->getSeqInterval(col - 2) * 10;
+            // web-savvycan: the data columns start at tc::DATA_0 (SavvyCAN used col < 2 / col - 2: the ID column faded
+            // with byte 0's age, and each byte with the age of the byte before it)
+            if (!mFadeInactive || col < tc::DATA_0) return QApplication::palette().brush(QPalette::Text);
+            int v = item->getSeqInterval(col - tc::DATA_0) * 10;
             //qDebug() << "mTS: " << mTimeSequence << " gDT(" << (col - 2) << ") " << item->getDataTimestamp(col - 2);
             if (v > 225) v = 225;
             if (v < 0) v = 0;

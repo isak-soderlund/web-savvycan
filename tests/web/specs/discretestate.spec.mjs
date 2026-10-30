@@ -102,7 +102,8 @@ test('single/multi state from logged data: the fields with exactly N values = th
   await app.menu('RE Tools', 'Single/Multi State');
   await page.waitForFunction(() => window.webSavvyCAN.discreteState().open, null, { timeout: 10_000 });
   let s = await ds(page);
-  expect(s.ids.map((x) => x.id), 'every ID, checked').toEqual([0x2a0, 0x2a1, 0x18ff0002]);
+  expect(s.ids.map((x) => x.id).sort((a, b) => a - b), 'every ID (listed by text, as SavvyCAN)').toEqual([0x2a0, 0x2a1, 0x18ff0002]);
+  expect(s.ids.every((x) => x.on), 'checked').toBe(true);
 
   const runLogged = async (states, minBits, maxBits) => {
     const runs = (await ds(page)).runs;

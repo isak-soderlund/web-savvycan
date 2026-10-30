@@ -32,7 +32,9 @@ SnifferWindow::SnifferWindow(QWidget *parent) :
     defaultDel = ui->treeView->itemDelegate();
 
     /* set column width */
-    ui->treeView->setColumnWidth(tc::ID, 80);
+    // web-savvycan: wide enough for a 29-bit ID ("0x18FF0001"; 80 px cut even "0x00120" in the browser's font)
+    idColumnWidth = ui->treeView->fontMetrics().horizontalAdvance("0x18FF0001") + 20;
+    ui->treeView->setColumnWidth(tc::ID, idColumnWidth);
     ui->treeView->setColumnWidth(tc::LAST, 1);
     for(int i=tc::DATA_0 ; i<=tc::LAST ; i++)
         ui->treeView->setColumnWidth(i, 50);
@@ -102,7 +104,7 @@ void SnifferWindow::readSettings()
         move(Utility::constrainedWindowPos(settings.value("Sniffer/WindowPos", QPoint(50, 50)).toPoint()));
         ui->treeView->setColumnWidth(0, settings.value("Sniffer/DeltaColumn", 110).toUInt());
         ui->treeView->setColumnWidth(1, settings.value("Sniffer/FrequencyColumn", 110).toUInt());
-        ui->treeView->setColumnWidth(2, settings.value("Sniffer/IDColumn", 70).toUInt());
+        ui->treeView->setColumnWidth(2, settings.value("Sniffer/IDColumn", idColumnWidth).toUInt());
         if (!settings.value("Main/EqualDataSniff", false).toBool())
         {
             for (int i = 0; i < MAX_BYTES; i++)

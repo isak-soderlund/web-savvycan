@@ -125,6 +125,7 @@ private:
     QAbstractItemDelegate       *defaultDel;
     bool                        notchPingPong;
     bool                        inhibitSectionResizeEvent;
+    int                         idColumnWidth = 80;
 };
 
 #endif // SNIFFER_H

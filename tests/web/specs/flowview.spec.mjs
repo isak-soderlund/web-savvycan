@@ -76,8 +76,13 @@ test('flow view: an ID\'s frames one by one (= the trace), playback, timeline, s
   await act(page, 'goto', 100);
   s = await fv(page);
   expect([s.position, s.curr], 'the timeline').toEqual([100, tr[100].data]);
-  // Graphs: the current frame +- the chart range (50) on the x axis (frame numbers), the stored points around it.
-  expect([s.plot.xLower, s.plot.xUpper]).toEqual([50, 150]);
+  // Graphs: the current frame +- the chart range (50) on the x axis (Graph by timestamp, on by default: the frames'
+  // times in µs; off: frame numbers), the stored points around it.
+  expect([s.plot.xLower, s.plot.xUpper]).toEqual(s.cbTimeGraph ? [tr[50].time, tr[150].time] : [50, 150]);
+  await act(page, 'byTime', !s.cbTimeGraph);
+  const s2 = await fv(page);
+  expect([s2.plot.xLower, s2.plot.xUpper], 'the other x axis').toEqual(s2.cbTimeGraph ? [tr[50].time, tr[150].time] : [50, 150]);
+  await act(page, 'byTime', s.cbTimeGraph);
   expect(s.graphFrom).toBeLessThanOrEqual(50);
   expect(s.graphTo).toBeGreaterThanOrEqual(150);
   expect(s.plot.points, 'graphs hold only the frames around the current one').toBeLessThanOrEqual(8 * (4 * 50 + 1));

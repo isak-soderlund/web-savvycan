@@ -111,6 +111,8 @@ FlowViewWindow::FlowViewWindow(const FrameListView *frames, QWidget *parent) :
     }
 
     ui->graphView->setBufferDevicePixelRatio(1);
+    // web-savvycan: up to 64 graphs redrawn on every GUI tick in Live Mode: lines as polylines (QCustomPlot's fast path)
+    ui->graphView->setPlottingHint(QCP::phFastPolylines, true);
 
     ui->tableBytes->setColumnWidth(0, 60);
     ui->tableBytes->setColumnWidth(1, 60);
@@ -948,8 +950,10 @@ void FlowViewWindow::updateDataView()
 
     for (int i = 0; i < maxbyte; i++)
     {
-        ui->tableBytes->item(i, 1)->setText(Utility::formatByteAsHex(currBytes[i]));
-        ui->tableBytes->item(i, 2)->setText(Utility::formatByteAsHex(refBytes[i]));
+        // web-savvycan: only cells that change (each setText repaints; 128 of them per GUI tick in Live Mode on FD)
+        const QString cur = Utility::formatByteAsHex(currBytes[i]), ref = Utility::formatByteAsHex(refBytes[i]);
+        if (ui->tableBytes->item(i, 1)->text() != cur) ui->tableBytes->item(i, 1)->setText(cur);
+        if (ui->tableBytes->item(i, 2)->text() != ref) ui->tableBytes->item(i, 2)->setText(ref);
     }
 
     ui->flowView->setReference(refBytes, false);

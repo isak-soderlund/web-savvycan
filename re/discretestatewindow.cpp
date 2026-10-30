@@ -39,6 +39,9 @@ DiscreteStateWindow::DiscreteStateWindow(const FrameListView *frames, QWidget *p
     setWindowFlags(Qt::Window);
 #endif
 
+#ifdef Q_OS_WASM
+    resize(640, 560); // web-savvycan: see readSettings()
+#endif
     modelFrames = frames;
     operatingState = DWStates::IDLE;
     ticksUntilStateChange = ticksPerStateChange = 0;
@@ -219,7 +222,13 @@ void DiscreteStateWindow::readSettings()
     QSettings settings;
     if (settings.value("Main/SaveRestorePositions", false).toBool())
     {
-        resize(settings.value("DiscreteState/WindowSize", QSize(400, 300)).toSize());
+#ifdef Q_OS_WASM
+        // web-savvycan: first opened large enough to read the matches (400 x 300 showed one and a half rows)
+        const QSize defaultSize(640, 560);
+#else
+        const QSize defaultSize(400, 300);
+#endif
+        resize(settings.value("DiscreteState/WindowSize", defaultSize).toSize());
         move(Utility::constrainedWindowPos(settings.value("DiscreteState/WindowPos", QPoint(50, 50)).toPoint()));
     }
 
