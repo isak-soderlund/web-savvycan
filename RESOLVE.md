@@ -133,8 +133,8 @@ in 2.7 s through the File Manager (4.5-4.8 s before the loader's events were lim
 on the page in the browser); 200 decoded trace rows in 25 ms; on 100 000 frames of 50 of its messages Save Decoded
 Frames takes 4.4 s (31 MB of text) and the CSV 6.1 s (61 MB: a column per signal of every message seen, on every row),
 the page's heap in use 23 MB before, 123 MB after both (malloc's peak 157 MB). The CSV of the same log over all 1 000
-messages would be ~800 MB (rows x 16 000 columns): in the browser the file is made in memory first, and a file that
-doesn't fit now gives a message (it came out empty).
+messages would be ~800 MB (rows x 16 000 columns): in the browser the file is made in memory first; that run came out as an empty
+file. A write that fails now stops with a message (this path is not covered by a test yet).
 
 Tests: `tests/web` `dbc.spec` with `tests/web/fixtures/stage3_test.dbc` (our own DBC: the Leaf IDs of the fake's
 `leaf` traffic with Intel/Motorola, signed, scaled, value-described, multiplexed signals and message colours; CAN FD
