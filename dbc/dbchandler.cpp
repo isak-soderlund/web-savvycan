@@ -13,6 +13,7 @@
 #include <QJsonObject>
 #include "utility.h"
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 
 DBCHandler* DBCHandler::instance = nullptr;
@@ -1044,6 +1045,8 @@ bool DBCFile::loadFile(QString fileName)
     DBC_ATTRIBUTE attr;
     QStringList sigFaults, msgFaults;
     int linesSinceYield = 0;
+    QElapsedTimer sinceYield;
+    sinceYield.start();
     QString fileBaseName = QFileInfo(fileName).baseName();
 
     bool inMultilineBU = false;
@@ -1075,11 +1078,16 @@ bool DBCFile::loadFile(QString fileName)
         rawLine = QString(inFile->readLine());
         line = rawLine.simplified();
 
-        linesSinceYield++;
-        if (linesSinceYield > 100)
+        // web-savvycan: the events at most every 100 ms (it was on every line after the 100th; in the browser each
+        // call suspends to the page, ~a frame: a 16 000-signal DBC took 4.5 s, most of it waiting)
+        if (++linesSinceYield >= 100)
         {
-            linesSinceYield = 0; // web-savvycan: was never reset, so the events were processed on every line after the 100th
-            qApp->processEvents();
+            linesSinceYield = 0;
+            if (sinceYield.elapsed() >= 100)
+            {
+                qApp->processEvents();
+                sinceYield.restart();
+            }
         }
 
         if (inMultilineBU)
