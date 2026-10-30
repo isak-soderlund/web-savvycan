@@ -123,8 +123,10 @@ same bits, scale and offset, the Signal Viewer removes the row.
 
 Limits: as SavvyCAN, a message is found by its ID number (an 11-bit and a 29-bit ID of the same value are one message),
 and by frame ID only (not by CAN FD or not). A DBC over 1 MB isn't remembered between visits in the browser (load it
-again). The CSV of Save Decoded Frames puts "Name: value unit" in each cell and doesn't quote (as SavvyCAN). The
-Signal Viewer matches messages by exact ID (not J1939/GMLAN matching, as SavvyCAN).
+again), nor a Tesla JSON or "secret" CSV signal file (SavvyCAN gives those no file name; a failed one no longer leaves a
+blank file behind, which put the manager's rows out of step with the files). The CSV of Save Decoded Frames puts "Name: value unit" in each cell and doesn't quote (as SavvyCAN). The
+Signal Viewer matches messages by exact ID (not J1939/GMLAN matching, as SavvyCAN); when a signal is added or a file
+loaded it searches the newest million frames for its value.
 
 Measured (headless Chromium, `dbc.spec`, 2026-10-30): MEASUREMENTS
 

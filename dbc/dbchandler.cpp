@@ -578,14 +578,13 @@ bool DBCFile::getDirtyFlag()
 
 DBC_MESSAGE* DBCFile::parseMessageLine(QString line)
 {
-    QRegularExpression regex;
     QRegularExpressionMatch match;
 
     DBC_MESSAGE *msgPtr;
 
     qDebug() << "Found a BO line";
-    regex.setPattern("^BO\\_ (\\w+) ([-\\w]+) *: (\\w+) ([-\\w]+)");
-    match = regex.match(line);
+    static const QRegularExpression re1("^BO\\_ (\\w+) ([-\\w]+) *: (\\w+) ([-\\w]+)"); // web-savvycan: compiled once (was per line)
+    match = re1.match(line);
     //captured 1 = the ID in decimal
     //captured 2 = The message name
     //captured 3 = the message length
@@ -609,7 +608,6 @@ DBC_MESSAGE* DBCFile::parseMessageLine(QString line)
 
 DBC_SIGNAL* DBCFile::parseSignalLine(QString line, DBC_MESSAGE *msg)
 {
-    QRegularExpression regex;
     QRegularExpressionMatch match;
 
     int offset = 0;
@@ -617,9 +615,9 @@ DBC_SIGNAL* DBCFile::parseSignalLine(QString line, DBC_MESSAGE *msg)
     DBC_SIGNAL *sig = new DBC_SIGNAL();
 
     qDebug() << "Found a SG line";
-    regex.setPattern("^SG\\_ *([-\\w]+) +M *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)");
+    static const QRegularExpression re0("^SG\\_ *([-\\w]+) +M *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)"); // web-savvycan: compiled once (was per line)
 
-    match = regex.match(line);
+    match = re0.match(line);
     if (match.hasMatch())
     {
         qDebug() << "Multiplexor signal";
@@ -628,8 +626,8 @@ DBC_SIGNAL* DBCFile::parseSignalLine(QString line, DBC_MESSAGE *msg)
     }
     else
     {
-        regex.setPattern("^SG\\_ *([-\\w]+) +m(\\d+) *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)");
-        match = regex.match(line);
+        static const QRegularExpression re2("^SG\\_ *([-\\w]+) +m(\\d+) *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)"); // web-savvycan: compiled once (was per line)
+        match = re2.match(line);
         if (match.hasMatch())
         {
             qDebug() << "Multiplexed signal";
@@ -638,8 +636,8 @@ DBC_SIGNAL* DBCFile::parseSignalLine(QString line, DBC_MESSAGE *msg)
         }
         else
         {
-            regex.setPattern("^SG\\_ *([-\\w]+) +m(\\d+)M *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)");
-            match = regex.match(line);
+            static const QRegularExpression re3("^SG\\_ *([-\\w]+) +m(\\d+)M *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)"); // web-savvycan: compiled once (was per line)
+            match = re3.match(line);
             if (match.hasMatch())
             {
                 qDebug() << "Extended Multiplexor Signal";
@@ -650,8 +648,8 @@ DBC_SIGNAL* DBCFile::parseSignalLine(QString line, DBC_MESSAGE *msg)
             else
             {
                 qDebug() << "standard signal";
-                regex.setPattern("^SG\\_ *([-\\w]+) *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)");
-                match = regex.match(line);
+                static const QRegularExpression re4("^SG\\_ *([-\\w]+) *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)"); // web-savvycan: compiled once (was per line)
+                match = re4.match(line);
                 sig->isMultiplexed = false;
                 sig->isMultiplexor = false;
             }
@@ -2093,6 +2091,7 @@ DBCFile* DBCHandler::loadSecretCSVFile(QString filename)
     if (!inFile->open(QIODevice::ReadOnly | QIODevice::Text))
     {
         delete inFile;
+        removeDBCFile(loadedFiles.count() - 1); // web-savvycan: not the blank file (the manager has no row for it)
         return nullptr;
     }
 
@@ -2262,6 +2261,7 @@ DBCFile* DBCHandler::loadJSONFile(QString filename)
          {
              qDebug() << "Could not open JSON file for reading.";
              delete inFile;
+             removeDBCFile(loadedFiles.count() - 1); // web-savvycan: not the blank file (the manager has no row for it)
              return nullptr;
          }
          QByteArray wholeFileData = inFile->readAll();
@@ -2272,6 +2272,7 @@ DBCFile* DBCHandler::loadJSONFile(QString filename)
          if (jsonDoc.isNull())
          {
              qDebug() << "Couldn't load and parse the JSON file for some reason.";
+             removeDBCFile(loadedFiles.count() - 1); // web-savvycan: as above
              return nullptr;
          }
          qDebug() << "Loaded JSON";

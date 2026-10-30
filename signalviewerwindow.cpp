@@ -79,6 +79,7 @@ void SignalViewerWindow::updatedFrames(int numFrames)
     {
         for (int i = 0; i < ui->tableViewer->rowCount(); i++)
             if (QTableWidgetItem *item = ui->tableViewer->item(i, VALUE_COL)) item->setText(QString());
+        count = qMin<qsizetype>(count, 1000000); // a signal whose message isn't in the trace: the newest million frames searched
     }
     else count = qMin<qsizetype>(count, numFrames);
 
