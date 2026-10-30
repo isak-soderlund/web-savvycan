@@ -5685,5 +5685,5 @@ bool FrameFileIO::loadLogData(const QString &name, const QByteArray &content, Fr
     const bool ok = autoDetectLoadFile(path, &loaded);
     QFile::remove(path);
     for (const CommFrame &f : loaded) frames->append(f);
-    return ok;
+    return ok && !loaded.isEmpty();
 }

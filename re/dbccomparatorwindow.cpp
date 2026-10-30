@@ -123,18 +123,18 @@ void DBCComparatorWindow::pickDBC(DBCFile **slot, QLabel *label)
         progress.setCancelButton(nullptr);
         progress.setRange(0,0);
         progress.setMinimumDuration(1000);
-        delete *slot;
-        *slot = new DBCFile;
-        const bool ok = (*slot)->loadFile(path);
+        auto *dbc = new DBCFile;
+        const bool ok = dbc->loadFile(path);   // (runs the event loop now and then)
         QFile::remove(path);
         progress.cancel();
+        if (!self) { delete dbc; return; }
         if (!ok) {
-            delete *slot;
-            *slot = nullptr;
+            delete dbc;
             QMessageBox::warning(self, tr("Error Loading"), tr("%1 could not be read.").arg(shown));
-            label->setText(QString());
             return;
         }
+        delete *slot;
+        *slot = dbc;                           // in place only once it is whole
         label->setText(shown);
         if (self->firstDBC && self->secondDBC) self->calculateDetails();
     });

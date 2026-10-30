@@ -60,7 +60,8 @@ struct FrameData
     uint32_t ID = 0;
     int dataLen = 0;                                  // the longest frame of the ID
     quint64 frames = 0;
-    std::bitset<kMaxBits> bitmap;                     // bits set in any frame
+    std::array<quint8, kMaxBytes> bitsSet{};          // per byte, the bits set in any frame (OR of its values)
+    bool bit(int b) const { return (bitsSet[size_t(b / 8)] >> (b % 8)) & 1; }
     std::array<std::bitset<256>, kMaxBytes> values;   // per byte, the values seen
     QHash<QString, QStringList> signalInstances;      // per DBC signal, its values as text in the order first seen
     QHash<QString, QSet<QString>> signalSeen;         // the same as sets (lookups)

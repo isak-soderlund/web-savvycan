@@ -142,8 +142,8 @@ void TestFileTools::compareFd()
     QCOMPARE(a.ids.size(), 2);
     QCOMPARE(a.ids[0x7E8].dataLen, 64);
     QVERIFY(a.ids[0x7E8].values[40].test(0xA5));
-    QVERIFY(a.ids[0x7E8].bitmap.test(63 * 8 + 7));
-    QVERIFY(!b.ids[0x7E8].bitmap.test(63 * 8 + 7));
+    QVERIFY(a.ids[0x7E8].bit(63 * 8 + 7));
+    QVERIFY(!b.ids[0x7E8].bit(63 * 8 + 7));
     QVERIFY(a.memoryBytes() < 20000);
 
     Tree t{buildCompareTree(a, b, "a.csv", false, nullptr)};
@@ -273,7 +273,7 @@ void TestFileTools::searchValues()
     SearchCriteria w;
     w.valueMode = SearchCriteria::Specific;
     w.numBits = 64;
-    w.valueText = "0x0123456789ABCDEF";
+    w.valueText = "0xEFCDAB8967452301"; // bytes 01 23 .. EF, Intel: past INT64_MAX, compared as bits
     FrameSearch s5(w);
     QVERIFY(s5.matches(frame(0x2, bytes(8, [](int j) { return quint8(0xEFCDAB8967452301ULL >> (8 * j)); }))));
     QVERIFY(!s5.matches(frame(0x2, bytes(8, [](int j) { return quint8(0xEECDAB8967452301ULL >> (8 * j)); }))));

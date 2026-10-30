@@ -9,6 +9,7 @@
 #include <QProgressDialog>
 #include <QSettings>
 #include <qevent.h>
+#include <limits>
 
 FileComparatorWindow::FileComparatorWindow(QWidget *parent) :
     QDialog(parent),

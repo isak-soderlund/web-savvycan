@@ -42,8 +42,7 @@ void CompareSide::add(const CommFrame &frame, DBCHandler *dbc)
     if (len > d.dataLen) d.dataLen = len;
     for (int y = 0; y < len; y++) {
         d.values[size_t(y)].set(data[y]);
-        for (int b = 0; b < 8; b++)
-            if (data[y] & (1 << b)) d.bitmap.set(size_t(y * 8 + b));
+        d.bitsSet[size_t(y)] |= data[y];
     }
     if (!dbc) return;
     DBC_MESSAGE *msg = dbc->findMessage(id);
@@ -114,7 +113,7 @@ QList<QTreeWidgetItem *> buildCompareTree(const CompareSide &interestedSide, con
         QTreeWidgetItem *bitsReference = uniqueInterested ? nullptr : item("Bits set " + onlyReference, sharedItem);
         const int len = qMax(interested.dataLen, reference.dataLen);
         for (int b = 0; b < 8 * len; b++) {
-            const bool inI = interested.bitmap.test(size_t(b)), inR = reference.bitmap.test(size_t(b));
+            const bool inI = interested.bit(b), inR = reference.bit(b);
             if (inI == inR) continue;
             const QString text = QString::number(b) + " (" + QString::number(b / 8) + ":" + QString::number(b % 8) + ")";
             if (inI) {

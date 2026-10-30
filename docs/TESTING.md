@@ -93,6 +93,23 @@ second line `dirty` means uncommitted changes were in it).
     to file**: a download `FrameDetails.txt`. Check an FD ID with 64-byte frames and a classic one.
 14. **A long log.** Log (step 4) for more than 72 min (a charging session): the file's times keep increasing past
     71.6 min (rc1's clock is 32-bit µs; the app makes it 64-bit), no jump back to 0.
+15. **Capture Bisector.** Load a log (step 11), RE Tools > **Capture Bisector**: the main list's frame count and every ID
+    in the two ID lists. Pick Frame Number (or Percentage), Lower or Upper Section, **Calculate Split**: *Saved Frames
+    after split* shows how many; **Replace main list with split frames**: the trace holds only those (other windows
+    follow). Repeat to narrow down when a frame appears; ID Range and Bus Number split the same way. **Save split frames
+    to a new file**: a download `BisectedFrames.csv` that File > Load Log File (and the desktop SavvyCAN) reads back.
+16. **File Comparison.** RE Tools > **File Comparison**: **Load New File** (side 1) and **Load A File** (side 2, more files
+    add to it) open Chrome's file picker. The tree lists IDs found on one side only and, for IDs on both, the bits and
+    each byte's values seen on one side only (all 64 bytes of FD frames). Try two logs of the same car, one with a
+    button pressed. *Show only data unique to Side 1* applies at the next load; **Clear Frames** empties side 2; **Save
+    Details to File**: a download. Two logs of an hour each load in seconds.
+17. **DBC Comparison.** RE Tools > **DBC Comparison**: Load New File / Load A File pick two DBC files (they don't go into
+    the DBC File Manager). The tree: nodes and messages missing on either side, messages with signals missing, signals
+    whose start bit, size, factor or offset changed. **Save Details to File**: a download.
+18. **Frame Search.** RE Tools > **Frame Search** on a loaded log: ID (tick Enable), Frame Length, Direction, the bits
+    (start bit, number of bits, Intel/signed, scale, bias; click the grid, which shows 64 bytes for FD), then *Specific
+    value* (decimal, `0x..` hex or `0b..` binary) or *Any change*, **Search**: "Match 1 of N" and that row selected in the
+    trace; **Next >** / **< Previous** step through. Try a byte past byte 8 of an FD frame.
 
 Please note for each step: works / doesn't (what you saw, a screenshot), Chrome's version and the OS, and for any
 problem the browser console (View > Developer > JavaScript Console): copy its red lines.
