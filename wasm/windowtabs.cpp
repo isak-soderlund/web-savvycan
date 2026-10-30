@@ -23,6 +23,7 @@
 #include <QProgressDialog>
 #include <QScrollArea>
 #include <QStackedLayout>
+#include <QStyle>
 #include <QTabBar>
 #include <QTimer>
 #include <QToolButton>
@@ -159,8 +160,9 @@ private:
 
 class Host;
 
-// The tab bar: widths between kTabMin and kTabMax, Chrome's thin separators between tabs that aren't current or
-// hovered, the hovered tab tracked for the close buttons.
+// A tab bar: widths between kTabMin and kTabMax, Chrome's thin separators between tabs that aren't current or
+// hovered, the hovered tab tracked for the close buttons. Two of them: the pinned one with the main screen's tab
+// alone (always in view, as Chrome's pinned tabs), and the tools' one, which scrolls when crowded.
 class TabStrip : public QTabBar
 {
 public:
@@ -171,6 +173,8 @@ public:
     }
     int hovered = -1;
     QColor separator;
+    bool pinned = false;   // the main screen's strip
+    bool lead = false;     // a separator at its left edge (after the pinned tab)
     int limit = 0;   // crowded: every tool tab this wide (as Chrome's, all equal), 0 = each its own width
     int naturalWidth() const
     {
@@ -179,13 +183,13 @@ public:
         return w;
     }
     // a tab's width with room to spare: its title, between 120 and kTabMax (the main screen's tab: its title)
-    int ownWidth(int index) const { return qBound(index == 0 ? 72 : 120, QTabBar::tabSizeHint(index).width(), kTabMax); }
-    // the tabs in `room`: tool tabs of equal width when they don't fit at their own, at least kTabMin (then it scrolls)
+    int ownWidth(int index) const { return qBound(pinned ? 72 : 120, QTabBar::tabSizeHint(index).width(), kTabMax); }
+    // the tabs in `room`: of equal width when they don't fit at their own, at least kTabMin (then it scrolls)
     void fit(int room)
     {
         int l = 0;
-        if (count() > 1 && naturalWidth() > room)
-            l = qMax(kTabMin, (room - ownWidth(0)) / (count() - 1));
+        if (!pinned && count() > 0 && naturalWidth() > room)
+            l = qMax(kTabMin, room / count());
         if (l != limit) {
             limit = l;
             // the tabs' sizes again (QTabBar caches them until a tab changes)
@@ -197,7 +201,7 @@ public:
 protected:
     QSize tabSizeHint(int index) const override
     {
-        const int w = index > 0 && limit > 0 ? limit : ownWidth(index);
+        const int w = limit > 0 ? limit : ownWidth(index);
         return {w, kRowHeight - kTabTop};
     }
     QSize minimumTabSizeHint(int index) const override { return tabSizeHint(index); }
@@ -235,7 +239,9 @@ public:
 
     QMainWindow *main;
     QMenuBar *menu;
-    TabStrip *bar;
+    TabStrip *pin;             // the main screen's tab (logical tab 0)
+    TabStrip *bar;             // the tools' tabs (logical tab i = bar's i - 1)
+    int current = 0;           // the logical tab in front
     QWidget *divider;          // between the menus and the tabs
     QStackedLayout *stack;
     QWidget *mainPage;
@@ -253,6 +259,11 @@ public:
         return nullptr;
     }
     int tabOf(const Page *p) const { return p && p->open ? int(tabs.indexOf(const_cast<Page *>(p))) + 1 : -1; }
+    int count() const { return 1 + bar->count(); }
+    QRect tabRect(int index) const   // in the menu bar (= the page: the row is at the top)
+    {
+        return index == 0 ? pin->tabRect(0).translated(pin->pos()) : bar->tabRect(index - 1).translated(bar->pos());
+    }
 
     bool eventFilter(QObject *o, QEvent *e) override;
     bool isCandidate(QWidget *w) const;
@@ -284,7 +295,8 @@ void TabStrip::paintEvent(QPaintEvent *e)
     QTabBar::paintEvent(e);
     QPainter p(this);
     p.setPen(QPen(separator, 1));
-    const int cur = currentIndex();
+    const int cur = property("idle").toBool() ? -1 : currentIndex();
+    if (lead && cur != 0 && hovered != 0 && count() > 0) p.drawLine(0, tabRect(0).top() + 8, 0, tabRect(0).bottom() - 6);
     for (int i = 0; i + 1 < count(); i++) {
         if (i == cur || i + 1 == cur || i == hovered || i + 1 == hovered) continue;
         const QRect r = tabRect(i);
@@ -308,25 +320,32 @@ Host::Host(QMainWindow *main) : QObject(main), main(main)
 
     divider = new QWidget(menu);
     divider->setAutoFillBackground(true);
+    pin = new TabStrip(this, menu);
     bar = new TabStrip(this, menu);
+    pin->pinned = true;
+    bar->lead = true;
+    for (TabStrip *t : {pin, bar}) {
+        t->setDrawBase(false);
+        t->setExpanding(false);
+        t->setDocumentMode(true);
+        t->setElideMode(Qt::ElideRight);
+        t->setUsesScrollButtons(true);
+        t->setFocusPolicy(Qt::NoFocus);
+    }
+    pin->setObjectName(QStringLiteral("webSavvyCanMainTab"));
     bar->setObjectName(QStringLiteral("webSavvyCanTabs"));
-    bar->setDrawBase(false);
-    bar->setExpanding(false);
-    bar->setDocumentMode(true);
-    bar->setElideMode(Qt::ElideRight);
-    bar->setUsesScrollButtons(true);
-    bar->setFocusPolicy(Qt::NoFocus);
-    bar->addTab(QApplication::translate("WindowTabs", "Frames"));
-    bar->setTabToolTip(0, QApplication::translate("WindowTabs", "SavvyCAN's main screen: the frames"));
-    connect(bar, &QTabBar::currentChanged, this, [this](int i) {
-        if (!busy) select(i);
-    });
+    pin->addTab(QApplication::translate("WindowTabs", "Frames"));
+    pin->setTabToolTip(0, QApplication::translate("WindowTabs", "SavvyCAN's main screen: the frames"));
+    // a click on a tab (also on the tools' current one while the main screen is in front)
+    connect(pin, &QTabBar::tabBarClicked, this, [this](int) { select(0); });
+    connect(bar, &QTabBar::tabBarClicked, this, [this](int i) { if (i >= 0) select(i + 1); });
     menu->setFixedHeight(kRowHeight);
     menu->installEventFilter(this);
     qApp->installEventFilter(this);
     QAccessible::installFactory(tabAccessible);
     connect(Theme::instance(), &Theme::changed, this, [this] { restyle(); });
     restyle();
+    pin->show();
     bar->show();
     divider->show();
     QTimer::singleShot(0, this, [this] { layoutBar(); });
@@ -459,7 +478,7 @@ void Host::openTab(Page *p)
     bar->setTabButton(i, QTabBar::RightSide, p->close);
     busy = false;
     restyle();
-    select(i);
+    select(i + 1);
     layoutBar();
 }
 
@@ -467,17 +486,17 @@ void Host::openTab(Page *p)
 void Host::closedByApp(Page *p)
 {
     const int i = tabOf(p);
-    const bool wasCurrent = i == bar->currentIndex();
+    const bool wasCurrent = i == current;
     busy = true;
     p->open = false;
     tabs.removeOne(p);
-    bar->removeTab(i);   // the close button goes with it
+    bar->removeTab(i - 1);   // the close button goes with it
     p->close = nullptr;
     p->page->hide();
     busy = false;
     // Chrome's choice: the tab on the right, else the one on the left
-    if (wasCurrent) select(qMin(i, bar->count() - 1));
-    else updateCloseButtons();
+    if (wasCurrent) select(qMin(i, count() - 1));
+    else { if (current > i) current--; updateCloseButtons(); }
     layoutBar();
 }
 
@@ -488,12 +507,13 @@ void Host::destroyed(QObject *o)
         if (p->tool != o) continue;
         if (p->open) {
             const int i = tabOf(p);
-            const bool wasCurrent = i == bar->currentIndex();
+            const bool wasCurrent = i == current;
             busy = true;
             tabs.removeOne(p);
-            bar->removeTab(i);
+            bar->removeTab(i - 1);
             busy = false;
-            if (wasCurrent) select(qMin(i, bar->count() - 1));
+            if (wasCurrent) select(qMin(i, count() - 1));
+            else if (current > i) current--;
         }
         p->page->takeWidget();   // being deleted already
         p->page->deleteLater();
@@ -506,16 +526,26 @@ void Host::destroyed(QObject *o)
 
 void Host::select(int index)
 {
-    if (index < 0 || index >= bar->count()) return;
+    if (index < 0 || index >= count()) return;
     busy = true;
-    bar->setCurrentIndex(index);
+    current = index;
+    if (index > 0) bar->setCurrentIndex(index - 1);
+    // the strip without the tab in front shows none as current
+    for (TabStrip *t : {pin, bar}) {
+        const bool idle = (t == pin) != (index == 0);
+        if (t->property("idle").toBool() != idle) {
+            t->setProperty("idle", idle);
+            t->style()->unpolish(t);
+            t->style()->polish(t);
+        }
+    }
     QWidget *target = index == 0 ? mainPage : tabs[index - 1]->page;
     stack->setCurrentWidget(target);   // raised above the other pages
     busy = false;
     // Only the page shown is in the accessibility tree (a screen reader, and the tests by role, see that tab alone;
     // the covered pages stay "visible" to Qt): Qt's browser accessibility makes a hidden object's element inert.
     if (QAccessible::isActive()) {
-        for (int i = 0; i < bar->count(); i++) {
+        for (int i = 0; i < count(); i++) {
             QWidget *page = i == 0 ? mainPage : tabs[i - 1]->page;
             QAccessibleEvent ev(page, i == index ? QAccessible::ObjectShow : QAccessible::ObjectHide);
             QAccessible::updateAccessibility(&ev);
@@ -535,13 +565,14 @@ void Host::select(int index)
     }
     if (f && !f->hasFocus()) f->setFocus(Qt::OtherFocusReason);
     updateCloseButtons();
+    pin->update();
     bar->update();
 }
 
 // As SavvyCAN's close: the window's closeEvent decides (it may ask first); closedByApp follows from its hide.
 bool Host::closeTab(int index)
 {
-    if (index < 1 || index >= bar->count()) return false;
+    if (index < 1 || index >= count()) return false;
     Page *p = tabs[index - 1];
     QPointer<QWidget> tool(p->tool);
     const bool closed = tool->close();
@@ -559,8 +590,8 @@ QString Host::title(const Page *p) const
 void Host::retitle(Page *p)
 {
     if (const int i = tabOf(p); i > 0) {
-        bar->setTabText(i, title(p));
-        bar->setTabToolTip(i, p->tool->windowTitle().remove(QStringLiteral("[*]")).trimmed());
+        bar->setTabText(i - 1, title(p));
+        bar->setTabToolTip(i - 1, p->tool->windowTitle().remove(QStringLiteral("[*]")).trimmed());
         layoutBar();
     }
 }
@@ -576,19 +607,25 @@ void Host::restyle()
         "QMenuBar::item:selected, QMenuBar::item:pressed { background: %4; }")
                             .arg(css(c.strip)).arg(kTabTop).arg(css(c.textActive), css(c.hover))
                             .arg(itemPadding));
-    bar->setStyleSheet(QStringLiteral(
+    const QString strips = QStringLiteral(
         "QTabBar { background: transparent; border: none; }"
         "QTabBar::tab { background: transparent; color: %1; border: none; margin: 0 1px 0 0; padding: 0 6px 0 12px;"
         " border-top-left-radius: 9px; border-top-right-radius: 9px; }"
-        "QTabBar::tab:first { padding: 0 14px; }"
+        "QTabBar#webSavvyCanMainTab::tab { padding: 0 14px; }"
         "QTabBar::tab:hover { background: %2; color: %3; }"
         "QTabBar::tab:selected { background: %4; color: %3; }"
+        "QTabBar[idle=\"true\"]::tab:selected { background: transparent; color: %1; }"
+        "QTabBar[idle=\"true\"]::tab:selected:hover { background: %2; color: %3; }"
         "QTabBar QToolButton { background: %5; border: none; border-radius: 6px; margin: 4px 1px; }"
         "QTabBar QToolButton:hover { background: %2; }"
         "QTabBar::scroller { width: 26px; }"
         "QTabBar::tear { image: none; width: 0; border: none; }")
-                           .arg(css(c.text), css(c.hover), css(c.textActive), css(c.active), css(c.strip)));
-    bar->separator = c.separator;
+                           .arg(css(c.text), css(c.hover), css(c.textActive), css(c.active), css(c.strip));
+    for (TabStrip *t : {pin, bar}) {
+        t->setStyleSheet(strips);
+        t->separator = c.separator;
+        t->update();
+    }
     QPalette dp = divider->palette();
     dp.setColor(QPalette::Window, c.separator);
     divider->setPalette(dp);
@@ -599,9 +636,12 @@ void Host::restyle()
 
 void Host::updateCloseButtons()
 {
-    for (int i = 1; i < bar->count(); i++)
+    for (int i = 0; i < bar->count(); i++)
         if (auto *b = static_cast<CloseButton *>(bar->tabButton(i, QTabBar::RightSide)))
-            b->setShown(i == bar->currentIndex() || i == bar->hovered);
+            b->setShown(i + 1 == current || i == bar->hovered);
+    // the separator after the pinned tab: not beside the tab in front or a hovered one
+    const bool lead = current > 1 && pin->hovered < 0;
+    if (lead != bar->lead) { bar->lead = lead; bar->update(); }
 }
 
 // The bar after the menus, as wide as its tabs want, at most up to the page's texts (reserve).
@@ -614,11 +654,14 @@ void Host::layoutBar()
         if (r.isValid() && !r.isEmpty()) left = qMax(left, r.right() + 1);
     }
     left += kTabsGap;
-    const int natural = bar->naturalWidth();
-    const int room = qMax(0, menu->width() - left - reserve - 8);
+    const int pinWidth = pin->naturalWidth();
+    pin->setGeometry(left, kTabTop, pinWidth, kRowHeight - kTabTop);
+    const int natural = pinWidth + bar->naturalWidth();
+    const int room = qMax(0, menu->width() - left - pinWidth - reserve - 8);
     bar->fit(room);
-    const int width = qMin(bar->limit > 0 ? bar->ownWidth(0) + (bar->count() - 1) * bar->limit : natural, room);
-    bar->setGeometry(left, kTabTop, width, kRowHeight - kTabTop);
+    const int barWidth = qMin(bar->limit > 0 ? bar->count() * bar->limit : bar->naturalWidth(), room);
+    bar->setGeometry(left + pinWidth, kTabTop, barWidth, kRowHeight - kTabTop);
+    const int width = pinWidth + barWidth;
     divider->setGeometry(left - kTabsGap / 2 - 1, kTabTop + 7, 1, kRowHeight - kTabTop - 12);
     const int now[5] = {menu->height(), kTabTop, left, natural, left + width};
     if (!std::equal(now, now + 5, published)) {
@@ -677,33 +720,33 @@ QJsonObject WindowTabs::state()
     if (!g_host) return o;
     Host *h = g_host;
     QJsonArray tabs;
-    for (int i = 0; i < h->bar->count(); i++) {
-        const QRect r = h->bar->tabRect(i).translated(h->bar->geometry().topLeft());
+    for (int i = 0; i < h->count(); i++) {
+        const QRect r = h->tabRect(i);
         QJsonObject t;
-        t.insert("title", h->bar->tabText(i));
-        t.insert("current", i == h->bar->currentIndex());
+        t.insert("title", i == 0 ? h->pin->tabText(0) : h->bar->tabText(i - 1));
+        t.insert("current", i == h->current);
         t.insert("class", i == 0 ? QStringLiteral("MainWindow") : QString::fromLatin1(h->tabs[i - 1]->tool->metaObject()->className()));
         t.insert("closable", i > 0);
         t.insert("x", r.x());
         t.insert("y", r.y());
         t.insert("width", r.width());
         t.insert("height", r.height());
-        t.insert("visible", r.right() <= h->bar->geometry().right() && r.left() >= h->bar->geometry().left());
+        t.insert("visible", i == 0 || (r.right() <= h->bar->geometry().right() && r.left() >= h->bar->geometry().left()));
         if (i > 0)
-            if (auto *b = static_cast<CloseButton *>(h->bar->tabButton(i, QTabBar::RightSide)))
+            if (auto *b = static_cast<CloseButton *>(h->bar->tabButton(i - 1, QTabBar::RightSide)))
                 t.insert("closeShown", b->shown);
         tabs.append(t);
     }
     o.insert("tabs", tabs);
-    o.insert("current", h->bar->currentIndex());
+    o.insert("current", h->current);
     o.insert("rowHeight", h->menu->height());
-    o.insert("barLeft", h->bar->x());
-    o.insert("barWidth", h->bar->width());
-    o.insert("natural", h->bar->naturalWidth());
+    o.insert("barLeft", h->pin->x());
+    o.insert("barWidth", h->bar->x() + h->bar->width() - h->pin->x());
+    o.insert("natural", h->pin->naturalWidth() + h->bar->naturalWidth());
     o.insert("reserve", h->reserve);
     o.insert("hosted", int(h->pages.size()));
     // the page shown: the current tab's page is on top of the stack and fills the area
-    QWidget *top = h->bar->currentIndex() == 0 ? h->mainPage : h->tabs[h->bar->currentIndex() - 1]->page;
+    QWidget *top = h->current == 0 ? h->mainPage : h->tabs[h->current - 1]->page;
     o.insert("pageWidth", top->width());
     o.insert("pageHeight", top->height());
     const QWidgetList tops = QApplication::topLevelWidgets();
@@ -713,7 +756,7 @@ QJsonObject WindowTabs::state()
 
 bool WindowTabs::selectTab(int index)
 {
-    if (!g_host || index < 0 || index >= g_host->bar->count()) return false;
+    if (!g_host || index < 0 || index >= g_host->count()) return false;
     g_host->select(index);
     return true;
 }

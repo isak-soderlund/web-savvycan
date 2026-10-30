@@ -206,6 +206,8 @@ test('many tabs stay reachable: they shrink to elided titles, then the bar scrol
     s = await tabs(page);
     expect(s.current).toBe(i);
     expect(s.tabs[i].visible, `tab ${i} scrolled into view`).toBe(true);
+    // the main screen's tab is pinned: in view however the tools' tabs are scrolled
+    expect(s.tabs[0].x, 'Frames pinned at the start of the bar').toBe(s.barLeft);
   }
   // the page's texts take the row's right end (website): the bar stops before them
   await page.evaluate(() => window.savvycanTopBar.setReserve(500));
