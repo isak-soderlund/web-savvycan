@@ -192,11 +192,12 @@ test.describe('rig: RE tools on a live bus', () => {
         const want = frames.map((f, i) => (fn(f) ? i : -1)).filter((i) => i >= 0);
         expect(await page.evaluate((x) => window.webSavvyCAN.searchSet(x), set), `${what}: set`).toBe(true);
         await app.click('button', 'Search');
-        await expect.poll(async () => (await page.evaluate(() => window.webSavvyCAN.search())).label, { message: what })
-          .toBe(want.length ? `Match 1 of ${want.length}` : 'No matches found.');
-        const s = await page.evaluate(() => window.webSavvyCAN.search());
-        expect(s.rows, `${what}: the frames`).toEqual(want);
-        expect(s.selectedRow, `${what}: the first selected in the trace`).toBe(want[0]);
+        // label, rows and the trace's selection together (two searches in a row can have the same label)
+        await expect.poll(async () => {
+          const s = await page.evaluate(() => window.webSavvyCAN.search());
+          return { label: s.label, rows: s.rows, selected: s.selectedRow };
+        }, { message: `${what}: the frames, the first selected in the trace` })
+          .toEqual({ label: want.length ? `Match 1 of ${want.length}` : 'No matches found.', rows: want, selected: want[0] });
         return want;
       };
       const base = { len: null, dir: 'both', intel: true, signed: false, scale: 1, bias: 0 };

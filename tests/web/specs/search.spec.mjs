@@ -37,9 +37,10 @@ async function search(app, page, set, want, what) {
   expect(await page.evaluate((s) => window.webSavvyCAN.searchSet(s), set), `${what}: set`).toBe(true);
   await page.evaluate(() => { window.__searched = window.webSavvyCAN.search().searchMs; });
   await app.click('button', 'Search');
-  // done when the label says so (the page runs on while a search goes through a big trace)
-  await expect.poll(async () => (await state(page)).label, { message: `${what}: matches` })
-    .toBe(want.length ? `Match 1 of ${want.length}` : 'No matches found.');
+  // done when the label and the rows say so (the page runs on while a search goes through a big trace; two searches
+  // in a row can have the same label)
+  await expect.poll(async () => { const x = await state(page); return { label: x.label, rows: x.rows }; }, { message: `${what}: matches` })
+    .toEqual({ label: want.length ? `Match 1 of ${want.length}` : 'No matches found.', rows: want.slice(0, 5000) });
   const s = await state(page);
   expect(s.rows, `${what}: the matching rows`).toEqual(want.slice(0, 5000));
   if (want.length) {
@@ -151,7 +152,8 @@ test('DBC signals: the boxes list the DBC (loaded while the window is open), Cop
   // there), and reopening it from the menu (raise()) hangs Qt's accessibility layer (RESOLVE.md)
   const run = async (set, want, what) => {
     expect(await page.evaluate((x) => window.webSavvyCAN.searchSet({ ...x, run: true }), set), `${what}: set`).toBe(true);
-    await expect.poll(async () => (await state(page)).label, { message: `${what}: matches` }).toBe(`Match 1 of ${want.length}`);
+    await expect.poll(async () => { const x = await state(page); return { label: x.label, rows: x.rows }; }, { message: `${what}: matches` })
+      .toEqual({ label: `Match 1 of ${want.length}`, rows: want });
     const r = await state(page);
     expect(r.rows, `${what}: the matching rows`).toEqual(want);
     expect(r.selectedRow, `${what}: the first match selected in the trace`).toBe(want[0]);
