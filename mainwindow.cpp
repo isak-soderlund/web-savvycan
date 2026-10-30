@@ -2073,8 +2073,16 @@ void MainWindow::handleSaveDecodedMethod(bool csv)
     {
         QBuffer buffer;
         buffer.open(QIODevice::WriteOnly);
-        if (csv) saveDecodedTextFileAsColumns(&buffer);
-        else saveDecodedTextFile(&buffer);
+        const bool ok = csv ? saveDecodedTextFileAsColumns(&buffer) : saveDecodedTextFile(&buffer);
+        if (!ok) {
+            // the file is made in the page's memory first (at most ~2 GB in one piece): a CSV of many messages is
+            // every signal's column on every row (rows x columns)
+            QMessageBox::warning(this, tr("Save Decoded Frames"),
+                                 tr("The decoded file is too large for the browser (%1 MB written when it ran out of "
+                                    "memory). Save fewer frames (filter the trace), use the text format instead of CSV, or "
+                                    "use the desktop version.").arg(buffer.size() / 1000000));
+            return;
+        }
         QFileDialog::saveFileContent(buffer.data(), csv ? QStringLiteral("SavvyCAN_decoded.csv") : QStringLiteral("SavvyCAN_decoded.txt"));
         return;
     }
@@ -2117,7 +2125,7 @@ void MainWindow::handleSaveDecodedMethod(bool csv)
 
 // web-savvycan: written to any device (a file, or memory for the browser's download), the frames read from the trace
 // one at a time (was a copy of the whole trace first)
-void MainWindow::saveDecodedTextFileAsColumns(QIODevice *outFile)
+bool MainWindow::saveDecodedTextFileAsColumns(QIODevice *outFile)
 {
     const FrameListView *frames = model->getFilteredListReference();
 
@@ -2206,7 +2214,7 @@ Data Bytes: 88 10 00 13 BB 00 06 00
     //add EOL
     builderString += "\n";
     //write out the header row
-    outFile->write(builderString.toUtf8());
+    if (outFile->write(builderString.toUtf8()) < 0) return false; // web-savvycan: out of room (the browser's memory)
 
         //builderString = tr("Data Bytes: ");
         //for (int temp = 0; temp < dataLen; temp++)
@@ -2285,12 +2293,13 @@ Data Bytes: 88 10 00 13 BB 00 06 00
                 }
             }
             builderString.append("\n");
-            outFile->write(builderString.toUtf8());
+            if (outFile->write(builderString.toUtf8()) < 0) return false; // web-savvycan: out of room (the browser's memory)
         }
     }
+    return true;
 }
 
-void MainWindow::saveDecodedTextFile(QIODevice *outFile)
+bool MainWindow::saveDecodedTextFile(QIODevice *outFile)
 {
     const FrameListView *frames = model->getFilteredListReference();
 
@@ -2316,7 +2325,7 @@ Data Bytes: 88 10 00 13 BB 00 06 00
         else builderString += tr(" Std ");
         builderString += tr("Bus: ") + QString::number(frame->getBus());
         builderString += " Len: " + QString::number(dataLen) + "\n";
-        outFile->write(builderString.toUtf8());
+        if (outFile->write(builderString.toUtf8()) < 0) return false; // web-savvycan: out of room (the browser's memory)
 
         builderString = tr("Data Bytes: ");
         for (int temp = 0; temp < dataLen; temp++)
@@ -2324,7 +2333,7 @@ Data Bytes: 88 10 00 13 BB 00 06 00
             builderString += Utility::formatNumber(data[temp]) + " ";
         }
         builderString += "\n";
-        outFile->write(builderString.toUtf8());
+        if (outFile->write(builderString.toUtf8()) < 0) return false; // web-savvycan: out of room (the browser's memory)
 
         builderString = "";
         if (dbcHandler != nullptr)
@@ -2345,9 +2354,10 @@ Data Bytes: 88 10 00 13 BB 00 06 00
                 }
             }
             builderString.append("\n");
-            outFile->write(builderString.toUtf8());
+            if (outFile->write(builderString.toUtf8()) < 0) return false; // web-savvycan: out of room (the browser's memory)
         }
     }
+    return true;
 }
 
 void MainWindow::toggleCapture()

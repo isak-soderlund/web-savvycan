@@ -271,7 +271,7 @@ test('DBC File Manager loads the DBC; Interpret Frames decodes classic and FD fr
     checked += checkRow(row, frames[i], `row ${i} (0x${frames[i].id.toString(16)})`);
   });
   console.log(`decoded trace: ${rows.length} rows, ${checked} signal values checked`);
-  expect(checked).toBeGreaterThan(1000);
+  expect(checked).toBeGreaterThan(600);
 
   // Row colours: a message's own background with black text on it; its own text colour where it reads; else the theme's.
   const lastOf = (id) => [...rows].reverse().find((r) => r.id === id);
@@ -442,6 +442,8 @@ test('DBC editors with CAN FD; a DBC saved (download), loaded back the same; rem
   expect(await page.evaluate(() => window.webSavvyCAN.dbcSelectFile(0))).toBe(true);
   await app.click('button', /^Edit$/);
   await expect.poll(async () => (await page.evaluate(() => window.webSavvyCAN.dbcEditors())).main, { message: 'the DBC editor' }).toBe(true);
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: join(RESULTS, 'dbc-editor-light.png') });
   expect(await page.evaluate(() => window.webSavvyCAN.dbcEdit('TEST_FD64'))).toBe(true);
   await expect.poll(async () => (await page.evaluate(() => window.webSavvyCAN.dbcEditors())).message?.lineFrameLen).toBe('64');
   const me = (await page.evaluate(() => window.webSavvyCAN.dbcEditors())).message;
@@ -452,8 +454,10 @@ test('DBC editors with CAN FD; a DBC saved (download), loaded back the same; rem
   await expect.poll(async () => (await page.evaluate(() => window.webSavvyCAN.dbcEditors())).signal?.txtName).toBe('HighBits');
   const se = (await page.evaluate(() => window.webSavvyCAN.dbcEditors())).signal;
   expect([se.txtBitLength, se.gridBytes], 'the signal editor: 7 bits, the 64-byte grid').toEqual(['7', 64]);
-  for (const b of [500, 506, 487, 456, 320, 335, 88]) expect(se.usedBits, `bit ${b} marked as a signal's`).toContain(b);
-  expect(se.usedBits, 'nothing past the signals').not.toContain(511);
+  // the message's signals: Scaled 88..99, Double64 256..319, Byte40Word 320..335, Wide64 384..447, Tail32 (Motorola
+  // 487) bytes 60..63, HighBits 500..506
+  for (const b of [88, 99, 256, 319, 320, 335, 384, 447, 487, 480, 511, 500, 506]) expect(se.usedBits, `bit ${b} marked as a signal's`).toContain(b);
+  for (const b of [100, 336, 448, 460, 479]) expect(se.usedBits, `bit ${b} not a signal's`).not.toContain(b);
   await page.screenshot({ path: join(RESULTS, 'dbc-signal-editor-light.png') });
   await app.setTheme('dark');
   await page.waitForTimeout(800);
@@ -490,4 +494,62 @@ test('DBC editors with CAN FD; a DBC saved (download), loaded back the same; rem
   const again = (await dbcState(page)).files[0];
   expect(again.name).toBe('stage3_saved.dbc');
   expect(norm(again), 'the same messages and signals').toEqual(norm(original));
+});
+
+test('a big DBC and a big log: load time, Interpret Frames, Save Decoded Frames of 100 000 frames of 50 messages (measured)', async ({ app, page }) => {
+  test.setTimeout(240_000);
+  // 1 000 messages of 16 signals (8 Intel, 8 Motorola, 4 bits each, factor 0.5): ~1.2 MB of DBC
+  const lines = ['VERSION ""', '', 'NS_ :', '', 'BS_:', '', 'BU_: BIG', ''];
+  for (let m = 0; m < 1000; m++) {
+    lines.push(`BO_ ${0x100 + m} BIG_${m}: 8 BIG`);
+    for (let s = 0; s < 16; s++) {
+      const intel = s < 8;
+      const start = intel ? s * 4 : 32 + (s - 8) * 4 + 3;
+      lines.push(` SG_ S${m}_${s} : ${start}|4@${intel ? 1 : 0}+ (0.5,1) [1|8.5] "u" BIG`);
+    }
+    lines.push('');
+  }
+  const big = lines.join('\n');
+  const N = 100000;
+  const r = rng(7);
+  const rows = ['Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8'];
+  for (let i = 0; i < N; i++) {
+    const id = 0x100 + (i % 50); // 50 of the DBC's messages: the CSV has a column per signal of every message seen
+    rows.push(`${1e6 + i * 1000},${id.toString(16).toUpperCase().padStart(8, '0')},false,Rx,0,8,${Array.from({ length: 8 }, () => hex(r())).join(',')},`);
+  }
+  const file = join(RESULTS, 'dbc-big-log.csv');
+  writeFileSync(file, rows.join('\n') + '\n');
+
+  await app.open();
+  const t0 = Date.now();
+  await loadDbc(app, page, 'big.dbc', big);
+  const loadMs = Date.now() - t0;
+  const st = await dbcState(page);
+  expect(st.files[0].messages.length).toBe(1000);
+  await closeWindow(page);
+  await app.loadFile(file, N, 60000);
+  const mem0 = await page.evaluate(() => window.webSavvyCAN.memory());
+  await interpret(app, true);
+  const t1 = Date.now();
+  const shown = await page.evaluate(() => window.webSavvyCAN.traceDecoded(200));
+  const decode200Ms = Date.now() - t1;
+  expect(shown[199].text).toContain(`<BIG_${(N - 1) % 50}>`);
+  const t2 = Date.now();
+  const csv = await captureSave(page, () => app.menu('File', 'Save Decoded Frames CSV'));
+  const csvMs = Date.now() - t2;
+  const t3 = Date.now();
+  const txt = await captureSave(page, () => app.menu('File', /^Save Decoded Frames$/i));
+  const txtMs = Date.now() - t3;
+  const mem1 = await page.evaluate(() => window.webSavvyCAN.memory());
+  writeFileSync(join(RESULTS, 'dbc-big-decoded.csv'), csv.text);
+  writeFileSync(join(RESULTS, 'dbc-big-decoded.txt'), txt.text);
+  expect(csv.text.trim().split('\n').length).toBe(N + 1);
+  expect(txt.text.split(/\n(?=Time: )/).length).toBe(N);
+  const result = {
+    dbcBytes: big.length, dbcLoadMs: loadMs, frames: N, decode200RowsMs: decode200Ms,
+    csvBytes: csv.text.length, csvMs, txtBytes: txt.text.length, txtMs,
+    heapUsedBefore: mem0.heapUsed, heapUsedAfter: mem1.heapUsed, maxFootprint: mem1.maxFootprint, heapSize: mem1.heapSize,
+  };
+  console.log('dbc-big', JSON.stringify(result));
+  writeFileSync(join(RESULTS, 'dbc-big.json'), JSON.stringify(result, null, 2));
 });

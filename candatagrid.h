@@ -87,6 +87,7 @@ private:
     QColor lineColor = Qt::black;  // web-savvycan: cell outlines; with white/black brush set per theme at each paint
     bool darkTheme = false;
     QColor textOn(const QBrush &brush) const;
+    static QColor textOnSignal(const QColor &c);
     QPainter *painter;
     QRect viewport;
     int xSpan;
