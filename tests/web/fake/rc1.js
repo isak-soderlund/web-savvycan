@@ -639,6 +639,14 @@
    *   fd64-full       rc1's measured full rate, FD 64 bytes with BRS at 500k/8M: 6 900 frames/s (`rate`)
    *   fd-mix          every FD length 0..64, BRS on/off, 11/29-bit IDs, classic and remote frames in between: 500/s
    *   errors          the Leaf table plus an error frame every 100 ms (warning, passive, bus-off, restart, ACK, overflow)
+   *   re              known patterns for the reverse-engineering tools (stage 4), each ID at `rate` frames/s (100):
+   *                   0x120 classic 8: d0 counts up, d1 = 0x5A, d2 bit 3 = state & 1 (bit 19), d3 bits 2-3 = state & 3
+   *                     (bits 26-27), d4..d7 = 11 22 33 44
+   *                   0x121 classic 8: d0-d1 a 16-bit little-endian triangle 1000..3000 (step 10), d2..d7 = 0
+   *                   0x130 classic 8: pseudo-random bytes
+   *                   0x18FF0001 29-bit CAN FD 64 bytes with BRS: d40 counts up, d63 = 0xA5, d33 bit 6 = state & 1
+   *                     (bit 270), d50-d51 the triangle (start bit 400), the rest 0
+   *                   `state` (o.state, then `__rc1.setReState(n)`): the "user action" the tools look for
    */
   function makeTraffic(mode, o = {}) {
     if (mode === 'idle' || !mode) return { next: () => null, name: 'idle' };
@@ -697,6 +705,37 @@
           const f = frame({ id: m.id, data: d });
           f.seq = seq++;
           return { t: best.t, frame: f };
+        },
+      };
+    }
+    if (mode === 're') {
+      const rate = o.rate || 100;
+      const ctl = { state: o.state || 0 };
+      const per = 4; // frames per round: 0x120, 0x121, 0x130, 0x18FF0001
+      let rnd = 0x12345678;
+      const random = () => ((rnd = (Math.imul(rnd, 1103515245) + 12345) >>> 0) >>> 16) & 0xff;
+      return {
+        name: mode, rate, ctl,
+        next() {
+          const k = Math.floor(seq / per), which = seq % per;
+          const t = (k * 1000) / rate + which * 0.25;
+          const tri = 1000 + 10 * Math.abs(((k + 200) % 400) - 200); // 1000..3000..1000, 400 frames a period
+          const st = ctl.state;
+          let f;
+          if (which === 0) f = frame({ id: 0x120, data: [k & 0xff, 0x5a, (st & 1) << 3, (st & 3) << 2, 0x11, 0x22, 0x33, 0x44] });
+          else if (which === 1) f = frame({ id: 0x121, data: [tri & 0xff, tri >> 8, 0, 0, 0, 0, 0, 0] });
+          else if (which === 2) f = frame({ id: 0x130, data: Array.from({ length: 8 }, random) });
+          else {
+            const d = new Uint8Array(64);
+            d[40] = k & 0xff;
+            d[63] = 0xa5;
+            d[33] = (st & 1) << 6;
+            d[50] = tri & 0xff;
+            d[51] = tri >> 8;
+            f = frame({ id: 0x18ff0001, ext: true, fd: true, brs: true, data: d });
+          }
+          f.seq = seq++;
+          return { t, frame: f };
         },
       };
     }
@@ -1312,6 +1351,7 @@
       stats: (i = 0) => ports[i]._dev.stats(),
       setTraffic: (mode, opts, i = 0) => ports[i]._dev.setTraffic(mode, opts || {}),
       setClock: (us, i = 0) => ports[i]._dev.setClock(us),
+      setReState: (n, i = 0) => { const t = ports[i]._dev.traffic; if (t.ctl) t.ctl.state = n; return !!t.ctl; },
       clockUs: (i = 0) => ports[i]._dev.usNow(),
       inject: (f, i = 0) => ports[i]._dev.inject(frame(f)),
       unplug: (i = 0) => ports[i]._unplug(),

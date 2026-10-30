@@ -2,6 +2,8 @@
 #define CANDATAGRID_H
 
 #include <QWidget>
+#include <QStaticText>
+#include <vector>
 
 namespace Ui {
 class CANDataGrid;
@@ -107,6 +109,9 @@ private:
     QFontMetrics *smallMetric;
     QFontMetrics *largeMetric;
     QColor fire[256];
+    std::vector<QStaticText> bitLabels;   // web-savvycan: the bit numbers laid out once (bitLabel())
+    QFont bitLabelFont;
+    const QStaticText &bitLabel(int bit);
 
     void paintGridCells();
     void paintCommonBeginning();

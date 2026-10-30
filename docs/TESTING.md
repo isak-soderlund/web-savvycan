@@ -125,6 +125,23 @@ second line `dirty` means uncommitted changes were in it).
     (start bit, number of bits, Intel/signed, scale, bias; click the grid, which shows 64 bytes for FD), then *Specific
     value* (decimal, `0x..` hex or `0b..` binary) or *Any change*, **Search**: "Match 1 of N" and that row selected in the
     trace; **Next >** / **< Previous** step through. Try a byte past byte 8 of an FD frame.
+23. **Sniffer.** On a live bus, RE Tools > **Sniffer**: one row per ID, bytes going up green, down red; IDs that stop
+    turn red and go after 5 s (Never Expire keeps them). Leave the car (or bus) as it is and press **Notch** a few
+    times over a few seconds: the colours stop. Now do one thing (a button, a door, the steering): only its bytes light
+    up. **Unnotch**: everything again. Try View Bits, Fade inactive bytes, an unchecked ID in Filters; an FD ID shows up
+    to 64 byte columns. Dark theme: readable.
+24. **Flow View.** RE Tools > **Flow View**, pick an ID: the bytes (table and grid) of one frame, the graphs around it.
+    Step with the arrows, play, pause, drag the timeline; type a value in a byte's **Seek** cell: playing stops there;
+    click a bit in the grid (it turns blue): playing stops where that bit changes (also past byte 8 of an FD ID). Tick
+    **Live Mode**: it follows the newest frame. Leave it running long on a busy bus: smooth, memory not growing.
+25. **Range State.** On a log or after a while of live traffic, RE Tools > **Range State** > **Recalculate Candidate
+    Signals** (e.g. min 8, max 16, granularity 8): a list of candidates; arrow through it and look at the graphs for
+    speed-, temperature- or pedal-like curves. The page stays responsive while it works (a 64-byte ID at granularity 1
+    takes seconds).
+26. **Single/Multi State.** RE Tools > **Single/Multi State**, Realtime, Number of States 2: **Go for it**, then do as
+    the big label says: "Go to state 1" (e.g. button released), "Go to state 2" (pressed), each time for the toggle
+    time, waiting at "Wait....". At DONE the list shows the ID and bits that followed you. Try 3 states with a 3-way
+    switch. "From logged data": the fields of the checked IDs with exactly that many values in the trace.
 
 Please note for each step: works / doesn't (what you saw, a screenshot), Chrome's version and the OS, and for any
 problem the browser console (View > Developer > JavaScript Console): copy its red lines.

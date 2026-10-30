@@ -94,6 +94,10 @@ public:
     void showEvent(QShowEvent*);
     void closeEvent(QCloseEvent*);
 
+    // For the test hook (testhook.cpp).
+    const SnifferModel &model() const { return mModel; }
+    QListWidget *idList() const;
+
 public slots:
     void update();
     void notchTick();
@@ -121,6 +125,7 @@ private:
     QAbstractItemDelegate       *defaultDel;
     bool                        notchPingPong;
     bool                        inhibitSectionResizeEvent;
+    int                         idColumnWidth = 80;
 };
 
 #endif // SNIFFER_H

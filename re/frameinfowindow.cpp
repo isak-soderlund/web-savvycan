@@ -1,4 +1,5 @@
 #include "frameinfowindow.h"
+#include "re/retools.h"
 #include "ui_frameinfowindow.h"
 #include "mainwindow.h"
 #include "helpwindow.h"
@@ -14,19 +15,10 @@
 #include <algorithm>
 #include <cmath>
 
-// SavvyCAN's eight byte graph colours, byte by byte (they repeat every 8 bytes: CAN FD has up to 64). web-savvycan:
-// in dark, lighter ones, light grey for black (the plot background is dark).
+// SavvyCAN's eight byte graph colours, per theme (shared with Flow View: re/retools.cpp).
 QColor FrameInfoWindow::byteGraphColor(int byte)
 {
-    static const QColor light[8] = {
-        Qt::blue, Qt::green,  Qt::black, Qt::red, //0 1 2 3
-        Qt::gray, Qt::darkYellow, Qt::cyan,  Qt::darkMagenta, //4 5 6 7
-    };
-    static const QColor dark[8] = {
-        QColor(0x6c, 0x9c, 0xff), QColor(0x40, 0xe0, 0x40), QColor(0xd0, 0xd0, 0xd0), QColor(0xff, 0x60, 0x60),
-        QColor(0xa0, 0xa0, 0xa0), QColor(0xe0, 0xc8, 0x40), QColor(Qt::cyan), QColor(0xe0, 0x70, 0xe0),
-    };
-    return (Theme::isDark() ? dark : light)[byte & 7];
+    return ReTools::byteColor(byte);
 }
 
 const int numIntervalHistBars = 20;

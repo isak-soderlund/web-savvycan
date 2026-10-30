@@ -3,6 +3,7 @@
 #include "theme.h"
 
 #include <QPainter>
+#include <QStaticText>
 #include <QDebug>
 #include <QMouseEvent>
 #include <QRandomGenerator>
@@ -457,7 +458,17 @@ void CANDataGrid::paintGridCells()
             //if (thisBit) painter->setFont(boldFont);
            // else painter->setFont(mainFont);
             //painter->setFont(smallFont);
-            if (gridMode != GridMode::SIGNAL_VIEW)
+            if (gridMode != GridMode::SIGNAL_VIEW && textStates[byteIdx][bitIdx] != GridTextState::BOLD_BLUE)
+            {
+                // web-savvycan: the bit numbers' layouts are made once per font size (512 drawText layouts a paint
+                // were most of a 64-byte grid's time: Flow View redraws it 4 times a second in Live Mode); centred
+                // as drawText(AlignCenter) does
+                const QStaticText &label = bitLabel(bit);
+                const QSizeF size = label.size();
+                painter->drawStaticText(QPointF(nearX + x * xSector + (xSector - size.width()) / 2.0,
+                                                nearY + y * ySector + (ySector - size.height()) / 2.0), label);
+            }
+            else if (gridMode != GridMode::SIGNAL_VIEW)
                 painter->drawText(QRect(nearX + (x * xSector), nearY + (y * ySector), xSector, ySector), Qt::AlignCenter, QString::number(bit)); //center center of grid
             else
                 painter->drawText(QRect(nearX + (x * xSector), nearY + (y * ySector), xSector, ySector), Qt::AlignLeft, QString::number(bit)); //upper left of grid
@@ -572,6 +583,25 @@ int CANDataGrid::getSignalRowRun(QString sigName, int startBit)
     }
 
     return width;
+}
+
+// web-savvycan: bit number n laid out in mainFont, kept until the font's size changes.
+const QStaticText &CANDataGrid::bitLabel(int bit)
+{
+    if (bitLabelFont != mainFont)
+    {
+        bitLabels.clear();
+        bitLabelFont = mainFont;
+    }
+    if (bitLabels.empty()) bitLabels.resize(512);
+    QStaticText &label = bitLabels[size_t(bit & 511)];
+    if (label.text().isEmpty())
+    {
+        label.setText(QString::number(bit));
+        label.setTextFormat(Qt::PlainText);
+        label.prepare(QTransform(), mainFont);
+    }
+    return label;
 }
 
 void CANDataGrid::paintCommonEnding()

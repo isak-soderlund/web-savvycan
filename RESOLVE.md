@@ -172,6 +172,62 @@ levels of all 512 bits (64 of the classic ID) equal those computed from the fram
 30 000 frames of one FD ID (bounded byte graphs, exact counts, time); live fd-mix traffic (the list fills while the
 window is open, analyses equal the trace's frames, twice); Save details to file. Pictures in light and dark.
 
+## Stage 4: live RE tools (switched on 2026-10-30)
+
+RE Tools > **Sniffer**, **Flow View**, **Range State** and **Single/Multi State**: SavvyCAN's windows and controls,
+with CAN FD, the dark theme, bounded memory and live updates on the ring-buffer trace. What they share (no UI, tested
+natively): `re/retools.{h,cpp}`.
+
+| Tool | What it does | What changed |
+| --- | --- | --- |
+| Sniffer (`re/sniffer/`) | Every live ID with its newest bytes; bytes going up green, down red; Notch remembers the bits that changed in the last notch period and no longer colours them; Mute, Fade, Never Expire, View Bits; ID filters; IDs vanish after the expire interval | Frames straight from the connection (`CANConManager::framesReceived`: the trace's ring doesn't matter). CAN FD: every per-ID buffer initialised for 64 bytes (only the first frame's length was: a longer frame later compared uninitialised bytes); times with their seconds. Colours chosen by the theme when drawn (it read the palette once); bit cells in dark: light set, dark clear, grey notched. Rows looked up in a vector (`index()` walked the map per cell). Error frames not listed as IDs, remote frames don't empty an ID's bytes; at most 4096 IDs (more are counted, not shown); a new ID shown while filtering (it was announced in the wrong row order); no null item when filtering an expired ID |
+| Flow View | One ID's frames one by one: playback (back, stop, forward, reverse, pause, play, speed, loop), timeline, the byte table (value, reference, seek value, graph on/off, colour), the bit grid (changes against the reference), byte graphs around the current frame, trigger bits (click the grid), Live Mode, Auto Reference, graph by time | The ID's frames kept compactly (`IdFrames`: time, length, payload in rows of the longest frame) and **bounded to the newest 200 000** (was a `QList<CommFrame>` of every frame forever). The graphs hold only the frames around the current one (+-2x the chart range; the view is always +-1x, no zoom), rebuilt when the view leaves them (were all frames in up to 64 graphs, twice; live frames all at one x). Live: new frames by the newest frame taken (not rows count-n). FD: trigger bits past byte 7 (the 64-bit chunks were indexed by byte*8: read past the frame), a longer frame later adds its rows/graphs; the Ref column sets the reference (it set the seek value). No crash with no frames (Stop, Live Mode, the timeline read frame 0 or -1). Byte colours per theme (shared with Frame Data Analysis), the "+" in the theme's colour. Browser: "Save image to file" downloads a PNG |
+| Range State | Candidate signals that range smoothly (sensitivity, min/max size, granularity, byte order, signedness, ID filter); a candidate's graph | SavvyCAN's test unchanged (`rangeSignalLooksGood`, line for line, checked against the original natively), 64-bit (`1 << 32` and the values overflowed). One pass over the trace into compact rows per ID (was a full scan and a `reserve()` of the whole trace per ID). FD: start bits up to 511 (packed into 8 bits, they ran into the length). No crash for an ID whose frames left the trace. The event loop every 100 ms while it searches. Line in the theme's colour |
+| Single/Multi State | Bits that follow a user action. **Realtime:** "Go to state N" for each state in turn (countdown, hold, wait), Iterations times; **From logged data:** fields with exactly Number of States values | SavvyCAN's window had **no search** (`calculateResults()` empty in both modes) and its state counter ran one past. Now: realtime records each ID's frames per state (after the first quarter of each hold, the time to get there; `StateSampler`: an even spread of at most 2048 frames per ID and state, all within 32 MB); a field of Min..Max bits (Intel numbering) matches when in every state >= 90 % of its frames have one value and the values differ between states. Logged: fields with exactly N values over the trace. Both: only fields whose first and last bits change, smallest first, none containing a match (a toggling bit is reported once). Up to 64 bytes. Status colours lighter in dark |
+
+All four: a framed dialog in the browser; -1/-2 (Clear, a file loaded) rebuild from the list (W2); the ID lists fill
+from the trace's newest frames. `testhook_retools.cpp` (own file): `sniffer()`, `flowView()`, `rangeState()`,
+`discreteState()` and their actions.
+
+Measured (headless Chromium, the fake rc1, 2026-10-30; `results/flowview-live.json`, `retools-fullrate.json`,
+`rangestate.json`, `discretestate.json`):
+- **Flow View at full rate:** one ID at 8 000 frames/s for 30 s with a 50 000-frame trace (190 625 frames evicted):
+  its cache kept the newest 190 000 (50 000 dropped from its front in eighths), every frame once (consecutive sequence
+  numbers), 3.4 MB; timer p95 21-23 ms, max 67-74 ms, nothing lost at rc1. Then 64-byte FD frames of the same ID:
+  184 000 kept, 14.6 MB (the bound is 200 000 x (64 + 9) bytes).
+- **All four open at full rate** (Sniffer, Flow View in Live Mode, Range State, a realtime Single/Multi State run;
+  50 000-frame trace), four runs: classic 8 000/s for 20 s: nothing lost, timer p95 28-39 ms, max 88-138 ms, heap in
+  use 33.4 -> 36.7 MB; FD64 6 900/s for 20 s: nothing lost, p95 48-58 ms, max 106-130 ms, heap 41.9 -> 51.2 MB (the
+  realtime recording 3.9 MB, Flow View's cache 2.4 MB). The sniffer saw every frame once. The trace alone (no tool
+  open) measured 32-55 ms p95 for FD64 from run to run on the rig (other jobs share the PC); Flow View in Live Mode on
+  a 64-byte ID adds the most (64 graphs, the 512-bit grid and the table redrawn 4 times a second): the grid's bit
+  numbers are now laid out once (`QStaticText`, `candatagrid.cpp`), its paint 3.4 -> 1.4 ms natively (the picture the
+  same). The spec bounds p95 at 100 ms; stalls (max < 1 s) and losses are the limits that hold.
+- **Range State** (1 000 frames per ID): 16-bit at every start bit of a 64-byte ID, 4 kinds (2 048 tests): 92 ms;
+  3 classic IDs, 8..16 bits at every start bit, 4 kinds (20 736 tests): 315 ms; no event-loop gap over 200 ms.
+- **Single/Multi State:** realtime, 2 states x 3 iterations of 1 s on the `re` traffic: exactly the three planted
+  fields (0x120 bits 19 and 26, FD bit 270), 1 684 frames recorded (62 KB), the search 3 ms; 3 states: exactly bits
+  26-27.
+
+Tests: `tests/web` `sniffer`, `flowview`, `rangestate`, `discretestate`, `retools-fullrate` specs (the fake's new `re`
+traffic: a counter, a constant, a toggled "state" bit and a 2-bit state field, a triangle signal, random bytes, the same
+in a 29-bit 64-byte FD frame); each tool's results against what was sent (Range State and logged Single/Multi State
+against reference implementations in `lib/retools-ref.mjs`, SavvyCAN's processSignal written out); pictures light and
+dark. `tests/desktop` `tst_retools` (11 tests, also ASan/UBSan): new frames across ring wraps, the bounded rows, Range
+State's test equal to SavvyCAN's original on random walks, the discrete searches, the sampler's budget, the sniffer
+item with lengths 8 <-> 64.
+
+Limits: like SavvyCAN, an ID is one number in Sniffer, Flow View and Range State (an 11-bit and a 29-bit ID of the
+same value are one entry; Single/Multi State keeps them apart). Flow View keeps the newest 200 000 frames of its ID
+(25 s of one ID at rc1's full rate; 33 min at 100 Hz). Range State's search is SavvyCAN's: O(sizes x start bits x
+kinds x frames) on the UI thread, with the event loop every 100 ms (the window waits; a 64-byte ID at granularity 1
+takes seconds). Single/Multi State realtime uses Min/Max Bits too (SavvyCAN greys them out there; they keep their
+values, 1..8); a field can't be over 8 bits (the spin boxes' limit); a slow counter whose bits happen to stay
+constant through each held state and differ between states matches too (16 such fields from the sequence numbers of
+`classic-full`, where nothing followed a state): more iterations or a different toggle time tell them apart. The
+sniffer keeps at most 4096 IDs. Flow View's time axis is in µs or seconds (SavvyCAN's setting), not the app's time
+style.
+
 ## Done: logs longer than 71.6 minutes (2026-10-29, Next item 1)
 
 GVRET sends a frame's time as 32-bit µs, so 2^32 µs (71.6 min) after the device's clock started the times began
@@ -317,11 +373,9 @@ logic natively (bisect rules, FD summaries and tree, the DBC tree from two DBC f
   `candatagrid.cpp`'s bit grid (New graph, and the DBC editor and sender once they are on).
 - **Hard-coded colours left for later stages** (fix when the window is switched on):
   - DBC (stage 3): done 2026-10-30 (message colours readable in both themes, the signal editor's grid);
-  - Sniffer: `re/sniffer/sniffermodel.cpp` (grey levels and dark red/green, palette read once) and
-    `SnifferDelegate.cpp`;
-  - Frame Info: done 2026-10-29 (byte graph colours per theme); Flow view: `graphColors[8]` with
-    `Qt::black`, black text pen (`re/flowviewwindow.cpp`); Range state: black graph pen
-    (`re/rangestatewindow.cpp`); Discrete state: fixed label palettes (`re/discretestatewindow.cpp`);
+  - Sniffer, Flow view, Range state, Discrete state: done 2026-10-30 (stage 4 live RE tools); Frame Info: done
+    2026-10-29 (byte graph colours per theme);
+  - `candatagrid.cpp`: the DBC editor's signal colours (`signalColors`) are bright in both themes (names in black);
   - Scripting: `jsedit.cpp` syntax colours, line numbers, cursor and bracket colours.
 
 ## Hosting (decide before the first public build)

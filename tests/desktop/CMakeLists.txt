@@ -4,6 +4,7 @@
 #   tst_dbc                                        the DBC decoder with CAN FD, a DBC saved and loaded back, removals
 #   tst_filetools                                  the file-based RE tools' logic (bisector, comparisons, search)
 #   tst_webserialport                              the Web Serial QSerialPort stand-in, with a fake backend
+#   tst_retools                                    the live RE tools' shared code (re/retools.cpp), the sniffer's item
 #   nativecsv_tool                                 SavvyCAN's native GVRET CSV with its own code: desktop continuous
 #                                                  logging and save/load (tests here), the reference rows and the
 #                                                  load check for the browser's download (tests/web download.spec)
@@ -63,6 +64,12 @@ add_executable(tst_filetools tst_filetools.cpp testframes.h ${SRC}/re/filetools.
     ${SRC}/framefileio.cpp ${SRC}/blfhandler.cpp ${SRC}/pcaplite.cpp)
 target_link_libraries(tst_filetools PRIVATE frames_under_test)
 add_test(NAME tst_filetools COMMAND tst_filetools)
+
+# The live RE tools' shared code (stage 4) and the sniffer's per-ID item
+add_executable(tst_retools tst_retools.cpp testframes.h
+    ${SRC}/re/retools.cpp ${SRC}/re/retools.h ${SRC}/re/sniffer/snifferitem.cpp ${SRC}/re/sniffer/snifferitem.h)
+target_link_libraries(tst_retools PRIVATE frames_under_test)
+add_test(NAME tst_retools COMMAND tst_retools)
 
 # The Web Serial stand-in: no Qt6::SerialPort here, <QSerialPort> must be the stand-in's.
 set(WEBSERIAL ${SRC}/wasm/webserial)
