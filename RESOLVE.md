@@ -128,7 +128,13 @@ blank file behind, which put the manager's rows out of step with the files). The
 Signal Viewer matches messages by exact ID (not J1939/GMLAN matching, as SavvyCAN); when a signal is added or a file
 loaded it searches the newest million frames for its value.
 
-Measured (headless Chromium, `dbc.spec`, 2026-10-30): MEASUREMENTS
+Measured (headless Chromium, `dbc.spec`, 2026-10-30): a DBC of 1 000 messages and 16 000 signals (0.76 MB) loads
+in 2.7 s through the File Manager (4.5-4.8 s before the loader's events were limited to every 100 ms: each call waits
+on the page in the browser); 200 decoded trace rows in 25 ms; on 100 000 frames of 50 of its messages Save Decoded
+Frames takes 4.4 s (31 MB of text) and the CSV 6.1 s (61 MB: a column per signal of every message seen, on every row),
+the page's heap in use 23 MB before, 123 MB after both (malloc's peak 157 MB). The CSV of the same log over all 1 000
+messages would be ~800 MB (rows x 16 000 columns): in the browser the file is made in memory first, and a file that
+doesn't fit now gives a message (it came out empty).
 
 Tests: `tests/web` `dbc.spec` with `tests/web/fixtures/stage3_test.dbc` (our own DBC: the Leaf IDs of the fake's
 `leaf` traffic with Intel/Motorola, signed, scaled, value-described, multiplexed signals and message colours; CAN FD
