@@ -66,6 +66,14 @@ export class AppDriver {
     await this.page.evaluate(`(${shadowButton})().click()`);
     await this.role('menuitem', 'File').waitFor({ timeout: 15000 });
   }
+  /** The main screen in front (the browser build's windows are tabs: a tool's tab covers the main screen's controls). */
+  async mainScreen() {
+    const switched = await this.page.evaluate(() => {
+      const s = window.webSavvyCAN.tabs ? window.webSavvyCAN.tabs() : null;
+      return !!s && !!s.tabs && s.current > 0 && window.webSavvyCAN.selectTab(0);
+    });
+    if (switched) await this.page.waitForTimeout(200);
+  }
   role(role, name) {
     return this.page.getByRole(role, { name: ci(name) }).first();
   }

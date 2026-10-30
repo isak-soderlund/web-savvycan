@@ -124,13 +124,21 @@ export async function loadDbc(app, page, name = DBC_NAME, text = DBC_TEXT) {
   await app.menu('File', 'DBC File Manager');
   await pickNext(page, name, text);
   await app.click('button', /^Load$/);
-  await expect.poll(async () => (await dbcState(page)).files.length, { message: `${name} loaded` }).toBe(before + 1);
+  await expect.poll(async () => (await dbcState(page)).files.length, { message: `${name} loaded`, timeout: 30_000 }).toBe(before + 1);
 }
+/** Closes the window in front: the current tab's close button (the browser build's windows are tabs,
+ * wasm/windowtabs.h; Escape doesn't close a tab), or Escape for a modal dialog over it (or a build without tabs). */
 export async function closeWindow(page) {
-  await page.keyboard.press('Escape');
+  const closed = await page.evaluate(() => {
+    const s = window.webSavvyCAN.tabs ? window.webSavvyCAN.tabs() : null;
+    if (!s || !s.tabs || s.topLevels > 1 || s.current < 1) return false;
+    return window.webSavvyCAN.closeTab(s.current);
+  });
+  if (!closed) await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
 }
 export async function interpret(app, on) {
+  await app.mainScreen();   // Interpret Frames is on the main screen
   const box = await app.need(app.role('checkbox', 'Interpret Frames'), 'checkbox "Interpret Frames"');
   await app.setChecked(box, on);
   await expect.poll(async () => (await dbcState(app.page)).interpret).toBe(on);

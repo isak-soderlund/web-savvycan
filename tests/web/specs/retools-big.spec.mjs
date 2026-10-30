@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { test, expect, fake } from '../lib/harness.mjs';
 import { saveResult } from '../lib/harness.mjs';
 import { writeCsv, nextPick, node, kids, hexNum, canId, waitOpen } from '../lib/retools.mjs';
+import { closeWindow } from '../lib/dbc.mjs';
 
 const N = 600_000, T0 = 5_000_000, SPAN = 3_600_000_000;
 const LEAF = [0x11a, 0x1d4, 0x1da, 0x1db, 0x1dc, 0x1f2, 0x284, 0x390, 0x393, 0x45e, 0x481, 0x50a, 0x50b, 0x50c, 0x539,
@@ -88,7 +89,7 @@ test('a 1-hour log of 600 000 frames: bisector, frame search and file comparison
     await expect.poll(async () => (await page.evaluate(() => window.webSavvyCAN.bisect())).splitLabel, { timeout: 60_000 }).toBe(String(want7e8));
     b = await page.evaluate(() => window.webSavvyCAN.bisect());
     expect(b.splitFirstUs, '0x7E8 from the second half hour').toBeGreaterThanOrEqual(T0 + SPAN / 2);
-    await page.keyboard.press('Escape');
+    await closeWindow(page);
 
     // ---- Frame Search: byte 40 of the FD frames = 42
     await app.menu('RE Tools', 'Frame Search');
@@ -106,7 +107,7 @@ test('a 1-hour log of 600 000 frames: bisector, frame search and file comparison
     result.searchGapMs = r.gapMs;
     result.searchMatches = sr.count;
     for (const row of sr.rows.slice(0, 50)) expect(frame(row).data[40], `row ${row}`).toBe(0x2a);
-    await page.keyboard.press('Escape');
+    await closeWindow(page);
 
     // ---- File Comparison: the log against its variant, both through the picker, then summaries only
     const beforeCompare = await memory(page);

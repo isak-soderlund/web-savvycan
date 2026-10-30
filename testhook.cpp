@@ -473,8 +473,10 @@ static QJsonObject frameInfoState()
     for (QCustomPlot *plot : win->findChildren<QCustomPlot *>())
         if (plot->isVisible()) shown++;
     o.insert("plotsVisible", shown); // the byte graphs and the two histograms
-    o.insert("x", win->x());
-    o.insert("y", win->y());
+    // its place on the page (in the browser a tab: below the tab row)
+    const QPoint at = win->isWindow() ? win->pos() : win->mapTo(win->window(), QPoint(0, 0));
+    o.insert("x", at.x());
+    o.insert("y", at.y());
     o.insert("width", win->width());
     o.insert("height", win->height());
     return o;

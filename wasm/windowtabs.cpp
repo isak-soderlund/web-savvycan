@@ -302,6 +302,8 @@ Host::Host(QMainWindow *main) : QObject(main), main(main)
     stack = new QStackedLayout(area);
     stack->setStackingMode(QStackedLayout::StackAll);   // a background tab is covered, not hidden (windowtabs.h)
     stack->addWidget(mainPage);
+    // Opaque pages: Qt then doesn't paint what a page covers (the windows in the tabs behind keep updating)
+    mainPage->setAutoFillBackground(true);
     main->setCentralWidget(area);
 
     divider = new QWidget(menu);
@@ -403,6 +405,7 @@ void Host::adopt(QWidget *w)
     p->tool = w;
     p->page = new QScrollArea;
     p->page->setFrameShape(QFrame::NoFrame);
+    p->page->setAutoFillBackground(true);   // opaque: the pages it covers aren't painted
     p->page->setWidgetResizable(true);
     p->page->setBackgroundRole(QPalette::Window);
     p->page->viewport()->setBackgroundRole(QPalette::Window);
@@ -509,6 +512,15 @@ void Host::select(int index)
     QWidget *target = index == 0 ? mainPage : tabs[index - 1]->page;
     stack->setCurrentWidget(target);   // raised above the other pages
     busy = false;
+    // Only the page shown is in the accessibility tree (a screen reader, and the tests by role, see that tab alone;
+    // the covered pages stay "visible" to Qt): Qt's browser accessibility makes a hidden object's element inert.
+    if (QAccessible::isActive()) {
+        for (int i = 0; i < bar->count(); i++) {
+            QWidget *page = i == 0 ? mainPage : tabs[i - 1]->page;
+            QAccessibleEvent ev(page, i == index ? QAccessible::ObjectShow : QAccessible::ObjectHide);
+            QAccessible::updateAccessibility(&ev);
+        }
+    }
     // The keyboard focus into the page shown, once, and only to a widget of that page: the focus chain runs through
     // every page (the others are covered, not hidden), and a focus moved to a covered page and back again made Qt's
     // browser accessibility pass it to and fro between the two forever (the page hung, 2026-10-30).
