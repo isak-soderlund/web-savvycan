@@ -7,6 +7,7 @@
 import { join } from 'node:path';
 import { test, expect, RESULTS } from '../lib/harness.mjs';
 import { writeCsv, waitOpen } from '../lib/retools.mjs';
+import { loadDbc, closeWindow, DBC } from '../lib/dbc.mjs';
 
 const N = 5000, T0 = 1_000_000;
 // 5 kinds in turn: 0x100 (bytes 6-7 = the frame number, Intel), 0x7E8 (FD 64: byte 40 = m % 16, byte 50 = m / 10 % 3,
@@ -104,3 +105,67 @@ test('values, bit patterns and changes in classic and 64-byte CAN FD frames, row
     await expect.poll(async () => (await state(page)).label).toMatch(/not a number/);
     expect((await state(page)).count).toBe(0);
   });
+
+// With a DBC (stage 3 is on): the window's signal boxes list the DBC's nodes, messages and signals (also when the DBC
+// is loaded while the window is open), Copy Signal Parameters fills the bits, ID, byte order, scale and bias
+// from the signal, and a search for a physical value finds the frames whose signal has it: a Motorola signal with an
+// offset in a classic frame (LBC_Capacity.Temperature) and an Intel word at byte 40 of a 64-byte FD frame
+// (TEST_FD64.Byte40Word). tests/web/fixtures/stage3_test.dbc.
+test('DBC signals: the boxes list the DBC (loaded while the window is open), Copy Signal Parameters, a physical value ' +
+  'found in classic and 64-byte FD frames', async ({ app, page }) => {
+  test.setTimeout(120_000);
+  const M = 3000;
+  const frames = Array.from({ length: M }, (_, i) => {
+    const t = T0 + i * 1000, m = Math.floor(i / 3);
+    if (i % 3 === 0) return { time: t, id: 0x5bc, data: [1, 2, 3, 4, 5, 6, 7, 40 + (m % 50)] };   // Temperature = m % 50 degC
+    if (i % 3 === 1) {
+      const d = Array.from({ length: 64 }, (_, j) => (j * 3) & 0xff);
+      const w = 0x1230 + (m % 8);
+      d[40] = w & 0xff; d[41] = w >> 8;
+      return { time: t, id: 0x70f, fd: true, brs: true, data: d };
+    }
+    return { time: t, id: 0x123, data: [0, 0, 0, 0, 0, 0, 0, 65] };                              // not in the DBC
+  });
+  const { file } = writeCsv('search-dbc.csv', frames);
+  await app.open();
+  await app.loadFile(file, M);
+  // opened before any DBC: empty boxes
+  await app.menu('RE Tools', 'Frame Search');
+  await waitOpen(page, 'search');
+  expect((await state(page)).dbc.nodes, 'no DBC yet').toEqual([]);
+  // the DBC loaded while Frame Search is open
+  await loadDbc(app, page);
+  await closeWindow(page);
+  let s = await state(page);
+  const senders = [...new Set([...DBC.values()].map((m) => m.sender))].sort().map((n) => `stage3_test::${n}`);
+  expect(s.dbc.nodes, 'the DBC\'s nodes that send messages').toEqual(['----stage3_test.dbc', ...senders]);
+
+  // LBC_Capacity.Temperature: 63|8@0+ (1,-40): Motorola, byte 7, offset -40
+  expect(await page.evaluate(() => window.webSavvyCAN.searchSet({ dbc: { node: 'stage3_test::LBC', message: 'LBC_Capacity', signal: 'Temperature' } })), 'picked').toBe(true);
+  s = await state(page);
+  expect(s.dbc.messages, 'LBC\'s messages').toEqual([...DBC.values()].filter((m) => m.sender === 'LBC').map((m) => m.name));
+  expect(s.dbc.signals).toEqual(['GIDs', 'SOH', 'Temperature']);
+  expect([s.txtStartBit, s.txtDataLen, parseInt(s.txtID, 16), s.cbUseID, s.cbIntel, Number(s.txtScale), Number(s.txtBias)],
+    'the signal\'s parameters copied').toEqual(['63', '8', 0x5bc, true, false, 1, -40]);
+  // Search through the hook: closing the File Manager left the main window over Frame Search (a click would land
+  // there), and reopening it from the menu (raise()) hangs Qt's accessibility layer (RESOLVE.md)
+  const run = async (set, want, what) => {
+    expect(await page.evaluate((x) => window.webSavvyCAN.searchSet({ ...x, run: true }), set), `${what}: set`).toBe(true);
+    await expect.poll(async () => (await state(page)).label, { message: `${what}: matches` }).toBe(`Match 1 of ${want.length}`);
+    const r = await state(page);
+    expect(r.rows, `${what}: the matching rows`).toEqual(want);
+    expect(r.selectedRow, `${what}: the first match selected in the trace`).toBe(want[0]);
+  };
+  const want25 = frames.map((f, i) => (f.id === 0x5bc && f.data[7] - 40 === 25 ? i : -1)).filter((i) => i >= 0);
+  await run({ len: null, dir: 'both', mode: 'specific', value: '25' }, want25, 'Temperature = 25 degC');
+  expect(want25.length).toBe(20);
+
+  // TEST_FD64.Byte40Word: 320|16@1+ at byte 40 of 64-byte frames
+  expect(await page.evaluate(() => window.webSavvyCAN.searchSet({ dbc: { node: 'stage3_test::TEST', message: 'TEST_FD64', signal: 'Byte40Word' } }))).toBe(true);
+  s = await state(page);
+  expect([s.txtStartBit, s.txtDataLen, parseInt(s.txtID, 16), s.cbIntel]).toEqual(['320', '16', 0x70f, true]);
+  const wantW = frames.map((f, i) => (f.id === 0x70f && (f.data[40] | (f.data[41] << 8)) === 0x1235 ? i : -1)).filter((i) => i >= 0);
+  await run({ mode: 'specific', value: '0x1235' }, wantW, 'Byte40Word = 0x1235');
+  expect(wantW.length).toBe(125);
+  await page.screenshot({ path: join(RESULTS, 'search-dbc-light.png') });
+});

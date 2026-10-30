@@ -155,6 +155,9 @@ public:
 
 signals:
     void signalsRemoved();
+    // web-savvycan: a file was loaded, created or moved: windows that list the DBCs' nodes and messages (Frame Search,
+    // Signal Viewer) fill their boxes again (SavvyCAN filled them only when the window was made)
+    void filesChanged();
 
 private:
     QList<DBCFile *> loadedFiles;

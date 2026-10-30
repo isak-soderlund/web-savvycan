@@ -12,6 +12,7 @@
 #include "re/searchwindow.h"
 #include "candatagrid.h"
 #include "dbc/dbchandler.h"
+#include <QAbstractButton>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -24,6 +25,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QTableView>
+#include <QTimer>
 #include <QTreeWidget>
 #include <map>
 
@@ -218,8 +220,23 @@ static QJsonObject searchState()
     o.insert("searchMs", win->lastSearchMs());
     if (auto *l = child<QLabel>(win, "lblMatchInfo")) o.insert("label", l->text());
     if (auto *g = win->findChild<CANDataGrid *>("gridData")) o.insert("gridBytes", g->getBytesToDraw());
-    for (const char *name : {"txtStartBit", "txtDataLen"})
+    for (const char *name : {"txtStartBit", "txtDataLen", "txtID", "txtScale", "txtBias"})
         if (auto *e = child<QLineEdit>(win, name)) o.insert(name, e->text());
+    for (const char *name : {"cbUseID", "cbIntel", "cbSigned"})
+        if (auto *c = child<QCheckBox>(win, name)) o.insert(name, c->isChecked());
+    // the DBC signal pickers (node, message, signal boxes): their items, the current ones
+    auto items = [](QComboBox *box) {
+        QJsonArray a;
+        for (int i = 0; box && i < box->count(); i++) a.append(box->itemText(i));
+        return a;
+    };
+    QJsonObject dbc;
+    for (auto [key, name] : {std::pair{"nodes", "cbNodes"}, {"messages", "cbMessages"}, {"signals", "cbSignals"}}) {
+        auto *box = child<QComboBox>(win, name);
+        dbc.insert(key, items(box));
+        dbc.insert(QString(key) + "Current", box ? box->currentText() : QString());
+    }
+    o.insert("dbc", dbc);
     if (auto *view = MainWindow::getReference()->findChild<QTableView *>("canFramesView"))
         o.insert("selectedRow", view->currentIndex().isValid() ? view->currentIndex().row() : -1);
     return o;
@@ -247,6 +264,21 @@ static int searchSet(const QJsonObject &a)
         const QString m = a.value("mode").toString();
         setCheck(win, m == "any" ? "rbValueAny" : m == "specific" ? "rbValueSpecific" : "rbValueNone", true);
     }
+    // {dbc: {node, message, signal}}: picked in the DBC boxes as clicked, then Copy Signal Parameters
+    if (a.contains("dbc")) {
+        const QJsonObject d = a.value("dbc").toObject();
+        auto pick = [&](const char *name, const QString &text) {
+            auto *box = child<QComboBox>(win, name);
+            const int i = box ? box->findText(text) : -1;
+            if (i < 0) return false;
+            box->setCurrentIndex(i);
+            return true;
+        };
+        if (!pick("cbNodes", d.value("node").toString()) || !pick("cbMessages", d.value("message").toString())
+            || !pick("cbSignals", d.value("signal").toString()))
+            return 0;
+        if (auto *b = child<QAbstractButton>(win, "btnCopySignal")) b->click(); else return 0;
+    }
     setText(win, "txtStartBit", a.value("startBit"));
     setText(win, "txtDataLen", a.value("bits"));
     setCheck(win, "cbIntel", a.value("intel"));
@@ -254,6 +286,11 @@ static int searchSet(const QJsonObject &a)
     setText(win, "txtScale", a.value("scale"));
     setText(win, "txtBias", a.value("bias"));
     setText(win, "txtValue", a.value("value"));
+    // {run: true}: then Search, as its button (a click needs the window on top, which the browser tests can't always
+    // get: see RESOLVE.md, raise() and the accessibility layer)
+    if (a.value("run").toBool())
+        if (auto *b = child<QAbstractButton>(win, "btnSearch"))
+            QTimer::singleShot(0, b, &QAbstractButton::click); // from the event loop: the search may yield to the page
     return 1;
 }
 

@@ -53,7 +53,34 @@ SearchWindow::SearchWindow(const FrameListView *frames, DBCHandler *handler, QWi
     connect(ui->btnPrev,   SIGNAL(clicked(bool)), this, SLOT(onPreviousClicked()));
 
     loadNodes();
+    // web-savvycan: the window is kept once made; a DBC loaded or removed since must show in its signal boxes
+    if (dbcHandler)
+    {
+        connect(dbcHandler, &DBCHandler::signalsRemoved, this, &SearchWindow::reloadDbc);
+        connect(dbcHandler, &DBCHandler::filesChanged, this, &SearchWindow::reloadDbc);
+    }
     drawBitfield();
+}
+
+// web-savvycan: the DBC boxes filled again when the window is shown and when a DBC is loaded or removed while it is
+// open, the node, message and signal picked before kept where they still exist.
+void SearchWindow::showEvent(QShowEvent *event)
+{
+    QDialog::showEvent(event);
+    reloadDbc();
+}
+
+void SearchWindow::reloadDbc()
+{
+    const QString node = ui->cbNodes->currentText(), msg = ui->cbMessages->currentText(), sig = ui->cbSignals->currentText();
+    loadNodes();
+    auto restore = [](QComboBox *box, const QString &text) {
+        const int i = text.isEmpty() ? -1 : box->findText(text);
+        if (i >= 0) box->setCurrentIndex(i);
+    };
+    restore(ui->cbNodes, node);
+    restore(ui->cbMessages, msg);
+    restore(ui->cbSignals, sig);
 }
 
 SearchWindow::~SearchWindow()

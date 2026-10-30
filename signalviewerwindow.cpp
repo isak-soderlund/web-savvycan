@@ -58,6 +58,8 @@ SignalViewerWindow::SignalViewerWindow(const FrameListView *frames, QWidget *par
     connect(ui->btnAppend, SIGNAL(clicked(bool)), this, SLOT(appendSignalsFile()));
     connect(ui->btnClear, SIGNAL(clicked(bool)), this, SLOT(clearSignalsTable()));
     connect(dbcHandler, &DBCHandler::signalsRemoved, this, &SignalViewerWindow::dropRemovedSignals);
+    // web-savvycan: a DBC loaded while the window exists is listed (SavvyCAN listed the files of when it was made)
+    connect(dbcHandler, &DBCHandler::filesChanged, this, &SignalViewerWindow::loadNodes);
 
     loadNodes();
 }

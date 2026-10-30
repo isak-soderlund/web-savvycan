@@ -2038,6 +2038,7 @@ int DBCHandler::createBlankFile()
     newFile->setAssocBus(-1);
 
     loadedFiles.append(newFile);
+    emit filesChanged();
     return loadedFiles.count();
 }
 
@@ -2047,6 +2048,7 @@ DBCFile* DBCHandler::loadDBCFile(QString filename)
     if (newFile->loadFile(filename))
     {
         loadedFiles.append(newFile);
+        emit filesChanged();
         return newFile;
     }
     // web-savvycan: nullptr when it couldn't be loaded (SavvyCAN returned the previously loaded file, so a missing
@@ -2252,6 +2254,7 @@ DBCFile* DBCHandler::loadSecretCSVFile(QString filename)
     }
 
     thisFile->setDirtyFlag();
+     emit filesChanged();
     return thisFile;
 }
 
@@ -2422,6 +2425,7 @@ DBCFile* DBCHandler::loadJSONFile(QString filename)
          }
 
          thisFile->setDirtyFlag();
+         emit filesChanged();
          return thisFile;
 }
 
@@ -2465,6 +2469,7 @@ void DBCHandler::swapFiles(int pos1, int pos2)
     if (pos2 >= loadedFiles.count()) return;
 
     loadedFiles.swapItemsAt(pos1, pos2);
+    emit filesChanged();
 }
 
 /*

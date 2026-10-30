@@ -28,8 +28,12 @@ public:
 signals:
     void jumpToFrameIndex(int frameIndex);
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
 private slots:
     void loadNodes();
+    void reloadDbc();
     void loadMessages(int idx);
     void loadSignals(int idx);
     void copySignalToParamsUI();
