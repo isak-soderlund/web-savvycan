@@ -12,6 +12,9 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include "utility.h"
+#include <QDir>
+#include <QElapsedTimer>
+#include <QFileInfo>
 
 DBCHandler* DBCHandler::instance = nullptr;
 
@@ -29,7 +32,7 @@ static bool parseValueDescriptions(QString tokenString, QList<DBC_VAL_ENUM_ENTRY
         match = regex.match(tokenString);
         if (!match.hasMatch()) return false;
 
-        val.value = match.captured(1).toInt();
+        val.value = match.captured(1).toLongLong();
         val.descript = match.captured(2);
         values.append(val);
         tokenString = match.captured(3).trimmed();
@@ -60,8 +63,14 @@ bool DBCSignalHandler::removeSignal(QString name)
     if (sigs.count() == 0) return false;
     if (sigs.contains(name))
     {
-        free(sigs.value(name));
-        sigs.remove(name);
+        // web-savvycan: deleted (was free() of a new'd object), its multiplex links cut first, the windows told after
+        DBC_SIGNAL *sig = sigs.take(name);
+        if (sig->multiplexParent) sig->multiplexParent->multiplexedChildren.removeAll(sig);
+        for (DBC_SIGNAL *child : std::as_const(sig->multiplexedChildren))
+            if (child->multiplexParent == sig) child->multiplexParent = nullptr;
+        if (sig->parentMessage && sig->parentMessage->multiplexorSignal == sig) sig->parentMessage->multiplexorSignal = nullptr;
+        delete sig;
+        DBCHandler::getReference()->announceRemoval();
         return true;
     }
 
@@ -71,11 +80,7 @@ bool DBCSignalHandler::removeSignal(QString name)
 void DBCSignalHandler::removeAllSignals()
 {
     //need to free all pointers then zap the actual hashtable itself
-    QMapIterator<QString, DBC_SIGNAL *> i(sigs);
-    while (i.hasNext()) {
-        i.next();
-        free(i.value());
-    }
+    qDeleteAll(sigs); // web-savvycan: delete (was free() of new'd objects)
     sigs.clear();
 }
 
@@ -213,8 +218,8 @@ bool DBCMessageHandler::removeMessage(uint32_t ID)
 
     if (messages.contains(ID))
     {
-        free(messages.value(ID)); //clean pointer
-        messages.remove(ID);
+        delete messages.take(ID); // web-savvycan: with its signals (was free(): its signals stayed, pointing at it)
+        DBCHandler::getReference()->announceRemoval();
         return true;
     }
     return false;
@@ -229,8 +234,8 @@ bool DBCMessageHandler::removeMessage(QString name)
         i.next();
         if (i.value()->name.compare(name, Qt::CaseInsensitive) == 0)
         {
-            free(i.value());
-            messages.remove(i.key());
+            delete messages.take(i.key()); // web-savvycan: as removeMessage(ID)
+            DBCHandler::getReference()->announceRemoval();
             return true;
         }
     }
@@ -239,6 +244,7 @@ bool DBCMessageHandler::removeMessage(QString name)
 
 void DBCMessageHandler::removeAllMessages()
 {
+    qDeleteAll(messages); // web-savvycan: they were left allocated
     messages.clear();
 }
 
@@ -274,34 +280,7 @@ DBCFile::DBCFile()
     messageHandler->setFilterLabeling(false);
     isDirty = false;
     fileName = "<Unsaved File>";
-}
-
-DBCFile::DBCFile(const DBCFile& cpy) : QObject()
-{
-    messageHandler = new DBCMessageHandler;
-    QList<DBC_MESSAGE *> sigs = cpy.messageHandler->getMsgsAsList();
-    for (int i = 0 ; i < cpy.messageHandler->getCount() ; i++)
-        messageHandler->addMessage(sigs[i]);
-
-    messageHandler->setMatchingCriteria(cpy.messageHandler->getMatchingCriteria());
-    messageHandler->setFilterLabeling(cpy.messageHandler->filterLabeling());
-    fileName = cpy.fileName;
-    filePath = cpy.filePath;
-    assocBuses = cpy.assocBuses;
-
-    clearAndDelete(dbc_nodes);
-
-    for (DBC_NODE* srcNode : cpy.dbc_nodes) {
-        if (srcNode) {
-            dbc_nodes.append(new DBC_NODE(*srcNode)); // deep copy not just pointers
-        }
-    }
-
-    dbc_value_tables.clear();
-    dbc_value_tables.append(cpy.dbc_value_tables);
-    dbc_attributes.clear();
-    dbc_attributes.append(cpy.dbc_attributes);
-    isDirty = cpy.isDirty;
+    assocBuses = -1; // web-savvycan: was uninitialised until loaded
 }
 
 void DBCFile::clearAndDelete(QList<DBC_NODE *>& list)
@@ -314,25 +293,11 @@ void DBCFile::clearAndDelete(QList<DBC_NODE *>& list)
 
 DBCFile::~DBCFile()
 {
+    // web-savvycan: its messages and their signals too (they were never freed). Nothing else keeps pointers into a
+    // removed file: DBCHandler::removeDBCFile() tells the windows (signalsRemoved), which drop what they held.
+    messageHandler->removeAllMessages();
+    delete messageHandler;
     clearAndDelete(dbc_nodes);
-}
-
-DBCFile& DBCFile::operator=(const DBCFile& cpy)
-{
-    if (this != &cpy) // protect against invalid self-assignment
-    {
-        messageHandler = cpy.messageHandler;
-        fileName = cpy.fileName;
-        filePath = cpy.filePath;
-        assocBuses = cpy.assocBuses;
-        dbc_nodes.clear();
-        dbc_nodes.append(cpy.dbc_nodes);
-        dbc_value_tables.clear();
-        dbc_value_tables.append(cpy.dbc_value_tables);
-        dbc_attributes.clear();
-        dbc_attributes.append(cpy.dbc_attributes);
-    }
-    return *this;
 }
 
 //this makes no sense any longer. QMap is basically always sorted.
@@ -439,6 +404,16 @@ static QString msgAttrValueText(const DBC_ATTRIBUTE *attr, DBC_MESSAGE *msg)
     QVariant v = val ? val->value : attr->defaultValue;
     if (attr->valType == ATTR_ENUM) return attr->enumVals.value(v.toInt()).trimmed();
     return v.toString().trimmed();
+}
+
+// web-savvycan: the message colour a file gives every message without one of its own (BA_DEF_DEF_ of
+// GenMsgBackgroundColor / GenMsgForegroundColor). SavvyCAN's own default (white background, black text, what it
+// writes) is no colour: such messages are drawn in the theme's colours, so a DBC doesn't paint the dark trace white.
+static QColor defaultMessageColor(const DBC_ATTRIBUTE *attr, Qt::GlobalColor savvycanDefault)
+{
+    if (!attr) return QColor();
+    const QColor c(attr->defaultValue.toString());
+    return (!c.isValid() || c == QColor(savvycanDefault)) ? QColor() : c;
 }
 
 //Vector's VFrameFormat attribute: "StandardCAN_FD" and "ExtendedCAN_FD" (values 14 and 15) are CAN FD messages
@@ -604,14 +579,13 @@ bool DBCFile::getDirtyFlag()
 
 DBC_MESSAGE* DBCFile::parseMessageLine(QString line)
 {
-    QRegularExpression regex;
     QRegularExpressionMatch match;
 
     DBC_MESSAGE *msgPtr;
 
     qDebug() << "Found a BO line";
-    regex.setPattern("^BO\\_ (\\w+) ([-\\w]+) *: (\\w+) ([-\\w]+)");
-    match = regex.match(line);
+    static const QRegularExpression re1("^BO\\_ (\\w+) ([-\\w]+) *: (\\w+) ([-\\w]+)"); // web-savvycan: compiled once (was per line)
+    match = re1.match(line);
     //captured 1 = the ID in decimal
     //captured 2 = The message name
     //captured 3 = the message length
@@ -635,7 +609,6 @@ DBC_MESSAGE* DBCFile::parseMessageLine(QString line)
 
 DBC_SIGNAL* DBCFile::parseSignalLine(QString line, DBC_MESSAGE *msg)
 {
-    QRegularExpression regex;
     QRegularExpressionMatch match;
 
     int offset = 0;
@@ -643,9 +616,9 @@ DBC_SIGNAL* DBCFile::parseSignalLine(QString line, DBC_MESSAGE *msg)
     DBC_SIGNAL *sig = new DBC_SIGNAL();
 
     qDebug() << "Found a SG line";
-    regex.setPattern("^SG\\_ *([-\\w]+) +M *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)");
+    static const QRegularExpression re0("^SG\\_ *([-\\w]+) +M *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)"); // web-savvycan: compiled once (was per line)
 
-    match = regex.match(line);
+    match = re0.match(line);
     if (match.hasMatch())
     {
         qDebug() << "Multiplexor signal";
@@ -654,8 +627,8 @@ DBC_SIGNAL* DBCFile::parseSignalLine(QString line, DBC_MESSAGE *msg)
     }
     else
     {
-        regex.setPattern("^SG\\_ *([-\\w]+) +m(\\d+) *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)");
-        match = regex.match(line);
+        static const QRegularExpression re2("^SG\\_ *([-\\w]+) +m(\\d+) *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)"); // web-savvycan: compiled once (was per line)
+        match = re2.match(line);
         if (match.hasMatch())
         {
             qDebug() << "Multiplexed signal";
@@ -664,8 +637,8 @@ DBC_SIGNAL* DBCFile::parseSignalLine(QString line, DBC_MESSAGE *msg)
         }
         else
         {
-            regex.setPattern("^SG\\_ *([-\\w]+) +m(\\d+)M *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)");
-            match = regex.match(line);
+            static const QRegularExpression re3("^SG\\_ *([-\\w]+) +m(\\d+)M *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)"); // web-savvycan: compiled once (was per line)
+            match = re3.match(line);
             if (match.hasMatch())
             {
                 qDebug() << "Extended Multiplexor Signal";
@@ -676,8 +649,8 @@ DBC_SIGNAL* DBCFile::parseSignalLine(QString line, DBC_MESSAGE *msg)
             else
             {
                 qDebug() << "standard signal";
-                regex.setPattern("^SG\\_ *([-\\w]+) *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)");
-                match = regex.match(line);
+                static const QRegularExpression re4("^SG\\_ *([-\\w]+) *: *(\\d+)\\|(\\d+)@(\\d+)([\\+|\\-]) \\(([0-9.+\\-eE]+),([0-9.+\\-eE]+)\\) \\[([0-9.+\\-eE]+)\\|([0-9.+\\-eE]+)\\] \\\"(.*)\\\" (.*)"); // web-savvycan: compiled once (was per line)
+                match = re4.match(line);
                 sig->isMultiplexed = false;
                 sig->isMultiplexor = false;
             }
@@ -1072,6 +1045,8 @@ bool DBCFile::loadFile(QString fileName)
     DBC_ATTRIBUTE attr;
     QStringList sigFaults, msgFaults;
     int linesSinceYield = 0;
+    QElapsedTimer sinceYield;
+    sinceYield.start();
     QString fileBaseName = QFileInfo(fileName).baseName();
 
     bool inMultilineBU = false;
@@ -1088,7 +1063,7 @@ bool DBCFile::loadFile(QString fileName)
     }
 
     qDebug() << "Starting DBC load";
-    dbc_nodes.clear();
+    clearAndDelete(dbc_nodes);
     dbc_value_tables.clear();
     messageHandler->removeAllMessages();
     messageHandler->setMatchingCriteria(EXACT);
@@ -1103,10 +1078,16 @@ bool DBCFile::loadFile(QString fileName)
         rawLine = QString(inFile->readLine());
         line = rawLine.simplified();
 
-        linesSinceYield++;
-        if (linesSinceYield > 100)
+        // web-savvycan: the events at most every 100 ms (it was on every line after the 100th; in the browser each
+        // call suspends to the page, ~a frame: a 16 000-signal DBC took 4.5 s, most of it waiting)
+        if (++linesSinceYield >= 100)
         {
-            qApp->processEvents();
+            linesSinceYield = 0;
+            if (sinceYield.elapsed() >= 100)
+            {
+                qApp->processEvents();
+                sinceYield.restart();
+            }
         }
 
         if (inMultilineBU)
@@ -1319,7 +1300,7 @@ bool DBCFile::loadFile(QString fileName)
     if (!findAttributeByName("GenMsgBackgroundColor"))
     {
         attr.attrType = ATTR_TYPE_MESSAGE;
-        attr.defaultValue = QApplication::palette().color(QPalette::Base).name();
+        attr.defaultValue = QStringLiteral("#ffffff"); // web-savvycan: SavvyCAN's light default, whatever the theme now
         attr.enumVals.clear();
         attr.lower = 0;
         attr.upper = 0;
@@ -1331,7 +1312,7 @@ bool DBCFile::loadFile(QString fileName)
     if (!findAttributeByName("GenMsgForegroundColor"))
     {
         attr.attrType = ATTR_TYPE_MESSAGE;
-        attr.defaultValue = QApplication::palette().color(QPalette::WindowText).name();
+        attr.defaultValue = QStringLiteral("#000000");
         attr.enumVals.clear();
         attr.lower = 0;
         attr.upper = 0;
@@ -1360,8 +1341,8 @@ bool DBCFile::loadFile(QString fileName)
         messageHandler->setFilterLabeling(false);
     }
 
-    QColor DefaultBG = QColor(findAttributeByName("GenMsgBackgroundColor")->defaultValue.toString());
-    QColor DefaultFG = QColor(findAttributeByName("GenMsgForegroundColor")->defaultValue.toString());
+    QColor DefaultBG = defaultMessageColor(findAttributeByName("GenMsgBackgroundColor"), Qt::white);
+    QColor DefaultFG = defaultMessageColor(findAttributeByName("GenMsgForegroundColor"), Qt::black);
     DBC_ATTRIBUTE *frameFormatAttr = findAttributeByName("VFrameFormat", ATTR_TYPE_MESSAGE);
     DBC_ATTRIBUTE *brsAttr = findAttributeByName("CANFD_BRS", ATTR_TYPE_MESSAGE);
     QList<DBC_MESSAGE *> msgs = messageHandler->getMsgsAsList();
@@ -1746,8 +1727,9 @@ bool DBCFile::saveFile(QString fileName)
                 msgOutput.append("0-");
                 break;
             }
-            msgOutput.append(" (" + QString::number(sig->factor) + "," + QString::number(sig->bias) + ") [" +
-                             QString::number(sig->min) + "|" + QString::number(sig->max) + "] \"" + sig->unitName
+            // web-savvycan: 15 significant digits (QString::number's 6 changed a factor such as 1/8192 on every save)
+            msgOutput.append(" (" + QString::number(sig->factor, 'g', 15) + "," + QString::number(sig->bias, 'g', 15) + ") [" +
+                             QString::number(sig->min, 'g', 15) + "|" + QString::number(sig->max, 'g', 15) + "] \"" + sig->unitName
                              + "\" " + sig->receiver->name + "\n");
             if (sig->valType == SP_FLOAT || sig->valType == DP_FLOAT)
                 sigValTypeOutput.append("SIG_VALTYPE_ " + QString::number(ID) + " " + sig->name + " : " + QString::number(sig->valType == SP_FLOAT ? 1 : 2) + ";\n");
@@ -1942,6 +1924,37 @@ bool DBCFile::saveFile(QString fileName)
     return true;
 }
 
+#ifdef Q_OS_WASM
+QString DBCHandler::browserPath(const QString &name)
+{
+    // a folder of its own per file: two picked files of the same name don't share a path
+    for (int n = 0;; n++) {
+        const QString dir = QStringLiteral("/dbc/%1/").arg(n);
+        if (!QFileInfo::exists(dir)) {
+            QDir().mkpath(dir);
+            return dir + QFileInfo(name).fileName();
+        }
+    }
+}
+
+// Save in the browser: the file is written to its path in the page's file system (as the desktop writes it to disk,
+// so it is what is remembered for the next visit) and its bytes handed to the browser: a download, or Chrome's save
+// picker, named as the file.
+void DBCHandler::saveDBCFileToBrowser(int idx)
+{
+    DBCFile *file = getFileByIdx(idx);
+    if (!file) return;
+    QString path = file->getFullFilename();
+    if (file->getPath().isEmpty() || !path.startsWith(QLatin1String("/dbc/"))) //a new file: no path yet
+        path = browserPath(file->getFilename().startsWith('<') ? QStringLiteral("Untitled.dbc") : file->getFilename());
+    if (!path.contains('.', Qt::CaseInsensitive)) path += ".dbc";
+    if (!file->saveFile(path)) return;
+    QFile saved(path);
+    if (!saved.open(QIODevice::ReadOnly)) return;
+    QFileDialog::saveFileContent(saved.readAll(), file->getFilename());
+}
+#endif
+
 void DBCHandler::saveDBCFile(int idx)
 {
     QSettings settings;
@@ -1949,6 +1962,10 @@ void DBCHandler::saveDBCFile(int idx)
     if (loadedFiles.count() == 0) return;
     if (idx < 0) return;
     if (idx >= loadedFiles.count()) return;
+#ifdef Q_OS_WASM
+    saveDBCFileToBrowser(idx); // web-savvycan: Qt's save dialog would only see the page's in-memory file system
+    return;
+#endif
 
     QFileDialog dialog;
 
@@ -1977,7 +1994,7 @@ int DBCHandler::createBlankFile()
 
     //add our custom attributes to the new file so that we know they're already there.
     attr.attrType = ATTR_TYPE_MESSAGE;
-    attr.defaultValue = QApplication::palette().color(QPalette::Base).name();
+    attr.defaultValue = QStringLiteral("#ffffff"); // web-savvycan: SavvyCAN's light default (shown in the theme's colours)
     qDebug() << attr.defaultValue;
     attr.enumVals.clear();
     attr.lower = 0;
@@ -1987,7 +2004,7 @@ int DBCHandler::createBlankFile()
     newFile->dbc_attributes.append(attr);
 
     attr.attrType = ATTR_TYPE_MESSAGE;
-    attr.defaultValue = QApplication::palette().color(QPalette::WindowText).name();
+    attr.defaultValue = QStringLiteral("#000000");
     qDebug() << attr.defaultValue;
     attr.enumVals.clear();
     attr.lower = 0;
@@ -2030,13 +2047,12 @@ DBCFile* DBCHandler::loadDBCFile(QString filename)
     if (newFile->loadFile(filename))
     {
         loadedFiles.append(newFile);
+        return newFile;
     }
-    else
-    {
-        //createBlankFile();
-    }
-    if (loadedFiles.count()> 0) return loadedFiles.last();
-    else return nullptr;
+    // web-savvycan: nullptr when it couldn't be loaded (SavvyCAN returned the previously loaded file, so a missing
+    // remembered file at start took over the settings of the one before it)
+    delete newFile;
+    return nullptr;
 }
 
 //the only reason to even bother sending the index is to see if
@@ -2083,6 +2099,7 @@ DBCFile* DBCHandler::loadSecretCSVFile(QString filename)
     if (!inFile->open(QIODevice::ReadOnly | QIODevice::Text))
     {
         delete inFile;
+        removeDBCFile(loadedFiles.count() - 1); // web-savvycan: not the blank file (the manager has no row for it)
         return nullptr;
     }
 
@@ -2116,8 +2133,7 @@ DBCFile* DBCHandler::loadSecretCSVFile(QString filename)
                 msg->comment = "";
                 msg->len = 8;
                 msg->sender = thisFile->findNodeByIdx(0);
-                msg->bgColor = QColor(thisFile->findAttributeByName("GenMsgBackgroundColor")->defaultValue.toString());
-                msg->fgColor = QColor(thisFile->findAttributeByName("GenMsgForegroundColor")->defaultValue.toString());
+                // web-savvycan: no colour of its own: the theme's (invalid colours)
                 thisFile->messageHandler->addMessage(msg);
                 pMsg = msg;
 
@@ -2253,6 +2269,7 @@ DBCFile* DBCHandler::loadJSONFile(QString filename)
          {
              qDebug() << "Could not open JSON file for reading.";
              delete inFile;
+             removeDBCFile(loadedFiles.count() - 1); // web-savvycan: not the blank file (the manager has no row for it)
              return nullptr;
          }
          QByteArray wholeFileData = inFile->readAll();
@@ -2263,6 +2280,7 @@ DBCFile* DBCHandler::loadJSONFile(QString filename)
          if (jsonDoc.isNull())
          {
              qDebug() << "Couldn't load and parse the JSON file for some reason.";
+             removeDBCFile(loadedFiles.count() - 1); // web-savvycan: as above
              return nullptr;
          }
          qDebug() << "Loaded JSON";
@@ -2281,8 +2299,7 @@ DBCFile* DBCHandler::loadJSONFile(QString filename)
              msg->sender = thisFile->findNodeByIdx(0);
              QString nodeName = iter->toObject().find("originNode").value().toString();
              msg->sender = thisFile->findNodeByName(nodeName);
-             msg->bgColor = QColor(thisFile->findAttributeByName("GenMsgBackgroundColor")->defaultValue.toString());
-             msg->fgColor = QColor(thisFile->findAttributeByName("GenMsgForegroundColor")->defaultValue.toString());
+             // web-savvycan: no colour of its own: the theme's (invalid colours)
              if (!msg->sender && nodeName.length() > 1)
              {
                  DBC_NODE *node = new DBC_NODE;
@@ -2416,19 +2433,27 @@ void DBCHandler::removeDBCFile(int idx)
 
     //must delete the object before removing it from the list as we've stored a pointer
     DBCFile *file = loadedFiles[idx];
+    loadedFiles.removeAt(idx); // web-savvycan: out of the list before it is deleted (the trace may draw meanwhile)
     delete file;
+    announceRemoval();
+}
 
-    loadedFiles.removeAt(idx);
+bool DBCHandler::isLiveSignal(const DBC_SIGNAL *sig) const
+{
+    if (!sig) return false;
+    for (DBCFile *file : loadedFiles)
+        for (DBC_MESSAGE *msg : file->messageHandler->getMsgsAsList())
+            for (DBC_SIGNAL *s : msg->sigHandler->getSignalsAsList())
+                if (s == sig) return true;
+    return false;
 }
 
 void DBCHandler::removeAllFiles()
 {
-    DBCFile *file;
-    foreach (file, loadedFiles)
-    {
-        delete file;
-    }
+    const QList<DBCFile *> files = loadedFiles;
     loadedFiles.clear();
+    qDeleteAll(files);
+    announceRemoval();
 }
 
 void DBCHandler::swapFiles(int pos1, int pos2)
@@ -2582,6 +2607,15 @@ DBCHandler::DBCHandler()
     for (int i=0; i<filecount; i++)
     {
         QString filename = settings.value("DBC/Filename_" + QString::number(i),"").toString();
+#ifdef Q_OS_WASM
+        // web-savvycan: the file as it was on the last visit (DBCLoadSaveWindow::updateSettings), back at its path
+        const QByteArray content = QByteArray::fromBase64(settings.value("DBC/Content_" + QString::number(i)).toString().toLatin1());
+        if (!content.isEmpty() && filename.startsWith(QLatin1String("/dbc/"))) {
+            QDir().mkpath(QFileInfo(filename).absolutePath());
+            QFile restored(filename);
+            if (restored.open(QIODevice::WriteOnly)) restored.write(content);
+        }
+#endif
         DBCFile * file = loadDBCFile(filename);
         if (file)
         {

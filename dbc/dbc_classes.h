@@ -62,7 +62,7 @@ public:
 class DBC_VAL_ENUM_ENTRY
 {
 public:
-    int value;
+    int64_t value; // web-savvycan: 64-bit (signals up to 64 bits; an int cut off values past 2^31)
     QString descript;
 };
 
@@ -143,11 +143,13 @@ public: //TODO: Clean up this class so that not everything is public. There is o
     QList<DBC_VAL_ENUM_ENTRY> valList;
     DBC_SIGNAL *self;
 
+    bool decode(const CommFrame &frame, int64_t &raw, double &value) const; // web-savvycan: see dbc_classes.cpp
     bool processAsText(const CommFrame &frame, QString &outString, bool outputName = true, bool outputUnit = true);
     bool processAsInt(const CommFrame &frame, int32_t &outValue);
     bool processAsDouble(const CommFrame &frame, double &outValue);
     bool getValueString(int64_t intVal, QString &outString);
     QString makePrettyOutput(double floatVal, int64_t intVal, bool outputName = true, bool isInteger = false, bool outputUnit = true);
+    QString makePrettyOutput(double floatVal, int64_t intVal, bool outputName, bool isInteger, bool outputUnit, int64_t rawVal);
     QString processSignalTree(const CommFrame &frame);
     void processAvailableSignals(const CommFrame &frame, std::map<DBC_SIGNAL, QString> &displayValues);
     DBC_ATTRIBUTE_VALUE *findAttrValByName(QString name);
@@ -171,6 +173,9 @@ class DBC_MESSAGE
 {
 public:
     DBC_MESSAGE();
+    ~DBC_MESSAGE(); // web-savvycan: deletes its signals (they were never freed)
+    DBC_MESSAGE(const DBC_MESSAGE &) = delete;            // owns its signals: never copied
+    DBC_MESSAGE &operator=(const DBC_MESSAGE &) = delete;
 
     uint32_t ID;
     bool extendedID;
@@ -188,6 +193,12 @@ public:
 
     DBC_ATTRIBUTE_VALUE *findAttrValByName(QString name);
     DBC_ATTRIBUTE_VALUE *findAttrValByIdx(int idx);
+
+    // web-savvycan: the colours its rows are drawn in (Interpret Frames). A colour the DBC gives the message is kept;
+    // none (an invalid QColor) is the theme's. A text colour that wouldn't read on the background shown is replaced
+    // by black or white.
+    QColor rowBackground() const;
+    QColor rowForeground() const;
 
     friend bool operator<(const DBC_MESSAGE& l, const DBC_MESSAGE& r)
     {

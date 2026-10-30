@@ -14,6 +14,9 @@ DBCMessageEditor::DBCMessageEditor(QWidget *parent) :
     ui(new Ui::DBCMessageEditor)
 {
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint); // web-savvycan: framed in the browser
+#endif
 
     readSettings();
 
@@ -127,7 +130,10 @@ DBCMessageEditor::DBCMessageEditor(QWidget *parent) :
         [=]()
         {
             if (suppressEditCallbacks) return;
-            QColor newColor = QColorDialog::getColor(dbcMessage->fgColor);
+            if (dbcMessage == nullptr) return;
+            // web-savvycan: starts from the colour shown; Cancel (an invalid colour) changes nothing (it set black)
+            QColor newColor = QColorDialog::getColor(shownForeground());
+            if (!newColor.isValid()) return;
             if (dbcMessage->fgColor != newColor) dbcFile->setDirtyFlag();
             dbcMessage->fgColor = newColor;
             DBC_ATTRIBUTE_VALUE *val = dbcMessage->findAttrValByName("GenMsgForegroundColor");
@@ -149,7 +155,9 @@ DBCMessageEditor::DBCMessageEditor(QWidget *parent) :
         [=]()
         {
             if (suppressEditCallbacks) return;
-            QColor newColor = QColorDialog::getColor(dbcMessage->bgColor);
+            if (dbcMessage == nullptr) return;
+            QColor newColor = QColorDialog::getColor(shownBackground());
+            if (!newColor.isValid()) return;
             if (dbcMessage->bgColor != newColor) dbcFile->setDirtyFlag();
             dbcMessage->bgColor = newColor;
             DBC_ATTRIBUTE_VALUE *val = dbcMessage->findAttrValByName("GenMsgBackgroundColor");
@@ -281,14 +289,22 @@ void DBCMessageEditor::refreshView()
     generateSampleText();
 }
 
+QColor DBCMessageEditor::shownBackground() const
+{
+    const QColor c = dbcMessage->rowBackground();
+    return c.isValid() ? c : palette().color(QPalette::Base);
+}
+
+QColor DBCMessageEditor::shownForeground() const
+{
+    const QColor c = dbcMessage->rowForeground();
+    return c.isValid() ? c : palette().color(QPalette::Text);
+}
+
 void DBCMessageEditor::generateSampleText()
 {
-    QBrush fg, bg;
-
-    if (dbcMessage->fgColor.isValid()) fg = QBrush(dbcMessage->fgColor);
-    else fg = QBrush(QColor(dbcFile->findAttributeByName("GenMsgForegroundColor")->defaultValue.toString()));
-    if (dbcMessage->bgColor.isValid()) bg = QBrush(dbcMessage->bgColor);
-    else bg = QBrush(QColor(dbcFile->findAttributeByName("GenMsgBackgroundColor")->defaultValue.toString()));
+    // web-savvycan: as the trace draws the message's rows (no colour of its own: the theme's)
+    const QBrush fg(shownForeground()), bg(shownBackground());
 
     ui->listSample->clear();
     QListWidgetItem *item = new QListWidgetItem("Test String");

@@ -65,9 +65,11 @@ class DBCFile: public QObject
     Q_OBJECT
 public:
     DBCFile();
-    DBCFile(const DBCFile& cpy);
     ~DBCFile();
-    DBCFile& operator=(const DBCFile& cpy);
+    // web-savvycan (W4): never copied. SavvyCAN's copy shared the message pointers but copied the nodes, so the
+    // copy's messages' sender pointed into the other file's nodes (a crash in the DBC manager, upstream #1040).
+    DBCFile(const DBCFile &) = delete;
+    DBCFile &operator=(const DBCFile &) = delete;
     DBC_NODE *findNodeByName(QString name);
     DBC_NODE *findNodeByNameAndComment(QString fullname);
     DBC_NODE *findNodeByIdx(int idx);
@@ -136,6 +138,23 @@ public:
     DBCFile* loadJSONFile(QString);
     DBCFile* loadSecretCSVFile(QString);
     static DBCHandler *getReference();
+
+    // web-savvycan: windows that keep DBC_SIGNAL pointers (graphs, Signal Viewer) drop the ones that no longer exist
+    // when a signal, message or file has been removed (signalsRemoved), by asking isLiveSignal() (no pointer is
+    // dereferenced to find out). Until then they pointed at freed memory (or SavvyCAN never freed it).
+    bool isLiveSignal(const DBC_SIGNAL *sig) const;
+    void announceRemoval() { emit signalsRemoved(); }
+#ifdef Q_OS_WASM
+    // web-savvycan: the browser has no files of its own. A DBC picked from the computer lives in the page's in-memory
+    // file system (browserPath); DBC/Content_<i> in the page's localStorage keeps it for the next visit
+    // (DBCLoadSaveWindow::updateSettings), written back to its path at start.
+    static QString browserPath(const QString &name);
+    static constexpr qint64 kMaxRememberedBytes = 1000 * 1000; // larger files aren't kept between visits
+    void saveDBCFileToBrowser(int idx);
+#endif
+
+signals:
+    void signalsRemoved();
 
 private:
     QList<DBCFile *> loadedFiles;

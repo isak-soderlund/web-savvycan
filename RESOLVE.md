@@ -82,6 +82,72 @@ Left for later: files larger than memory (over ~1 GB of CSV): graphing straight 
 
 Tests: `tests/web` smoke spec (in CI) loads a GVRET CSV through the file picker and graphs it (every frame, every point); `graph.spec` graphs a live Leaf bus (grows, follows, value axis takes in 0..255), a live graph past its cap (bounded, whole session kept, heap level), a 600 000-frame log (bounded, whole file, heap), and CAN FD signals past byte 8 (the test hook and the Add New Graph dialog with its 64-byte grid, light and dark).
 
+## Stage 3: DBC (switched on 2026-10-30)
+
+`enabledfeatures.h`: **DBC** and **SignalViewer** on. SavvyCAN's DBC windows as they are, with CAN FD and the dark theme.
+
+| What | How |
+| --- | --- |
+| File > DBC File Manager | SavvyCAN's table (file, associated bus, matching criteria, label filters; Create new DBC, Load, Remove, Move Up/Down, Save, Edit). In the browser **Load** opens the browser's file picker (as File > Load Log File; `.dbc`, Tesla `.json`, the "secret" `.csv`, by extension); the file lives in the page's in-memory file system (`/dbc/<n>/<name>`). **Save** writes it there and hands it to the browser (a download, or Chrome's save picker), named as the file. **Remembered for the next visit**: SavvyCAN's `DBC/*` settings plus the file itself (`DBC/Content_<i>`, base64, in the page's `localStorage`), up to 1 MB a file; what was last loaded or saved, not unsaved edits (as the desktop reloads the file from disk) |
+| DBC editors | Main editor (tree of nodes, messages, signals), message, signal, node, node rebase/duplicate editors: framed dialogs in the browser. Message editor: length up to 64, CAN FD and BRS (QT6WIP's); colour pickers start from the colour shown, Cancel changes nothing (it set black). Signal editor: the 64-byte bit grid of an FD message; numbers up to 64 bits long (a text signal up to the frame); bits past the message or the grid no longer written past its 64-byte arrays; the grid's signal names cleared per message (a right click on a stale name made the current signal null) |
+| Interpret Frames | The trace's decoded rows (`<Message>`, comment, `Name: value unit`), FD frames included. Multiplexed signals as SavvyCAN (the multiplexor, then the children its value selects; the next signal now starts on its own line) |
+| Graphs by signal name | Add New Graph > "Graph a DBC Signal" (node, message, signal, Copy Signal Parameters) and the trace's right-click "Add to a new / latest graphing window" over a decoded line: the graph follows the DBC signal (scale, offset, float types). A right click below a cell's text no longer reads past its lines |
+| RE Tools > Signal Viewer | The newest value of each signal added (node, message, signal; Save/Load/Append View as SavvyCAN's `.sdf`, in the browser through the file picker and a download). Fixed: it went over the new frames by index, which skipped every update once the trace's ring was full and showed nothing after a file was loaded; now each tick goes from the newest frame back until every signal has its value, and a signal shows its newest value as soon as it is added |
+| File > Save Decoded Frames (+ CSV) | SavvyCAN's text and CSV output (CSV cells "Name: value unit", as SavvyCAN), the frames read from the trace one at a time (was a copy of the whole trace first); in the browser a download (`SavvyCAN_decoded.txt` / `.csv`) |
+| Preferences | DBC Settings (label DBC messages by default, ignore DBC message colours) and the decoded CSV's absolute time, shown again |
+| Colours | A message's own `GenMsgBackgroundColor` is kept in both themes, with black or white text, whichever reads on it; its own text colour is kept where it reads (contrast 3:1), else the theme's. No colour of its own, or the file's default being SavvyCAN's white/black (what SavvyCAN writes; it painted every decoded row white in dark), is the theme's rows. New files and saves write white/black as the default (was the palette of the moment). Signal editor grid: each signal's name and bit numbers black or white by its colour (black on the list's dark blues could not be read) |
+
+CAN FD and decoding fixes (`utility.h`, `dbc/dbc_classes.cpp`):
+- One decoder (`DBC_SIGNAL::decode`) for the trace's text, the graphs and the multiplexors (SavvyCAN had three, each with
+  its own length check). The length check is the signal's real last byte (`Utility::signalLastByte`): for Motorola
+  SavvyCAN used `(start + size) / 8`, so a Motorola signal in a frame's last byte (start bit 63, 8 bits) "didn't fit"
+  in the graphs (they then fell back to raw bits). Any start bit of a 64-byte frame (0..511); a size over 64 is taken as
+  64 (`1 << 64` was undefined).
+- 64-bit signals: integer signals with integer factor and offset are shown in integers (through a double a 64-bit value
+  lost its low digits); an unsigned 64-bit signal is shown unsigned; value descriptions are 64-bit (an `int` cut them
+  off) and looked up by the **raw** value, as DBC files define them (SavvyCAN looked up the scaled value in the trace and
+  the raw one in graphs).
+- Floats: single and double in the signal's byte order everywhere (the graphs' path read every double as Motorola).
+- A frame too short for a signal: not decoded (was 0 in some paths).
+- DBC files: numbers saved with 15 significant digits (6 changed factors such as 1/8192 and limits on every save).
+
+Crash and memory fixes (`dbc/dbchandler.cpp`): signals and messages are deleted (`free()` of `new`'d objects before;
+messages and their signals were never freed when a file was removed); a removed signal leaves its multiplexor's list;
+**W4**: `DBCFile`'s copy constructor (shared message pointers, copied nodes) removed, nothing copies a file;
+`loadDBCFile` returns nullptr on failure (it returned the previously loaded file, so a missing remembered file took
+the next file's settings); a file's bus association initialised; the loader yields every 100 lines (it processed the
+events on every line after the 100th, which in the browser suspends to the page each time). Windows that keep
+`DBC_SIGNAL` pointers (graphs, Signal Viewer) are told when signals, messages or files are removed
+(`DBCHandler::signalsRemoved`) and drop the ones that are gone (`isLiveSignal`, by address): a graph goes on with the
+same bits, scale and offset, the Signal Viewer removes the row.
+
+Limits: as SavvyCAN, a message is found by its ID number (an 11-bit and a 29-bit ID of the same value are one message),
+and by frame ID only (not by CAN FD or not). A DBC over 1 MB isn't remembered between visits in the browser (load it
+again), nor a Tesla JSON or "secret" CSV signal file (SavvyCAN gives those no file name; a failed one no longer leaves a
+blank file behind, which put the manager's rows out of step with the files). The CSV of Save Decoded Frames puts "Name: value unit" in each cell and doesn't quote (as SavvyCAN). The
+Signal Viewer matches messages by exact ID (not J1939/GMLAN matching, as SavvyCAN); when a signal is added or a file
+loaded it searches the newest million frames for its value.
+
+Measured (headless Chromium, `dbc.spec`, 2026-10-30): a DBC of 1 000 messages and 16 000 signals (0.76 MB) loads
+in 2.7 s through the File Manager (4.5-4.8 s before the loader's events were limited to every 100 ms: each call waits
+on the page in the browser); 200 decoded trace rows in 25 ms; on 100 000 frames of 50 of its messages Save Decoded
+Frames takes 4.4 s (31 MB of text) and the CSV 6.1 s (61 MB: a column per signal of every message seen, on every row),
+the page's heap in use 23 MB before, 123 MB after both (malloc's peak 157 MB). The CSV of the same log over all 1 000
+messages would be ~800 MB (rows x 16 000 columns): in the browser the file is made in memory first; that run came out as an empty
+file. A write that fails now stops with a message (this path is not covered by a test yet).
+
+Tests: `tests/web` `dbc.spec` with `tests/web/fixtures/stage3_test.dbc` (our own DBC: the Leaf IDs of the fake's
+`leaf` traffic with Intel/Motorola, signed, scaled, value-described, multiplexed signals and message colours; CAN FD
+messages of 12 and 64 bytes, an extended 64-byte one, signals past bit 63, 64-bit signed and unsigned, float and double):
+the DBC loaded through the File Manager's file picker; a log of every message: each decoded value in the trace equals
+a decoder written in the test from the DBC rules (713 values); row colours light and dark; Save Decoded Frames (text and
+CSV) downloads, every value checked; graphs by signal name (Add New Graph, the trace's "Add to a new graphing window")
+equal the decoded values point for point; Signal Viewer live on the Leaf bus and on CAN FD traffic, each value = the
+newest frame; the editors on the 64-byte message; Save (download), Remove, Load the saved file back: the same DBC;
+remembered after a reload; a 1 000-message DBC and 100 000 frames (times). Pictures `results/dbc-*.png`, light and dark.
+`tests/desktop` `tst_dbc`: bit numbering, the fixture's signals decoded (FD, 64-bit, floats, value descriptions,
+multiplexing), save and load back, removals (ASan clean).
+
 ## Frame Data Analysis (stage 4, switched on 2026-10-29)
 
 RE Tools > Frame Data Analysis ("the heatmap tool", owner 2026-10-29: brought forward from stage 4), working with CAN FD.
@@ -212,15 +278,12 @@ Tests: `tests/web` autoconnect spec; with the real rc1 on the rig (`rig/autoconn
   plot's items in `Theme::applyToPlot`: text, tracer and brackets left in the default black follow the theme);
   `candatagrid.cpp`'s bit grid (New graph, and the DBC editor and sender once they are on).
 - **Hard-coded colours left for later stages** (fix when the window is switched on):
-  - DBC (stage 3): message colours from the DBC (`GenMsgBackgroundColor`/`Foreground`, `dbc/dbchandler.cpp`), shown
-    as row colours in the trace when "Interpret Frames" is on (white background in dark); DBC editors' colour
-    pickers;
+  - DBC (stage 3): done 2026-10-30 (message colours readable in both themes, the signal editor's grid);
   - Sniffer: `re/sniffer/sniffermodel.cpp` (grey levels and dark red/green, palette read once) and
     `SnifferDelegate.cpp`;
   - Frame Info: done 2026-10-29 (byte graph colours per theme); Flow view: `graphColors[8]` with
     `Qt::black`, black text pen (`re/flowviewwindow.cpp`); Range state: black graph pen
     (`re/rangestatewindow.cpp`); Discrete state: fixed label palettes (`re/discretestatewindow.cpp`);
-  - `candatagrid.cpp`: the DBC editor's signal colours (`signalColors`) are bright in both themes (names in black);
   - Scripting: `jsedit.cpp` syntax colours, line numbers, cursor and bracket colours.
 
 ## Hosting (decide before the first public build)

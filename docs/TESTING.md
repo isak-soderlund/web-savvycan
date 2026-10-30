@@ -2,7 +2,7 @@
 
 Stage 1 (RESOLVE.md "MVP"): connect to rc1 from Chrome, watch the frames, log them to a file, light/dark theme. Then
 what came after (steps 9-14): auto-connect, graphs, loading a log file, Temporal Graph and Frame Data Analysis (the
-heatmap).
+heatmap); stage 3 (steps 15-18): DBC files, Interpret Frames, the DBC editor, signals by name, Save Decoded Frames.
 Everything below has passed in headless Chromium against a **fake** rc1, and with the **real** rc1 and a real bus on
 the rig (see "What the rig has checked"); this is the check with your Chrome, your OS and your car.
 
@@ -93,6 +93,21 @@ second line `dirty` means uncommitted changes were in it).
     to file**: a download `FrameDetails.txt`. Check an FD ID with 64-byte frames and a classic one.
 14. **A long log.** Log (step 4) for more than 72 min (a charging session): the file's times keep increasing past
     71.6 min (rc1's clock is 32-bit µs; the app makes it 64-bit), no jump back to 0.
+15. **DBC.** File > **DBC File Manager** > **Load**: Chrome's file picker; pick your car's DBC (e.g. the Leaf's
+    `EV-can_AZE0.dbc`; `tests/web/fixtures/stage3_test.dbc` is a small one with CAN FD messages). Its row appears (bus
+    -1 = all). Tick **Interpret Frames** in the main window: rows of the DBC's messages show `<Message>` and, when you
+    click a row, `Signal: value unit` lines; the values make sense for the car (speed, SOC, voltage). Dark theme: every
+    row readable (a message's own colour kept, text black or white on it). Reload the page: the DBC is still loaded.
+16. **DBC editor.** In the File Manager select the file > **Edit**: the tree of nodes, messages, signals; double-click
+    a message (length up to 64, CAN FD, BRS) and a signal (the bit grid; 64 bytes for an FD message). Change a signal,
+    **Save** in the File Manager: a download of the DBC; load it in the desktop SavvyCAN (or Load it back here): the
+    change is in it.
+17. **Signals by name.** RE Tools > New Graphing Window > Graph > **Add New Graph** > Graph a DBC Signal: node,
+    message, signal, **Copy Signal Parameters**, Add this graph: the graph shows the signal's values (as in the trace).
+    Or right-click a `Signal: value` line of an expanded trace row > **Add to a new graphing window**. RE Tools >
+    **Signal Viewer**: add a few signals: their values follow the bus live.
+18. **Save Decoded Frames.** File > **Save Decoded Frames** and **Save Decoded Frames CSV**: downloads
+    (`SavvyCAN_decoded.txt` / `.csv`) with every frame of the trace and its decoded signals.
 
 Please note for each step: works / doesn't (what you saw, a screenshot), Chrome's version and the OS, and for any
 problem the browser console (View > Developer > JavaScript Console): copy its red lines.

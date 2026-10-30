@@ -30,6 +30,12 @@ GraphingWindow::GraphingWindow(const FrameListView *frames, QWidget *parent) :
 
     modelFrames = frames;
     dbcHandler = DBCHandler::getReference();
+    // web-savvycan: a DBC signal removed (or its message or file) leaves its graph decoding the same bits with the
+    // same scale and offset, without the DBC signal (its pointer would point at freed memory)
+    connect(dbcHandler, &DBCHandler::signalsRemoved, this, [this]() {
+        for (GraphParams &g : graphParams)
+            if (g.associatedSignal && !dbcHandler->isLiveSignal(g.associatedSignal)) g.associatedSignal = nullptr;
+    });
 
     ui->graphingView->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectAxes |
                                     QCP::iSelectLegend | QCP::iSelectPlottables);

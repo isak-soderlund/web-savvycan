@@ -2,6 +2,9 @@
 #include "dbchandler.h"
 #include "utility.h"
 #include <QtMath>
+#include <QApplication>
+#include <QPalette>
+#include <cstring>
 
 DBC_MESSAGE::DBC_MESSAGE()
 {
@@ -13,6 +16,38 @@ DBC_MESSAGE::DBC_MESSAGE()
     bitRateSwitch = true;
     multiplexorSignal = nullptr;
     sender = nullptr;
+}
+
+DBC_MESSAGE::~DBC_MESSAGE()
+{
+    sigHandler->removeAllSignals();
+    delete sigHandler;
+}
+
+// Relative luminance (WCAG) of a colour, 0 (black) .. 1 (white)
+static double luminance(const QColor &c)
+{
+    auto lin = [](double v) { return v <= 0.03928 ? v / 12.92 : qPow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * lin(c.redF()) + 0.7152 * lin(c.greenF()) + 0.0722 * lin(c.blueF());
+}
+
+static double contrast(const QColor &a, const QColor &b)
+{
+    const double la = luminance(a), lb = luminance(b);
+    return (qMax(la, lb) + 0.05) / (qMin(la, lb) + 0.05);
+}
+
+QColor DBC_MESSAGE::rowBackground() const
+{
+    return bgColor;
+}
+
+QColor DBC_MESSAGE::rowForeground() const
+{
+    const QColor shownBg = bgColor.isValid() ? bgColor : QApplication::palette().color(QPalette::Base);
+    if (fgColor.isValid() && contrast(fgColor, shownBg) >= 3.0) return fgColor;
+    if (!bgColor.isValid()) return QColor(); //the theme's text on the theme's background
+    return contrast(QColor(Qt::black), bgColor) >= contrast(QColor(Qt::white), bgColor) ? QColor(Qt::black) : QColor(Qt::white);
 }
 
 void DBC_SIGNAL::addMultiplexRange(int min, int max)
@@ -259,59 +294,75 @@ s 5   47 46 45 44 43 42 41 40
   So, the bits are 12, 11, 10, 9, 8, 23, 22, 21. Yes, that's confusing. They now go in reverse value order too.
   Bit 12 is worth 128, 11 is worth 64, etc until bit 21 is worth 1.
 */
+// web-savvycan: one decoder for processAsText/Int/Double (SavvyCAN had three, each with its own length check; the
+// checks were wrong for Motorola signals near the end of a frame, and the float types read different byte orders in
+// different functions). raw: the signal's bits as an integer (for floats their bit pattern); value: scaled. false
+// when the frame is too short for the signal, or for a STRING signal. Any start bit of a CAN FD frame (0..511).
+bool DBC_SIGNAL::decode(const CommFrame &frame, int64_t &raw, double &value) const
+{
+    const QByteArray &data = frame.payload();
+    switch (valType)
+    {
+    case UNSIGNED_INT:
+    case SIGNED_INT:
+        if (!Utility::signalFits(data.size(), startBit, qMin(signalSize, 64), intelByteOrder)) return false;
+        raw = Utility::processIntegerSignal(data, startBit, signalSize, intelByteOrder, valType == SIGNED_INT);
+        value = (double(raw) * factor) + bias;
+        return true;
+    case SP_FLOAT:
+    {
+        if (!Utility::signalFits(data.size(), startBit, 32, intelByteOrder)) return false;
+        raw = Utility::processIntegerSignal(data, startBit, 32, intelByteOrder, false);
+        const uint32_t bits = uint32_t(raw);
+        float f;
+        memcpy(&f, &bits, sizeof f);
+        value = (double(f) * factor) + bias;
+        return true;
+    }
+    case DP_FLOAT:
+    {
+        if (!Utility::signalFits(data.size(), startBit, 64, intelByteOrder)) return false;
+        raw = Utility::processIntegerSignal(data, startBit, 64, intelByteOrder, false);
+        const uint64_t bits = uint64_t(raw);
+        double d;
+        memcpy(&d, &bits, sizeof d);
+        value = (d * factor) + bias;
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 bool DBC_SIGNAL::processAsText(const CommFrame &frame, QString &outString, bool outputName, bool outputUnit)
 {
-    int64_t result = 0;
-    bool isSigned = false;
-    bool isInteger = false;
-    double endResult;
-
     //if (!isSignalInMessage(frame)) return false;
 
     if (valType == STRING)
     {
         QString buildString;
+        const QByteArray &data = frame.payload();
         int startByte = startBit / 8;
         int bytes = signalSize / 8;
-        for (int x = 0; x < bytes; x++) buildString.append(frame.payload().constData()[startByte + x]);
+        for (int x = 0; x < bytes && startByte + x < data.size(); x++) buildString.append(QChar(uchar(data[startByte + x])));
         outString = buildString;
         cachedValue = outString;
         return true;
     }
 
-    if (valType == SIGNED_INT) isSigned = true;
-    if (valType == SIGNED_INT || valType == UNSIGNED_INT)
-    {
-        result = Utility::processIntegerSignal(frame.payload(), startBit, signalSize, intelByteOrder, isSigned);
-        endResult = ((double)result * factor) + bias;
-        result = (int64_t)endResult;
-        // if factor is an integer, we don't need the possibly human-unreadable float representation
-        isInteger = (factor == qFloor(factor));
-    }
-    else if (valType == SP_FLOAT)
-    {
-        //The theory here is that we force the integer signal code to treat this as
-        //a 32 bit unsigned integer. This integer is then cast into a float in such a way
-        //that the bytes that make up the integer are instead treated as having made up
-        //a 32 bit single precision float. That's evil incarnate but it is very fast and small
-        //in terms of new code.
-        result = Utility::processIntegerSignal(frame.payload(), startBit, 32, intelByteOrder, false);
-        endResult = (*((float *)(&result)) * factor) + bias; //look away! This is awful. I don't even know for sure if it works. Should test that.
-    }
-    else //double precision float
-    {
-        if ( frame.payload().length() < 8 )
-        {
-            result = 0;
-            return false;
-        }
-        //like the above, this is rotten and evil and wrong in so many ways. Force
-        //calculation of a 64 bit integer and then cast it into a double.
-        result = Utility::processIntegerSignal(frame.payload(), startBit, 64, intelByteOrder, false);
-        endResult = (*((double *)(&result)) * factor) + bias;
-    }
-
-    outString = makePrettyOutput(endResult, result, outputName, isInteger, outputUnit);
+    int64_t raw = 0;
+    double endResult = 0;
+    if (!decode(frame, raw, endResult)) return false;
+    // an integer type with integer factor and offset is shown as an integer (no float representation)
+    const bool isInteger = (valType == SIGNED_INT || valType == UNSIGNED_INT)
+                           && factor == qFloor(factor) && bias == qFloor(bias);
+    // in integers when it is shown as one: exact for 64-bit signals too (through a double they lost their low digits)
+    const int64_t intResult = isInteger ? int64_t(uint64_t(raw) * uint64_t(int64_t(factor)) + uint64_t(int64_t(bias))) : 0;
+    // value descriptions (VAL_) are on the raw value, as DBC files define them
+    outString = makePrettyOutput(endResult, isInteger ? intResult : raw, outputName, isInteger, outputUnit, raw);
+    QString described;
+    if (valType == UNSIGNED_INT && signalSize >= 64 && factor == 1 && bias == 0 && !getValueString(raw, described))
+        outString = (outputName ? name + ": " : QString()) + QString::number(quint64(raw)) + (outputUnit ? " " + unitName : QString());
     cachedValue = endResult;
     return true;
 }
@@ -334,30 +385,26 @@ bool DBC_SIGNAL::getValueString(int64_t intVal, QString &outString)
 
 QString DBC_SIGNAL::makePrettyOutput(double floatVal, int64_t intVal, bool outputName, bool isInteger, bool outputUnit)
 {
+    return makePrettyOutput(floatVal, intVal, outputName, isInteger, outputUnit, intVal);
+}
+
+// web-savvycan: rawVal is what the value descriptions are looked up by (the signal's raw value)
+QString DBC_SIGNAL::makePrettyOutput(double floatVal, int64_t intVal, bool outputName, bool isInteger, bool outputUnit, int64_t rawVal)
+{
     QString outputString;
 
     if (outputName) outputString = name + ": ";
 
-    if (valList.count() > 0) //if this is a value list type then look it up and display the proper string
+    QString described;
+    if (getValueString(rawVal, described)) //if this is a value list type then look it up and display the proper string
     {
-        bool foundVal = false;
-        for (int x = 0; x < valList.count(); x++)
-        {
-            if (valList.at(x).value == intVal)
-            {
-                outputString += valList.at(x).descript;
-                foundVal = true;
-                break;
-            }
-        }
-        if (!foundVal) outputString += QString::number(intVal);
-        if (outputUnit) outputString += " " + unitName;
+        outputString += described;
     }
     else //otherwise display the actual number and unit (if it exists)
     {
        outputString += (isInteger ? QString::number(intVal) : QString::number(floatVal));
-       if (outputUnit) outputString += " " + unitName;
     }
+    if (outputUnit) outputString += " " + unitName;
     return outputString;
 }
 
@@ -369,9 +416,6 @@ QString DBC_SIGNAL::makePrettyOutput(double floatVal, int64_t intVal, bool outpu
 //true or false to show whether the function succeeded. The variable to fill out is passed by reference.
 bool DBC_SIGNAL::processAsInt(const CommFrame &frame, int32_t &outValue)
 {
-    int32_t result = 0;
-    bool isSigned = false;
-
     if (valType == STRING || valType == SP_FLOAT  || valType == DP_FLOAT)
     {
         return false;
@@ -379,17 +423,10 @@ bool DBC_SIGNAL::processAsInt(const CommFrame &frame, int32_t &outValue)
 
     //if (!isSignalInMessage(frame)) return false;
 
-    if (valType == SIGNED_INT) isSigned = true;
-    /*if ( static_cast<int>(frame.payload().length() * 8) <= (startBit + signalSize) )
-    {
-        result = 0;
-        return false;
-    }*/
-
-    result = static_cast<int32_t>(Utility::processIntegerSignal(frame.payload(), startBit, signalSize, intelByteOrder, isSigned));
-
-    double endResult = (result * factor) + bias;
-    result = static_cast<int32_t>(endResult);
+    int64_t raw = 0;
+    double endResult = 0;
+    if (!decode(frame, raw, endResult)) return false; // web-savvycan: a frame too short for the signal (was read as 0)
+    int32_t result = static_cast<int32_t>(endResult);
     cachedValue = result;
     outValue = result;
     return true;
@@ -401,57 +438,11 @@ bool DBC_SIGNAL::processAsInt(const CommFrame &frame, int32_t &outValue)
 //Similar syntax to processSignalInt but with double instead.
 bool DBC_SIGNAL::processAsDouble(const CommFrame &frame, double &outValue)
 {
-    int64_t result = 0;
-    bool isSigned = false;
-    double endResult;
-
-    if (valType == STRING)
-    {
-        return false;
-    }
-
     //if (!isSignalInMessage(frame)) return false;
 
-    if (valType == SIGNED_INT) isSigned = true;
-    if (valType == SIGNED_INT || valType == UNSIGNED_INT)
-    {
-        if ( frame.payload().length() * 8 < (startBit+signalSize) )
-        {
-            result = 0;
-            return false;
-        }
-        result = Utility::processIntegerSignal(frame.payload(), startBit, signalSize, intelByteOrder, isSigned);
-        endResult = ((double)result * factor) + bias;
-        result = (int64_t)endResult;
-    }
-    /*TODO: It should be noted that the below floating point has not even been tested. For shame! Test it!*/
-    else if (valType == SP_FLOAT)
-    {
-        if ( frame.payload().length() * 8 < (startBit + 32) )
-        {
-            result = 0;
-            return false;
-        }
-        //The theory here is that we force the integer signal code to treat this as
-        //a 32 bit unsigned integer. This integer is then cast into a float in such a way
-        //that the bytes that make up the integer are instead treated as having made up
-        //a 32 bit single precision float. That's evil incarnate but it is very fast and small
-        //in terms of new code.
-        result = Utility::processIntegerSignal(frame.payload(), startBit, 32, false, false);
-        endResult = (*((float *)(&result)) * factor) + bias;
-    }
-    else //double precision float
-    {
-        if ( frame.payload().length() < 8 )
-        {
-            result = 0;
-            return false;
-        }
-        //like the above, this is rotten and evil and wrong in so many ways. Force
-        //calculation of a 64 bit integer and then cast it into a double.
-        result = Utility::processIntegerSignal(frame.payload(), startBit, 64, false, false);
-        endResult = (*((double *)(&result)) * factor) + bias;
-    }
+    int64_t raw = 0;
+    double endResult = 0;
+    if (!decode(frame, raw, endResult)) return false;
     cachedValue = endResult;
     outValue = endResult;
     return true;

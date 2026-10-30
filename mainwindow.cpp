@@ -22,6 +22,7 @@
 #include "wasm/disklog/webdisklog.h"
 #endif
 
+#include <QBuffer>
 #include <QClipboard>
 #include <QActionGroup>
 #include <QTimer>
@@ -1196,7 +1197,9 @@ QString MainWindow::getSignalNameFromPosition(QPoint pos)
     int cellBaseY = ui->canFramesView->rowViewportPosition(idx.row());
     int lineOffset = (pos.y() - cellBaseY) / fontHeight;
     qDebug() << "Offset: " << lineOffset;
-    QString lineText = idx.data().toString().split("\n")[lineOffset];
+    const QStringList lines = idx.data().toString().split("\n");
+    if (lineOffset < 0 || lineOffset >= lines.count()) return QString(); // web-savvycan: below the text (was out of range)
+    QString lineText = lines[lineOffset];
     qDebug() << "Line Text: " << lineText;
     return lineText.split(":")[0];
 }
@@ -2064,6 +2067,26 @@ void MainWindow::handleSaveDecodedCsv()
 
 void MainWindow::handleSaveDecodedMethod(bool csv)
 {
+#ifdef Q_OS_WASM
+    // web-savvycan: in the browser the file is made in memory and handed to the browser (a download, or Chrome's save
+    // picker): Qt's save dialog would only see the page's in-memory file system
+    {
+        QBuffer buffer;
+        buffer.open(QIODevice::WriteOnly);
+        const bool ok = csv ? saveDecodedTextFileAsColumns(&buffer) : saveDecodedTextFile(&buffer);
+        if (!ok) {
+            // the file is made in the page's memory first (at most ~2 GB in one piece): a CSV of many messages is
+            // every signal's column on every row (rows x columns)
+            QMessageBox::warning(this, tr("Save Decoded Frames"),
+                                 tr("The decoded file is too large for the browser (%1 MB written when it ran out of "
+                                    "memory). Save fewer frames (filter the trace), use the text format instead of CSV, or "
+                                    "use the desktop version.").arg(buffer.size() / 1000000));
+            return;
+        }
+        QFileDialog::saveFileContent(buffer.data(), csv ? QStringLiteral("SavvyCAN_decoded.csv") : QStringLiteral("SavvyCAN_decoded.txt"));
+        return;
+    }
+#endif
     QString filename;
     QFileDialog dialog(this);
     QSettings settings;
@@ -2087,27 +2110,29 @@ void MainWindow::handleSaveDecodedMethod(bool csv)
             else filename += ".csv";
         }
 
-        if(csv)
-            saveDecodedTextFileAsColumns(filename);
-        else
-            saveDecodedTextFile(filename);
+        QFile outFile(filename);
+        if (outFile.open(QIODevice::WriteOnly | QIODevice::Text))
+        {
+            if(csv)
+                saveDecodedTextFileAsColumns(&outFile);
+            else
+                saveDecodedTextFile(&outFile);
+        }
 
         settings.setValue("FileIO/LoadSaveDirectory", dialog.directory().path());
     }
 }
 
-void MainWindow::saveDecodedTextFileAsColumns(QString filename)
+// web-savvycan: written to any device (a file, or memory for the browser's download), the frames read from the trace
+// one at a time (was a copy of the whole trace first)
+bool MainWindow::saveDecodedTextFileAsColumns(QIODevice *outFile)
 {
-    QFile *outFile = new QFile(filename);
-    const QVector<CommFrame> snapshot = model->getFilteredListReference()->toVector();
-    const QVector<CommFrame> *frames = &snapshot;
+    const FrameListView *frames = model->getFilteredListReference();
 
     //const unsigned char *data;
     int dataLen;
-    const CommFrame *frame;
-
-    if (!outFile->open(QIODevice::WriteOnly | QIODevice::Text))
-        return;
+    CommFrame frameCopy;
+    const CommFrame *frame = &frameCopy;
 /*
 Time: 205.173000   ID: 0x20E Std Bus: 0 Len: 8
 Data Bytes: 88 10 00 13 BB 00 06 00
@@ -2144,9 +2169,9 @@ Data Bytes: 88 10 00 13 BB 00 06 00
     columnsAdded = dataStartCol;
 
     //loop through all the frames and the message data therein
-    for (int c = 0; c < frames->count(); c++)
+    for (qsizetype c = 0; c < frames->count(); c++)
     {
-        frame = &frames->at(c);
+        frameCopy = frames->at(c);
         //data = reinterpret_cast<const unsigned char *>(frame->payload().constData());
         dataLen = frame->payload().length();
 
@@ -2189,7 +2214,7 @@ Data Bytes: 88 10 00 13 BB 00 06 00
     //add EOL
     builderString += "\n";
     //write out the header row
-    outFile->write(builderString.toUtf8());
+    if (outFile->write(builderString.toUtf8()) < 0) return false; // web-savvycan: out of room (the browser's memory)
 
         //builderString = tr("Data Bytes: ");
         //for (int temp = 0; temp < dataLen; temp++)
@@ -2201,10 +2226,10 @@ Data Bytes: 88 10 00 13 BB 00 06 00
 
     int dataColumnsAdded = 0;
     builderString = "";
-    for (int c = 0; c < frames->count(); c++)
+    for (qsizetype c = 0; c < frames->count(); c++)
     {
         dataColumnsAdded = 0;
-        frame = &frames->at(c);
+        frameCopy = frames->at(c);
         //data = reinterpret_cast<const unsigned char *>(frame->payload().constData());
         dataLen = frame->payload().length();
 
@@ -2268,32 +2293,28 @@ Data Bytes: 88 10 00 13 BB 00 06 00
                 }
             }
             builderString.append("\n");
-            outFile->write(builderString.toUtf8());
+            if (outFile->write(builderString.toUtf8()) < 0) return false; // web-savvycan: out of room (the browser's memory)
         }
     }
-    outFile->close();
+    return true;
 }
 
-void MainWindow::saveDecodedTextFile(QString filename)
+bool MainWindow::saveDecodedTextFile(QIODevice *outFile)
 {
-    QFile *outFile = new QFile(filename);
-    const QVector<CommFrame> snapshot = model->getFilteredListReference()->toVector();
-    const QVector<CommFrame> *frames = &snapshot;
+    const FrameListView *frames = model->getFilteredListReference();
 
     const unsigned char *data;
     int dataLen;
-    const CommFrame *frame;
-
-    if (!outFile->open(QIODevice::WriteOnly | QIODevice::Text))
-        return;
+    CommFrame frameCopy;
+    const CommFrame *frame = &frameCopy;
 /*
 Time: 205.173000   ID: 0x20E Std Bus: 0 Len: 8
 Data Bytes: 88 10 00 13 BB 00 06 00
     SignalName	Value
 */
-    for (int c = 0; c < frames->count(); c++)
+    for (qsizetype c = 0; c < frames->count(); c++)
     {
-        frame = &frames->at(c);
+        frameCopy = frames->at(c);
         data = reinterpret_cast<const unsigned char *>(frame->payload().constData());
         dataLen = frame->payload().length();
 
@@ -2304,7 +2325,7 @@ Data Bytes: 88 10 00 13 BB 00 06 00
         else builderString += tr(" Std ");
         builderString += tr("Bus: ") + QString::number(frame->getBus());
         builderString += " Len: " + QString::number(dataLen) + "\n";
-        outFile->write(builderString.toUtf8());
+        if (outFile->write(builderString.toUtf8()) < 0) return false; // web-savvycan: out of room (the browser's memory)
 
         builderString = tr("Data Bytes: ");
         for (int temp = 0; temp < dataLen; temp++)
@@ -2312,7 +2333,7 @@ Data Bytes: 88 10 00 13 BB 00 06 00
             builderString += Utility::formatNumber(data[temp]) + " ";
         }
         builderString += "\n";
-        outFile->write(builderString.toUtf8());
+        if (outFile->write(builderString.toUtf8()) < 0) return false; // web-savvycan: out of room (the browser's memory)
 
         builderString = "";
         if (dbcHandler != nullptr)
@@ -2333,10 +2354,10 @@ Data Bytes: 88 10 00 13 BB 00 06 00
                 }
             }
             builderString.append("\n");
-            outFile->write(builderString.toUtf8());
+            if (outFile->write(builderString.toUtf8()) < 0) return false; // web-savvycan: out of room (the browser's memory)
         }
     }
-    outFile->close();
+    return true;
 }
 
 void MainWindow::toggleCapture()

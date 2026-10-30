@@ -16,7 +16,7 @@ class SignalViewerWindow : public QDialog
 public:
     explicit SignalViewerWindow(const FrameListView *frames, QWidget *parent = 0);
     ~SignalViewerWindow();
-
+    const QList<DBC_SIGNAL *> &viewedSignals() const { return signalList; } // web-savvycan: the test hook
 private slots:
     void loadNodes();
     void loadMessages(int idx);
@@ -32,6 +32,7 @@ private slots:
     void clearSignalsTable(bool);
     void saveDefinitions();
     void loadDefinitions(bool);
+    void dropRemovedSignals();
 
 private:
     Ui::SignalViewerWindow *ui;
@@ -42,7 +43,9 @@ private:
     QList<DBC_SIGNAL *> signalList;
     const FrameListView *modelFrames;
 
-    void processFrame(CommFrame &frame);
+    int processFrame(const CommFrame &frame, QList<bool> &done);
+    QByteArray definitionsText() const;
+    void applyDefinitions(const QByteArray &text, bool append);
 };
 
 #endif // SIGNALVIEWERWINDOW_H

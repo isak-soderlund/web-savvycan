@@ -15,6 +15,9 @@ DBCMainEditor::DBCMainEditor( const FrameListView *frames, QWidget *parent) :
     ui(new Ui::DBCMainEditor)
 {
     ui->setupUi(this);
+#ifdef Q_OS_WASM
+    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint); // web-savvycan: framed in the browser
+#endif
 
     readSettings();
 
@@ -727,8 +730,7 @@ void DBCMainEditor::newMessage()
         {
             msgPtr->name = nodeName + "Msg" + QString::number(randGen.bounded(500));
             msgPtr->ID = 0x003;
-            msgPtr->len = 8;
-            msgPtr->bgColor = QApplication::palette().color(QPalette::Base);
+            msgPtr->len = 8; // web-savvycan: no colour of its own (the theme's)
         }
     }
     else

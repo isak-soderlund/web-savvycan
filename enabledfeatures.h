@@ -70,8 +70,8 @@ constexpr bool on(Feature f)
     case Feature::ThemeSwitch:        return true;
 
     case Feature::Graphs:             return true;  // stage 2 (started 2026-10-29)
-    case Feature::DBC:                return false; // stage 3
-    case Feature::SignalViewer:       return false; // stage 3
+    case Feature::DBC:                return true;  // stage 3 (2026-10-30)
+    case Feature::SignalViewer:       return true;  // stage 3 (2026-10-30)
     case Feature::Sniffer:            return false; // stage 4
     case Feature::FrameInfo:          return true;  // stage 4, brought forward: the heatmap tool with CAN FD (owner 2026-10-29)
     case Feature::TemporalGraph:      return true;  // stage 4, brought forward (owner 2026-10-29)
